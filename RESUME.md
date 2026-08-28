@@ -157,10 +157,19 @@ Still true, and unchanged by the move: **every download is TWO lines.** CC's
 downloads nothing, and reads like success. No force flag, and the CC shell has
 no `&&` or `;`.
 
-**Verify after a push**, the same way as before: fetch the raw URL back here and
-diff it against disk. `raw.githubusercontent.com` is CDN-cached for a few
-minutes, so a fetch straight after a push can serve the previous version -- if
-the diff fails, wait and try again before believing you broke something.
+**Verify after a push** by fetching the raw URL back here and diffing it against
+disk -- but fetch the **commit-pinned** URL, not the branch one:
+
+```
+curl -sS https://raw.githubusercontent.com/zaBees/cc/$(git rev-parse HEAD)/quarry.lua
+```
+
+The `/main/` URL is CDN-cached and was still serving the previous build more
+than two minutes after a push on 2026-08-28, which looks exactly like a failed
+push. The commit-pinned URL is not cached that way and settles it immediately.
+The cache matters to the user too: if they re-download within a few minutes of
+being told a build is ready, they can get the old one. Tell them to wait a
+moment and repeat the two lines.
 
 **paste.rs is retired.** It stopped accepting uploads over roughly 80,000 bytes
 on 2026-08-28 (nginx 500; even the 96,594-byte file already live as `3PcMy`

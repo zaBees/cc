@@ -3432,20 +3432,25 @@ local args = { ... }
 
 -- Started off the floppy. `cd disk` then `quarry` is what a player reaches for
 -- when a deployed turtle did not boot itself, and it half-works: the mine runs,
--- but quarry.conf, quarry.state and /startup are all relative paths, so they
--- are written onto the FLOPPY -- which this turtle walks away from, taking its
--- own memory with it. Install to the turtle and run that copy instead. This is
--- what disk/startup does, minus the label, the modem and the fuel.
+-- but the PROGRAM is on the floppy, which stays in the drive at the surface.
+-- The moment this turtle walks away it cannot be restarted -- /startup runs
+-- `quarry <n>` and there is no quarry on the turtle to run. So install first,
+-- then hand the run to the installed copy. This is what disk/startup does,
+-- minus the label, the modem and the fuel.
+-- fs resolves a relative path from the root, so the copies below land on the
+-- turtle. shell.run does NOT -- it resolves against the shell's directory,
+-- which is /disk on this route, so the handover has to name /quarry.lua or the
+-- shell looks for it on the floppy and finds nothing.
 local me = shell and shell.getRunningProgram and shell.getRunningProgram()
 if me and me:gsub("^/", ""):sub(1, 5) == "disk/" then
-  say("startup: I am running off the floppy, where nothing I write survives me.")
+  say("startup: I am running off the floppy, which stays here when I leave.")
   say("         Installing to this turtle and starting that copy instead.")
   for _, n in ipairs({ "quarry", "quarry.lua" }) do
     if fs.exists(n) then fs.delete(n) end
   end
   fs.copy(me, "quarry.lua")
   -- Same anti-drift rules as the boot script: take the deployer's config and
-  -- claim anchor, and never overwrite a state file this turtle already has.
+  -- claim anchor, and never overwrite one this turtle already has.
   if fs.exists("/disk/quarry.conf") and not fs.exists(CONF) then
     fs.copy("/disk/quarry.conf", CONF)
     say("startup: took the deployer's quarry.conf")
@@ -3454,8 +3459,8 @@ if me and me:gsub("^/", ""):sub(1, 5) == "disk/" then
     fs.copy("/disk/quarry.state", STATE)
     say("startup: took the deployer's claim anchor")
   end
-  say("startup: installed as quarry.lua -- `quarry <n>` from now on")
-  return shell.run("quarry.lua", table.unpack(args))
+  say("startup: installed as /quarry.lua -- `quarry <n>` from now on")
+  return shell.run("/quarry.lua", table.unpack(args))
 end
 local index, mode = nil, nil
 for _, a in ipairs(args) do

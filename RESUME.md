@@ -112,7 +112,13 @@ confirmed to fail against its own unfixed code:
     from there.** `cd disk` then `quarry` is what a player types on a deployed
     turtle that did not boot [user, 2026-08-28], and every path quarry writes
     is relative -- so that run puts `quarry.conf`, `quarry.state` and
-    `/startup` on the floppy the turtle then walks away from. Test 88.
+    `/startup` on the floppy the turtle then walks away from -- and the
+    program itself stays on the floppy, so nothing can restart it. Test 88.
+    Corrected the same day: `fs` resolves a relative path from the root, so the
+    copies were always landing on the turtle. `shell.run` does not -- it
+    resolves against the shell's directory, `/disk` on this route -- so the
+    handover has to name `/quarry.lua`, which is why turtle 2 printed the
+    install line and then did nothing.
 
 15. **A turtle above or below is waited for, not halted on.** `giveWay` was
     only wired into horizontal moves; a vertical one went straight to `clear()`,

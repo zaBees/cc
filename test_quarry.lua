@@ -612,9 +612,9 @@ local function mkworldenv()
     V.log[#V.log + 1] = table.concat(t, " ")
   end
 
-  -- CC resolves a path against the shell's directory, so "disk/quarry" and
-  -- "/disk/quarry" are the same file. The stub keys on the string, so make
-  -- them the same string.
+  -- CC resolves an fs path from the root, so "disk/quarry" and "/disk/quarry"
+  -- are the same file. The stub keys on the string, so make them the same
+  -- string.
   local function nn(n) return (n:gsub("^disk/", "/disk/")) end
   env.fs = {
     exists = function(n)
@@ -2692,7 +2692,9 @@ assert(V.files["quarry.lua"] == "-- the copy on the floppy",
   "it did not install itself onto the turtle:\n" .. log)
 assert(V.files["quarry.conf"], "it left the config on the floppy:\n" .. log)
 assert(V.files["quarry.state"], "it left the claim anchor on the floppy:\n" .. log)
-assert(V.ran and V.ran[1] == "quarry.lua" and V.ran[2] == "2",
+-- /quarry.lua, not quarry.lua: shell.run resolves against the shell's
+-- directory, which is /disk here, so a bare name is looked for on the floppy.
+assert(V.ran and V.ran[1] == "/quarry.lua" and V.ran[2] == "2",
   "it did not hand the run over to the installed copy:\n" .. log)
 assert(not log:find("descend"), "it mined from the floppy anyway:\n" .. log)
 

@@ -390,8 +390,10 @@ end
 -- gps.locate's own default is 2s, which is one round trip to four hosts and no
 -- slack. A rebuilt constellation at the edge of modem range answers late rather
 -- than not at all, and this is called about four times in a whole run, so the
--- extra wait is free and a false NO FIX is not.
-local GPS_TIMEOUT = 5
+-- extra wait is free and a false NO FIX is not. Raised from 5s to 10s on the
+-- user's instruction 2026-08-28: a whole run pays 40s at worst, and a NO FIX
+-- underground costs a trip out to the turtle.
+local GPS_TIMEOUT = 10
 
 local function locate(conf)
   if conf.startX and conf.startY and conf.startZ then

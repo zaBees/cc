@@ -43,23 +43,25 @@ coal has ever been handed out, and two turtles have never run at once.
 
 ## Next action
 
-**Clear the two chests turtle 1 built, update, run `quarry 1` again.**
+**Run it from the surface again.** The user cleared the blockers on
+2026-08-28 night: both depot chests are broken and their contents recovered
+(turtles 2 and 3, the drive, the floppy, the modems, the coal), turtle 1 has
+been carried back up to the surface, and `quarry.state` is deleted. So the next
+run is a fresh start with a live GPS fix, not a resume.
 
-Turtle 1 is standing at the depot at 248,-59,711 where it stopped, and gets no
-GPS fix down there — that is the range falling off with depth, not a broken
-constellation. Since this build it resumes on `quarry.state` instead of
-refusing, so it can be started where it stands.
+1. **`update`** on the turtle, to get the depot-under-the-floor build.
+2. **`quarry 1 --check`** and read the `position:` line against F3. Nobody has
+   ever confirmed the turtle's fix matches the real world, and the pattern
+   anchors to absolute coordinates — a wrong origin mines a correct claim in
+   the wrong place.
+3. **Place it where it launched from before** if the trunk and depot already cut
+   at 248,-59,711 are to be reused. The claim anchors to the launch block: the
+   old run anchored at 243,73,734, claim x 224..271, z 704..751. Launched from
+   somewhere else it cuts a fresh trunk somewhere else, which is correct
+   behaviour and probably not what is wanted.
+4. **A barrel in the hold**, then `quarry 1`.
 
-1. **Go to 248,-59,711 and break both chests** — one at 247,-59,711 and one at
-   248,-59,712. **Turtles 2 and 3, the disk drive, the floppy and the modems
-   are inside one of them**, along with 194 coal and a run's worth of ore: the
-   old dump treated the whole deployment kit as spoil. Take everything back.
-   The chests must go, not just be emptied — the fixed build still reads a
-   container beside the floor as a depot, and it is still in the pattern's way.
-2. **Re-download** (`delete quarry`, then the `wget`), give turtle 1 a barrel
-   or two, and **run `quarry 1`**. It digs out the block under the trunk floor,
-   puts the container there and banks its coal into it.
-3. Then run turtle 2 and watch it dock: dump, ration, restock.
+Then run turtle 2 and watch it dock: dump, ration, restock.
 
 ## What shipped 2026-08-28 evening
 

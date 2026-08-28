@@ -14,9 +14,11 @@ design. An asserted replace is fine; a hopeful one is not.
 whole and unedited: the phase narratives, the code review, the four failed
 deploy runs, the probe results, and — moved there on 2026-08-28 — the four
 dated shipping logs of that day, the GPS outage that is over, and the `--check`
-audit that has been acted on. This file carries the state, the rules and the
-next action. Go there for the reasoning behind anything stated flatly here, or
-when something settled starts misbehaving again.
+audit that has been acted on. **This file carries only what a session needs in order to write code**: the
+state, the settled design, the corrections, the conventions and the next run to
+ask for. What the player places, presses and downloads is `SETUP.md`'s job. Go
+to the history for the reasoning behind anything stated flatly here, or when
+something settled starts misbehaving again.
 
 ---
 
@@ -48,56 +50,27 @@ is a level up rather than beside it.
 
 ## Next action
 
-**Run it from the surface**, from the same launch block as `Rpv9m`
-(243,73,734), carrying **a barrel, turtles 2 and 3, the drive and the floppy**.
+The code is ready. The run to ask for: **`update`, then `quarry 1` from the
+same launch block as `Rpv9m` (243,73,734)**, carrying a barrel, turtles 2 and
+3, the drive and the floppy. `SETUP.md` is the player-facing version of this
+and of everything they have to place.
 
-1. **`update`** on the turtle.
-2. **`quarry 1 --check`**, and read the `position:` line against F3. Nobody has
-   ever confirmed the turtle's fix matches the real world, and the pattern
-   anchors to absolute coordinates — a wrong origin mines a correct claim in
-   the wrong place. The same `--check` reports the kit; believe it.
-3. **Launch from the same block** to reuse the trunk already cut at
-   248,-59,711. The claim anchors to the launch block: `Rpv9m` anchored at
-   243,73,734, claim x 224..271, z 704..751. Somewhere else cuts a fresh trunk
-   somewhere else, which is correct and probably not what is wanted.
-4. **`quarry 1`.** With the kit aboard it now deploys turtles 2 and 3 at the
-   launch block before it descends — `deploy : turtles in the hold -- staffing
-   the mine before I descend` — and only then crosses to its trunk.
-   `quarry 1 deploy` still does the deployment alone if that is wanted.
-5. **Optional, and the only way to hear from the mine:** a computer with a
-   wireless modem near the claim running `alert`. A full depot broadcasts on
-   the `quarry` protocol; nothing else does yet.
+What to read in the log that comes back:
 
-**Expect `depot  : the floor under the trunk will not open — placed a container
-beside the trunk at y=-58 instead`** (a plain `--` in the real line). That is
-the bedrock fallback working, not a fault. `nothing beside the trunk will open`
-instead means all three candidate spots refused to be dug; read the lines above
-it.
-
-**Two rows of the old trunk level are gone for good.** `Rpv9m` reported
-`taken  : y=-59 z=711 is already cut`, and the same for z=706 — its own earlier
-work, read back as another turtle's once `quarry.state` was deleted.
-`mouthTaken()` cannot tell the difference and by design does not try.
-Restarting over an old mine costs those rows; it is not a bug.
-
-Then watch a dock: dump, ration, restock. That is the untested half of Phase 3.
-
-**Fast-forward the run with `/tick sprint`.** A mining run is hours of real time
-and almost all of it is the turtle moving, which is tick-bound, so the vanilla
-1.20.3+ tick commands compress it:
-
-```
-/tick sprint 20000     -- run 20,000 ticks as fast as the server can, ~17 min of game time
-/tick sprint stop      -- back to normal before the sprint finishes
-/tick query            -- what the rate is now
-```
-
-Cheats or op are needed. The client looks frozen or badly lagged while a sprint
-runs — that is the server ticking flat out, not a crash. **Stay put while it
-runs:** the claim is loaded because the player stands in the centre chunk, and
-nothing else loads it. A sprint does not speed up the turtle's own computer
-budget, only the clock it moves on, so expect a large speed-up rather than an
-instant one.
+- **`position:` against F3.** Nobody has ever confirmed the turtle's fix
+  matches the real world, and the pattern anchors to absolute coordinates — a
+  wrong origin mines a correct claim in the wrong place.
+- **`deploy : turtles in the hold -- staffing the mine before I descend`**, then
+  `deploy : 2 of 2 deployed`. That path has never run in-game.
+- **`depot  : the floor under the trunk will not open -- placed a container
+  beside the trunk at y=-58 instead`.** That is the bedrock fallback working,
+  not a fault. `nothing beside the trunk will open` means all three candidate
+  spots refused to be dug; read the lines above it.
+- **A dock**: dump, ration, restock. Rationing has never handed out coal.
+- **`taken  : y=-59 z=711 is already cut`** and the same for z=706 is expected
+  on this claim: `Rpv9m`'s own work, read back as another turtle's once
+  `quarry.state` was deleted. `mouthTaken()` cannot tell the difference and by
+  design does not try. Restarting over an old mine costs those rows.
 
 ## What shipped on 2026-08-28
 
@@ -173,87 +146,40 @@ ore after 64 blocks, says `work complete` on an empty tank), `4b9IM` (Phase 1,
 
 ## Delivery goes through GitHub
 
-Changed 2026-08-28 at the user's instruction. The repo is
-**https://github.com/zaBees/cc**, public, and this directory is now that repo's
-working tree -- it had no version control before, which is why the standing
-rule says there is no undo. There is one from here.
+The repo is **https://github.com/zaBees/cc**, public, and this directory is its
+working tree. **Ship a fix by pushing**, then telling the user to run `update`.
 
-```
-delete quarry
-wget https://raw.githubusercontent.com/zaBees/cc/main/quarry.lua quarry
-
-delete probe
-wget https://raw.githubusercontent.com/zaBees/cc/main/probe.lua probe
-```
-
-**Get `update` onto each turtle once and the two-line ritual is over.** From
-then on a redelivery is `git push` here and `update` in-game:
-
-```
-delete update
-wget https://raw.githubusercontent.com/zaBees/cc/main/update.lua update
-```
-
-And on the computer that is to hear from the mine:
-
-```
-delete alert
-wget https://raw.githubusercontent.com/zaBees/cc/main/alert.lua alert
-```
-
-```
-update            -- every program: quarry, alert and update itself
-update quarry     -- just that one
-```
-
-It writes to `<name>.new` and moves it into place, so a download that fails
-leaves the working copy alone; it refuses an empty body and an HTML 404 page;
-it appends `?t=<epoch>` to defeat the CDN cache described below; and it prints
-`quarry: N bytes, fletcher32 N`, the same number `attic/sumfile.lua` prints, so
-a delivery can be checked against the local file without transcribing anything.
-Configs are never touched. `test_update.lua` covers all of that under
-`lua5.3`.
-
-**The URL never changes.** That is the whole point of the switch: paste.rs ids
-were immutable, so every edit meant a fresh id written into three places and
-transcribed by eye, with `0`/`O` and `l`/`1` slips costing a round trip. A
-redelivery is now `git push`, and the user re-runs the same two lines.
-
-Still true for a hand-typed download, and the reason `update` exists:
-**every download is TWO lines.** CC's
-`wget` refuses to overwrite an existing file -- it prints `File already exists`,
-downloads nothing, and reads like success. No force flag, and the CC shell has
-no `&&` or `;`.
-
-**Verify after a push** by fetching the raw URL back here and diffing it against
-disk -- but fetch the **commit-pinned** URL, not the branch one:
+**Verify every push against the commit-pinned URL, never the branch one:**
 
 ```
 curl -sS https://raw.githubusercontent.com/zaBees/cc/$(git rev-parse HEAD)/quarry.lua
 ```
 
-The `/main/` URL is CDN-cached and was still serving the previous build more
-than two minutes after a push on 2026-08-28, which looks exactly like a failed
-push. The commit-pinned URL is not cached that way and settles it immediately.
-The cache matters to the user too: if they re-download within a few minutes of
-being told a build is ready, they can get the old one. Tell them to wait a
-moment and repeat the two lines.
+The `/main/` URL is CDN-cached and served the previous build for more than two
+minutes after a push on 2026-08-28, which looks exactly like a failed push. The
+same cache can hand the user a stale file if they re-download immediately.
 
-**paste.rs is retired.** It stopped accepting uploads over roughly 80,000 bytes
-on 2026-08-28 (nginx 500; even the 96,594-byte file already live as `3PcMy`
-could no longer be re-uploaded), and quarry.lua is past 100,000. Old pastes are
-still fetchable, so the historic builds can be read: `3PcMy` quarry, `4uJB7`
-probe, and the superseded ids listed under Delivered.
+`update` replaces `quarry`, `alert` and itself: it writes `<name>.new` and moves
+it into place, so a failed download leaves the working copy alone; it refuses an
+empty body and an HTML 404 page; it appends `?t=<epoch>` to defeat that cache;
+and it prints `quarry: N bytes, fletcher32 N` to check a delivery against the
+local file. Configs are never touched. `test_update.lua` covers all of it.
 
-**cloudcat is archived in `attic/` and is not to be used unless the user asks
-for it.** It works and it is the fallback if GitHub is ever unreachable in-game;
-`attic/test_cloudcat.py` still passes from where it sits. What it does: pushes a
-file straight into the game over cloud-catcher, splitting it across packets and
-stitching it back, so nothing is transcribed at all. It needs `websockets`
-(not installable system-wide here under PEP 668 -- use a venv) and the in-game
-computer running `cloud <token>`. `attic/sumfile.lua` is its verifier: pushed to
-the machine, it prints the file's fletcher32 to compare against
-`cloudcat.fletcher32` locally, because a file over ~18 KB cannot be pulled back.
+**A hand-typed download is always TWO lines**, `delete <name>` then the `wget`.
+CC's `wget` refuses to overwrite an existing file — it prints `File already
+exists`, downloads nothing, and reads like success. No force flag, and the CC
+shell has no `&&` or `;`. `SETUP.md` carries the lines for the user.
+
+**paste.rs is retired for delivery** — it began refusing uploads over ~80,000
+bytes on 2026-08-28 and `quarry.lua` is past 120,000 — but the program still
+POSTS its own crash reports there and that side works fine. Old pastes are
+still fetchable, so the historic builds can be read.
+
+**cloudcat is archived in `attic/`. Do not use it unless the user asks for it
+by name.** It is the fallback if GitHub is ever unreachable in-game: it pushes
+a file into the game over cloud-catcher, split across packets and stitched
+back. It needs `websockets` (not installable system-wide here under PEP 668)
+and the in-game computer running `cloud <token>`.
 
 ## Files
 
@@ -515,41 +441,6 @@ check for it.
 quarry prints no `WARNING:`. **A placed turtle inherits nothing**: fuel 0, no
 label, no modem, empty inventory. **Facing does not matter** — `calibrate()`
 derives a heading by moving one block and diffing GPS.
-
-## Blocks the user must place before a run
-
-- **A barrel UNDER the bottom block of a trunk.** That is the depot; the
-  turtles find it by looking down, and one container serves all three. Coal in
-  it. **Not beside the floor** — every side of it is a working row, and a
-  container there stops the run. A barrel rather than a chest because the
-  turtle stands on this one and a chest with a block above it will not open by
-  hand. **Since Phase 5 this is optional**: a turtle that reaches its trunk
-  floor still carrying a container digs the block out from under itself, places
-  it and banks its own coal into it. A hand-placed depot still takes priority.
-- **Optional: a disk drive with a floppy** beside the trunk floor — the shared
-  lava map, and the only channel by which one turtle can hand code to another.
-  A drive on a side does eventually get mined out, which costs the map and
-  nothing else.
-- **Do not hand-dig down.** Each turtle cuts its own trunk and that shaft is
-  the way in.
-- **Launch all three within a few blocks of each other**, ideally the same
-  chunk. The claim comes from the launch block, so turtles launched far apart
-  get different claims and mine different regions.
-
-## Waiting on the user
-
-- **The `passed over:` line from a real run** — this pack's real ore ids, which
-  is how `[oreNames]` in `quarry.conf` learns what Create and Mekanism call
-  things here.
-- **192 coal or charcoal**, a stack per turtle. The only thing the kit audit
-  was ever short of, along with a third wireless modem.
-- **Turtle 2 out of the deployment spot.** It was left standing there with a
-  seeded DRY config, and `deploy` needs that block clear. A broken turtle can
-  come back with its modem attached as an upgrade rather than as a loose item,
-  in which case the audit reads two modems and says `SHORT 1`. Believe the
-  audit: a turtle with no modem cannot GPS, so it cannot resume.
-- The two chests turtle 1 built at 248,-59,711 have been broken and their
-  contents recovered — that blocker is cleared.
 
 ## Conventions that govern the code
 

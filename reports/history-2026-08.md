@@ -672,7 +672,6 @@ summary of the day and the state that came out of it.
 
 ## What shipped 2026-08-28 evening
 
-
 All tested under `lua5.3`, every regression confirmed to fail against its own
 unfixed code. `test_quarry.lua` was 55 checks at that point and is 57 now.
 
@@ -695,7 +694,6 @@ unfixed code. `test_quarry.lua` was 55 checks at that point and is 57 now.
   itself again. Tests 54, 55.
 
 ## What shipped 2026-08-28 night
-
 
 Both from run `45bPE`, both confirmed to fail against the build that produced
 that log.
@@ -742,7 +740,6 @@ that log.
 
 ## What shipped 2026-08-28 late night
 
-
 Both from run `Rpv9m`, both confirmed to fail against the build that produced
 that log. `test_quarry.lua` is 62 checks now, tests 62 and 63.
 
@@ -777,7 +774,6 @@ that log. `test_quarry.lua` is 62 checks now, tests 62 and 63.
   floor`: it may now be a level above it.
 
 ## What shipped 2026-08-28, last
-
 
 Both at the user's instruction. `test_quarry.lua` is 66 tests now; 65 and 66
 were both confirmed to fail against the build before them.
@@ -815,7 +811,6 @@ were both confirmed to fail against the build before them.
 
 ## Storage is one word list now, not four
 
-
 Added 2026-08-28 late night at the user's request, for Sophisticated Storage.
 
 `STORAGE = { "chest", "barrel", "shulker", "crate", "item_vault" }`, matched as
@@ -844,12 +839,10 @@ run with `the depot chest is full`, and one box now serves all three turtles.
 
 ## GPS was down on 2026-08-28 evening and is up again
 
-
 The user fixed the constellation that night. Run `45bPE` opened with
 `quarry 1  at 243,73,734` and mined a claim anchored there, so `gps.locate` is
 answering and `startX/Y/Z` are out of `quarry.conf`. What follows is kept
 because the constellation has now failed once and may again.
-
 
 
 `gps.locate` returns nil on turtle 1 with a modem equipped, so **no GPS host is
@@ -874,7 +867,6 @@ refuses to start until one of the two above is done.
 
 ## Still outstanding from the 2026-08-28 `--check` (`u8p0M`)
 
-
 - `wireless modem 2 of 3 SHORT 1` — the known case: turtle 2's modem came back
   as an attached upgrade, not a loose item. Believe the audit; a turtle with no
   modem cannot GPS, so it cannot resume.
@@ -890,3 +882,46 @@ refuses to start until one of the two above is done.
 After that the untested ground is **two turtles working at once** (the
 right-of-way rules in `giveWay`/`stepAside`), and the **`passed over:` line**
 from a run that finds ore, which is how the config learns this pack's ore ids.
+
+---
+
+# Also moved out of RESUME.md on 2026-08-28
+
+At the user's instruction: RESUME.md keeps only what a session needs in order
+to write code. What the player places before a run, and what the mine is
+waiting on them for, are `SETUP.md`'s job and are kept here.
+
+## Blocks the user must place before a run
+
+- **A barrel UNDER the bottom block of a trunk.** That is the depot; the
+  turtles find it by looking down, and one container serves all three. Coal in
+  it. **Not beside the floor** — every side of it is a working row, and a
+  container there stops the run. A barrel rather than a chest because the
+  turtle stands on this one and a chest with a block above it will not open by
+  hand. **Since Phase 5 this is optional**: a turtle that reaches its trunk
+  floor still carrying a container digs the block out from under itself, places
+  it and banks its own coal into it. A hand-placed depot still takes priority.
+- **Optional: a disk drive with a floppy** beside the trunk floor — the shared
+  lava map, and the only channel by which one turtle can hand code to another.
+  A drive on a side does eventually get mined out, which costs the map and
+  nothing else.
+- **Do not hand-dig down.** Each turtle cuts its own trunk and that shaft is
+  the way in.
+- **Launch all three within a few blocks of each other**, ideally the same
+  chunk. The claim comes from the launch block, so turtles launched far apart
+  get different claims and mine different regions.
+
+## Waiting on the user
+
+- **The `passed over:` line from a real run** — this pack's real ore ids, which
+  is how `[oreNames]` in `quarry.conf` learns what Create and Mekanism call
+  things here.
+- **192 coal or charcoal**, a stack per turtle. The only thing the kit audit
+  was ever short of, along with a third wireless modem.
+- **Turtle 2 out of the deployment spot.** It was left standing there with a
+  seeded DRY config, and `deploy` needs that block clear. A broken turtle can
+  come back with its modem attached as an upgrade rather than as a loose item,
+  in which case the audit reads two modems and says `SHORT 1`. Believe the
+  audit: a turtle with no modem cannot GPS, so it cannot resume.
+- The two chests turtle 1 built at 248,-59,711 have been broken and their
+  contents recovered — that blocker is cleared.

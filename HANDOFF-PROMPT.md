@@ -47,12 +47,6 @@ cap topY on purpose: with a full depot no longer stopping a run, an uncapped
 world mines its whole third and the suite takes a minute instead of nine
 seconds.
 
-In-game, tell the user to fast-forward with the vanilla tick commands rather
-than watching a run in real time: `/tick sprint 20000` runs 20,000 ticks as
-fast as the server can, `/tick sprint stop` ends it early. The client looks
-frozen while it runs, and they must stay put -- the player standing in the
-centre chunk is the only thing keeping the claim loaded.
-
 DESIGN. Settled. Do not reopen anything in RESUME.md's "Settled" list and do
 not reintroduce anything in its "Corrections already made" list. If you think a
 settled decision is wrong, say so and wait; do not quietly redesign. Two

@@ -26,11 +26,13 @@ restocking their own coal, and surviving being killed at any instruction.
 | Gravity-block handling as an explicit pass | `turtle_files/actions.lua:767` |
 | Dump-with-omit-list, so fuel is never dumped | `turtle_files/actions.lua:460` `dump_items` |
 | Fuel budgeting before departure | `hub_files/whosmineisitanyway.lua:189` |
-| The linked-list queue past the drop and fuel chests | `hub_files/config.lua` `main_loop_route` |
 
 **Left behind:** the GPS-dependent hub, the monitor UI (937 lines), the pocket
 computer, the floppy-disk `require` tree, and chunky-turtle pairing — the pack
-has no Advanced Peripherals.
+has no Advanced Peripherals. **The linked-list queue past the drop and fuel
+chests** (`hub_files/config.lua` `main_loop_route`) was on the list to take and
+then was not built: it is for a hub with a monitor and any number of turtles,
+and three turtles at one box just wait. See section 5.
 
 **Broken on NeoForge 1.21.1:** `blocktags` keys `forge:ores`, which is now
 **`c:ores`**; `orenames` is a 1.12/1.16 mod list; `mine_levels` and the level
@@ -192,16 +194,39 @@ time one filled.
 
 ## 5. The depot
 
-**At the bottom, beside the trunks, at the claim floor.** Turtles never surface
-during normal operation.
+**At the claim floor, UNDER a trunk.** Turtles never surface during normal
+operation.
 
 A surface depot would cost roughly **240,000 fuel — about 3,000 coal — in
 commuting alone** across ~1,200 branch trips, and deepest-first ordering puts
 most of the work at the far end of that climb. The bottom depot roughly halves
 it. `recall` is how you collect and restock.
 
-Chests are shared, with turtles queued through them on the linked-list route
-lifted from Mastermine's `main_loop_route`.
+**One box, not two, and under the floor rather than beside it.** Every side of
+a trunk floor block is a working row — the branch legs run east–west through
+them, the spine north–south — so a container on a side is a block the pattern
+later walks into and refuses to dig, which ends that leg and then the run.
+Underneath is the one neighbour nothing ever mines. Bedrock scatters up through
+y=-60 and the floor stands at y=-59, so the block below usually will not open;
+the fallback is a niche beside the trunk one level UP. Spoil goes in and fuel
+comes out of the same box, which is what the ration is written for.
+
+**Found by looking, never configured.** One depot serves all three turtles: a
+turtle with none under its own trunk walks the spine to the others, once, and
+remembers the answer either way. It is never swept for on boot — that costs ~70
+dug blocks on a claim that has no container — only when a depot is actually
+needed.
+
+**A full depot does not stop the run.** What fills one is the junk tier, so a
+drop the depot refuses goes on the tunnel floor instead and the run carries on;
+a hold that still cannot be emptied of ore does stop it, because mining on
+would only destroy the drops. Either way the turtle broadcasts it on the rednet
+protocol `quarry`, which `alert.lua` prints on a computer — best effort, since
+a modem's range shrinks with depth.
+
+Mastermine's linked-list queue is **not** built: it was for a hub with a
+monitor and any number of turtles. Three turtles at one box wait, and waiting is
+the whole queue.
 
 ---
 
@@ -255,11 +280,14 @@ rounded up to whole items and capped at the tank. **Burn on pickup; carry no
 fuel items** — a coal in a slot is a slot not holding ore, and the tank is
 never the constraint. Coal beyond the target stays in the chest.
 
-**Ration the depot**: a turtle takes at most `available ÷ 3` per visit and
-never the last few items. Each turtle reads the chest itself, so there is no
-shared counter and no coordination. This stops the first turtle to dock from
-draining the chest and starving the other two, and it degrades gracefully as
-the chest empties.
+**Ration the depot by a FLOOR, not a fraction**: a turtle takes what the trip
+needs, down to `fuelFloor` coal per OTHER turtle (default 8, so 16 with three
+running), and takes nothing at all below that — which drops it into the
+designed forage path. A turtle cannot read a chest it is not wired to, so the
+count is learned by taking: pull the lot, keep the share, put the rest straight
+back. The original `available ÷ 3` made the shares unequal — on 300 coal three
+dockers took 100, then 66, then 44, each taking a third of what the last one
+left, and 90 sat there for good.
 
 Coal and the lava bucket are exempt from dumping and from the blacklist
 overflow valve, or the turtle throws away its own fuel supply.
@@ -467,7 +495,7 @@ All five are built and all five have run in-game. Phase 6 is not started.
 | 2 | One turtle, one branch: trunk descent, spine travel, vein chase, resume |
 | 3 | The depot cycle and fuel: dump, ration, restock, lava, foraging, the work loop |
 | 4 | Three turtles: air-mouth claiming, right of way, the shared depot, `recall` |
-| 5 | Deployment: the probe run, then `quarry 1 deploy` and `buildDepot` |
+| 5 | Deployment: the probe run, `buildDepot`, and turtles 2..N placed at the launch block — by `quarry 1 deploy`, or by a plain `quarry 1` that finds turtles in its hold |
 | 6 | Deferred: monitor display, and a full-clear `quarry` mode |
 
 Each phase forced design rules that writing it revealed — the depot is found
@@ -493,8 +521,9 @@ they stood on 2026-08-25, is in `reports/plan-2026-08-25-full.md`.
 - **`--scan` mode.** Rejected — a turtle in a fresh shaft sees four stone faces
   and learns nothing. Passive rejected-block logging instead, see section 6.
 - **Liquid sealing.** Deleted — turtles are lavaproof, see section 7.
-- **Fuel scheduler.** Not built. The 20,000 tank means fuel is never the reason
-  for a trip; foraging is a dry-depot fallback, see section 7.
+- **Fuel scheduler.** Not built. A tank of 20,000 or more — an advanced turtle
+  holds far more, and the program asks it rather than assuming — means fuel is
+  never the reason for a trip; foraging is a dry-depot fallback, see section 7.
 - **Vertical-shaft `canes` pattern.** Superseded by horizontal branches. It
   measures identically (20%, 0% unseen) and remains a valid fallback if branch
   routing proves troublesome.
@@ -547,7 +576,7 @@ worth having *before* you ride a shaft 130 blocks down.
 | Item | Count | What for |
 | --- | --- | --- |
 | Mining turtle | 2 | turtles 2 and 3 — turtle 1 is the one running |
-| Chest or barrel | 2 | the depot: one for ore, one you keep stocked with coal |
+| Chest or barrel | 1 | the depot: one box, ore in and coal out |
 | Disk drive | 1 | the lava map, and the only way to hand code to a turtle |
 | Floppy disk | 1 | goes in the drive |
 | Empty bucket | 3 | one per turtle; lava scooping is confirmed working here |

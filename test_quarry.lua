@@ -2214,4 +2214,26 @@ local n69 = 0
 for _ in pairs(sv69.done or {}) do n69 = n69 + 1 end
 assert(n69 >= 2, "only " .. n69 .. " row(s) were written off:\n" .. log)
 
+-- 70. a corridor held by another turtle costs a leg, not the row --------------
+
+-- The mouth check reads air at a branch mouth as somebody else's claim, and
+-- the turtle that had just cut that mouth itself, given the branch up to a
+-- turtle standing in the corridor, walked back to it and wrote its own work
+-- off. The row went in st.done with 40 of its 48 blocks still solid, and
+-- nothing ever came back for it -- rows skipped, in-game 2026-08-28.
+world({ conf = "topY = -59\ntripBlocks = 100000\n" .. SECTIONS, fuel = 200000,
+        blocks = { [k3(BX, BY - 1, BZ)] = "minecraft:barrel",
+                   [k3(BX - 6, BY, BZ)] = "computercraft:turtle_normal" },
+        chests = { [k3(BX, BY - 1, BZ)] = { { name = "minecraft:coal", count = 64 } } } })
+ok, err, log = runWorld("1")
+assert(ok, "the held-corridor run crashed: " .. tostring(err))
+assert(log:find("giveway: the way is still held"), "it never gave the leg up:\n" .. log)
+assert(not log:find("taken  : y=%-59 z=%-57"),
+  "it read its own mouth as another turtle's claim:\n" .. log)
+-- the far side of the parked turtle is all it loses: the east leg is cut
+for x = BX + 1, 159 do
+  assert(blockAt(x, BY, BZ) == nil,
+    ("the east leg went with the held one: %d,%d,%d is still solid"):format(x, BY, BZ))
+end
+
 print("all quarry phase 5 checks passed")

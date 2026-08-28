@@ -222,6 +222,7 @@ local st = {
   -- phase 3
   depot   = nil,    -- { x, y, z, dump = dir, fuel = dir } -- found, never configured
   done    = {},     -- ["y:z"] = true for a branch this turtle has finished
+  cut     = {},     -- ["y:z"] = { west = true, east = true } for a row in progress
   carried = 0,      -- blocks dug since the last dump; tripBlocks forces a trip
   trips   = 0, hauled = 0, junked = 0, scooped = 0,
   lava    = {},     -- sources seen this trip, merged into /disk/lava.txt when docked
@@ -1452,11 +1453,22 @@ local function mineLeg(c, conf, l, leg, inward)
       -- A wasted trip beats a stuck turtle [plan 8].
       if jammed then
         jammed = false
-        -- the whole pair goes back on the pile, not just this leg: the plan
-        -- routes through the corridor that is still held
+        -- The leg is given up, not the row: the rest of the pair routes through
+        -- the corridor that is still held, so the plan goes back on the pile,
+        -- but the other leg of this row is clear and st.cut remembers which is
+        -- which. Writing the whole row off is what the mouth check used to do,
+        -- and it cost the far leg every time [in-game 2026-08-28].
+        local k = doneKey(st.level, st.branch)
+        st.cut = st.cut or {}
+        st.cut[k] = st.cut[k] or {}
+        st.cut[k][st.leg] = true
+        if st.cut[k].west and st.cut[k].east then
+          st.done = st.done or {}
+          st.done[k], st.cut[k] = true, nil
+        end
         st.needDock, st.branch, st.plan, st.step = true, nil, nil, nil
         save()
-        sayf("giveway: the way is still held -- going back to the depot to re-pick")
+        sayf("giveway: the way is still held -- giving that leg up and re-picking")
         return false
       end
       if not endLeg() then return false end
@@ -1972,12 +1984,22 @@ end
 -- mouth. With no second row to pair with, the row is cut on its own and the
 -- walk back to the spine is the price of the last leg.
 local function pairPlan(c, y, a, lo, hi)
-  st.done = st.done or {}
+  st.done, st.cut = st.done or {}, st.cut or {}
+  -- A row this turtle has already been down is finished leg by leg, out of the
+  -- spine, not paired with anything: the legs it still owes are whatever the
+  -- interruption left, and they are not in the order a pair walks.
+  local ca = st.cut[doneKey(y, a)]
+  if ca and not (ca.west and ca.east) then
+    local rest = {}
+    if not ca.west then rest[#rest + 1] = { z = a, leg = "west" } end
+    if not ca.east then rest[#rest + 1] = { z = a, leg = "east" } end
+    return rest
+  end
   local b
   for d = 5, math.max(hi - lo, 5), 5 do
     for _, z in ipairs({ a + d, a - d }) do
       if not b and z >= lo and z <= hi and isBranch(c, y, z)
-         and not st.done[doneKey(y, z)] then b = z end
+         and not st.done[doneKey(y, z)] and not st.cut[doneKey(y, z)] then b = z end
     end
     if b then break end
   end
@@ -2497,15 +2519,27 @@ local function runMine(conf, l, index)
 
     -- Only the first leg starts at an untouched mouth, and only there does an
     -- air mouth mean somebody else's branch. The rest of the pair is entered
-    -- from the rim, on rows inside this turtle's own third.
-    if st.step == 1 and not st.leg and mouthTaken() then
-      sayf("taken  : y=%d z=%d is already cut -- another turtle has it", st.level, st.branch)
-      st.done = st.done or {}
-      st.done[doneKey(st.level, st.branch)] = true
-      st.plan, st.step, st.branch, st.leg, st.along = nil, nil, nil, nil, 0
-      save()
-      goto nextpass
+    -- from the rim, on rows inside this turtle's own third. A row st.cut knows
+    -- about is one this turtle opened itself: reading that air as somebody
+    -- else's threw the rest of the row away every time a corridor was held
+    -- long enough to give the branch up [in-game 2026-08-28].
+    st.cut = st.cut or {}
+    if st.step == 1 and not st.leg then
+      if st.cut[doneKey(st.level, st.branch)] then
+        sayf("resume : y=%d z=%d is my own row, %s leg still to cut",
+          st.level, st.branch, job.leg)
+      elseif mouthTaken() then
+        sayf("taken  : y=%d z=%d is already cut -- another turtle has it", st.level, st.branch)
+        st.done = st.done or {}
+        st.done[doneKey(st.level, st.branch)] = true
+        st.plan, st.step, st.branch, st.leg, st.along = nil, nil, nil, nil, 0
+        save()
+        goto nextpass
+      end
     end
+
+    st.cut[doneKey(st.level, job.z)] = st.cut[doneKey(st.level, job.z)] or {}
+    save()
 
     if not mineLeg(c, conf, l, job.leg, job.inward) then
       -- a dock request goes round the loop again; anything else is a real stop
@@ -2526,15 +2560,16 @@ local function runMine(conf, l, index)
     end
 
     st.step, st.leg = st.step + 1, nil
-    -- A row is finished when no leg of it is left in the plan, which for the
-    -- second row of a pair is one leg before the end. Marking both rows only
-    -- at the end of the pair meant a run that stopped in the middle recorded
-    -- nothing and re-cut it all on the next start.
+    -- The leg is cut. An obstacle can end it short, but mineLeg only comes back
+    -- true when there is nothing left to do on it either way, and the row is
+    -- finished once both its legs say so. Recording it here rather than at the
+    -- end of the pair is what lets an interrupted row be picked up leg by leg.
     st.done = st.done or {}
-    for _, j in ipairs(st.plan) do
-      local rest = false
-      for k = st.step, #st.plan do if st.plan[k].z == j.z then rest = true end end
-      if not rest then st.done[doneKey(st.level, j.z)] = true end
+    local key = doneKey(st.level, job.z)
+    st.cut[key] = st.cut[key] or {}
+    st.cut[key][job.leg] = true
+    if st.cut[key].west and st.cut[key].east then
+      st.done[key], st.cut[key] = true, nil
     end
     -- the pair is cut and the turtle is back at the first row's mouth
     if st.step > #st.plan then st.plan, st.step, st.branch, st.along = nil, nil, nil, 0 end

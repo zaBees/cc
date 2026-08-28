@@ -108,6 +108,12 @@ confirmed to fail against its own unfixed code:
     the player typed `+z` and got `no coordinates given, so I have taken none
     of them`.
 
+14. **Started off the floppy, it installs itself onto the turtle and re-runs
+    from there.** `cd disk` then `quarry` is what a player types on a deployed
+    turtle that did not boot [user, 2026-08-28], and every path quarry writes
+    is relative -- so that run puts `quarry.conf`, `quarry.state` and
+    `/startup` on the floppy the turtle then walks away from. Test 88.
+
 ## Next action
 
 The code is ready. The run to ask for: **`update`, then `quarry 1 deploy`**

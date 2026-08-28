@@ -3410,6 +3410,34 @@ if not turtle then error("run this on a turtle, not a computer", 0) end
 print("quarry starting")          -- liveness: silence after this line is a hang
 
 local args = { ... }
+
+-- Started off the floppy. `cd disk` then `quarry` is what a player reaches for
+-- when a deployed turtle did not boot itself, and it half-works: the mine runs,
+-- but quarry.conf, quarry.state and /startup are all relative paths, so they
+-- are written onto the FLOPPY -- which this turtle walks away from, taking its
+-- own memory with it. Install to the turtle and run that copy instead. This is
+-- what disk/startup does, minus the label, the modem and the fuel.
+local me = shell and shell.getRunningProgram and shell.getRunningProgram()
+if me and me:gsub("^/", ""):sub(1, 5) == "disk/" then
+  say("startup: I am running off the floppy, where nothing I write survives me.")
+  say("         Installing to this turtle and starting that copy instead.")
+  for _, n in ipairs({ "quarry", "quarry.lua" }) do
+    if fs.exists(n) then fs.delete(n) end
+  end
+  fs.copy(me, "quarry.lua")
+  -- Same anti-drift rules as the boot script: take the deployer's config and
+  -- claim anchor, and never overwrite a state file this turtle already has.
+  if fs.exists("/disk/quarry.conf") and not fs.exists(CONF) then
+    fs.copy("/disk/quarry.conf", CONF)
+    say("startup: took the deployer's quarry.conf")
+  end
+  if fs.exists("/disk/quarry.state") and not fs.exists(STATE) then
+    fs.copy("/disk/quarry.state", STATE)
+    say("startup: took the deployer's claim anchor")
+  end
+  say("startup: installed as quarry.lua -- `quarry <n>` from now on")
+  return shell.run("quarry.lua", table.unpack(args))
+end
 local index, mode = nil, nil
 for _, a in ipairs(args) do
   if a == "--check" then mode = "check"

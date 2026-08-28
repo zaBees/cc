@@ -630,6 +630,7 @@ program — the other two ride in turtle 1's inventory as items.
 | `a turtle is already standing here -- adopting it` | A turtle from an earlier deploy never booted and is still in the spot. It is not in the way, it *is* that turtle: the deploy switches it on and feeds it where it stands, rather than refusing. |
 | `the drive from the last run is still here -- reusing it` | Normal on every deploy after the first. The drive and floppy are told to stay put, so the next deploy picks them up again instead of failing. |
 | `I cannot read "..."` after typing a heading | Type any of `0`/`+z`/`south`, `1`/`-x`/`west`, `2`/`-z`/`north`, `3`/`+x`/`east`. It asks again for just that one answer and keeps the coordinates you already typed. Enter on its own still gives up. |
+| You have to `cd disk` to find `quarry` on a deployed turtle | It never ran its boot script, so nothing was copied to the turtle itself. Run `disk/startup` instead — that does the whole job. If you do start it off the floppy, it now installs itself onto the turtle and restarts from there; otherwise its config, its state and its `/startup` all live on a floppy it walks away from. |
 | `turtles = 1 in quarry.conf, so there is nobody to deploy` | You lowered `turtles`. Raise it, or just run `quarry 1` and mine the whole claim with one. |
 
 ---

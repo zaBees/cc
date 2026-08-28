@@ -556,6 +556,7 @@ local function world(o)
     -- What a player types at a prompt, in order. Empty means nobody is at the
     -- keyboard, which is the /startup case and must never hang the mine.
     answers = o.answers or {}, asked = {},
+    running = o.running,             -- what shell.getRunningProgram() reports
   }
   V.files["quarry.conf"] = (o.conf or "") .. "dry = false\n"
   V.files["quarry"] = "-- the program itself, so deploy has something to copy"
@@ -611,15 +612,21 @@ local function mkworldenv()
     V.log[#V.log + 1] = table.concat(t, " ")
   end
 
+  -- CC resolves a path against the shell's directory, so "disk/quarry" and
+  -- "/disk/quarry" are the same file. The stub keys on the string, so make
+  -- them the same string.
+  local function nn(n) return (n:gsub("^disk/", "/disk/")) end
   env.fs = {
     exists = function(n)
+      n = nn(n)
       if n == "/disk" then return V.disk end
       return V.files[n] ~= nil
     end,
-    delete = function(n) V.files[n] = nil end,
-    move   = function(a, b) V.files[b], V.files[a] = V.files[a], nil end,
-    copy   = function(a, b) writeFile(b, V.files[a]) end,
+    delete = function(n) V.files[nn(n)] = nil end,
+    move   = function(a, b) a, b = nn(a), nn(b) V.files[b], V.files[a] = V.files[a], nil end,
+    copy   = function(a, b) writeFile(nn(b), V.files[nn(a)]) end,
     open   = function(n, m)
+      n = nn(n)
       if m == "w" then
         local buf = {}
         return { write = function(s) buf[#buf + 1] = s end,
@@ -644,8 +651,8 @@ local function mkworldenv()
     unserialise = function(s) return load("return " .. s)() end,
   }
 
-  env.shell = { getRunningProgram = function() return "quarry" end,
-                run = function() return true end }
+  env.shell = { getRunningProgram = function() return V.running or "quarry" end,
+                run = function(...) V.ran = { ... } return true end }
 
   -- A deployed turtle leaves under its own power, and the only signal the
   -- deployer has is the block in front going away. Model that as "after this
@@ -2666,6 +2673,37 @@ V.noGps = true
 ok, err, log = runWorld("1", "deploy")
 assert(log:find("no coordinates given"), "an empty heading did not stop it:\n" .. log)
 assert(not V.disk, "it deployed on a position it had guessed")
+
+
+-- 88. started off the floppy, it installs itself onto the turtle -----------
+-- `cd disk` then `quarry` is what a player types when a deployed turtle did
+-- not boot itself. Every path quarry writes is relative, so that run puts
+-- quarry.conf, quarry.state and /startup on the floppy the turtle walks away
+-- from.
+
+world({ running = "disk/quarry", disk = true })
+V.files["/disk/quarry"] = "-- the copy on the floppy"
+V.files["/disk/quarry.conf"] = "turtles = 3\ndry = false\n"
+V.files["/disk/quarry.state"] = '{["home"]={["x"]=1594,["y"]=77,["z"]=22}}'
+V.files["quarry.conf"], V.files["quarry.state"] = nil, nil
+ok, err, log = runWorld("2")
+assert(ok, "the run off the floppy crashed: " .. tostring(err))
+assert(V.files["quarry.lua"] == "-- the copy on the floppy",
+  "it did not install itself onto the turtle:\n" .. log)
+assert(V.files["quarry.conf"], "it left the config on the floppy:\n" .. log)
+assert(V.files["quarry.state"], "it left the claim anchor on the floppy:\n" .. log)
+assert(V.ran and V.ran[1] == "quarry.lua" and V.ran[2] == "2",
+  "it did not hand the run over to the installed copy:\n" .. log)
+assert(not log:find("descend"), "it mined from the floppy anyway:\n" .. log)
+
+-- a turtle that already has its own state keeps it
+world({ running = "/disk/quarry", disk = true })
+V.files["/disk/quarry"] = "-- the copy on the floppy"
+V.files["/disk/quarry.state"] = '{["home"]={["x"]=1,["y"]=2,["z"]=3}}'
+V.files["quarry.state"] = '{["home"]={["x"]=9,["y"]=9,["z"]=9}}'
+ok, err, log = runWorld("2")
+assert(ok, "the leading-slash run crashed: " .. tostring(err))
+assert(V.files["quarry.state"]:find("9"), "it overwrote the turtle's own state:\n" .. log)
 
 
 print("all quarry phase 5 checks passed")

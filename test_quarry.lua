@@ -1173,16 +1173,16 @@ assert((sv19.junked or 0) > 0, "the state file counted no junk")
 -- 20. lava: recorded on the map, and scooped when the tank is low ---------
 
 -- lavaFloor = 0 means never scoop a source the branch passes, so this is purely
--- the map. The depot is stocked and the top level is pulled down to y=-57
--- because a run that runs out of coal forages, and foraging takes a mapped
--- source whatever lavaFloor says -- which is the point of foraging. Before the
--- depot-full stop was lifted this world ended itself after a few docks, on a
--- chest the stub caps at 27 stacks; now the run lives until the claim does.
-world({ conf = "tripBlocks = 200\nlava = true\nlavaFloor = 0\ntopY = -57\n" .. SECTIONS, fuel = 2000,
+-- the map. One level and a stocked depot, because a run that goes dry forages,
+-- and foraging takes a mapped source whatever lavaFloor says -- that is what
+-- foraging is for. Before the depot-full stop was lifted this world ended
+-- itself after a few docks, on a chest the stub caps at 27 stacks; now it runs
+-- until the claim or the coal does, so the claim is made small.
+world({ conf = "tripBlocks = 200\nlava = true\nlavaFloor = 0\ntopY = -59\n" .. SECTIONS, fuel = 2000,
         disk = true,
         blocks = { [k3(DX, DY, DZ)] = "minecraft:chest",
                    [k3(145, BY - 1, BZ)] = "minecraft:lava" },
-        chests = coalChest(2000),
+        chests = coalChest(200),
         inv = { [16] = { name = "minecraft:bucket", count = 1 } } })
 ok, err, log = runWorld("1")
 assert(ok, "lava-map run crashed: " .. tostring(err))

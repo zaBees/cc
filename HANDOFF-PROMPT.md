@@ -1,197 +1,149 @@
 # Handoff prompt
 
-Paste this into a fresh session to resume the turtle mining build.
-Rewritten whole 2026-08-28 evening, updated that night, late that night, and
-last after the auto-deploy and full-depot changes.
+Paste the block below into a fresh session to resume the turtle mining build.
+Rewritten whole 2026-08-28 after the auto-deploy and full-depot build, when the
+four dated logs it had accreted were folded into one.
 
 ---
 
 ```
 Working in /home/ubuntu/mods/computer on a CC:Tweaked turtle mining program
 (quarry.lua). Read RESUME.md first, then MASTERMINE-PLAN.md, before doing
-anything else. RESUME.md was trimmed on 2026-08-28 to what a session needs to
-act; the history it used to carry -- phase narratives, the code review in full,
-the four failed deploy runs, the probe results -- is in
-reports/history-2026-08.md, complete and unedited. Do not read that up front.
-Go there when you need the reasoning behind something RESUME.md states flatly,
-or when something settled starts misbehaving again.
+anything else. RESUME.md carries the state, the rules and the next action;
+everything it has dropped -- the phase narratives, the code review, the four
+failed deploy runs, the probe results, the day's four shipping logs -- is in
+reports/history-2026-08.md, whole and unedited. Do not read that up front. Go
+there for the reasoning behind something RESUME.md states flatly, or when
+something settled starts misbehaving again.
 
-WHERE THE RUN STANDS, as of 2026-08-28 late night.
+WHERE THE RUN STANDS, 2026-08-28.
 
-Nothing is blocking a run: `update`, then `quarry 1` from the same launch
-block as Rpv9m (243,73,734) with a barrel aboard -- and with turtles 2 and 3,
-the drive and the floppy aboard too, because a plain `quarry 1` now deploys
-them at the launch block before it descends. `quarry 1 deploy` still exists and
-does only that.
+Nothing is blocking a run. On the turtle: `update`, then `quarry 1` from the
+same launch block as log Rpv9m (243,73,734), carrying a barrel, turtles 2 and
+3, the disk drive and the floppy. A plain `quarry 1` now deploys the other two
+at the launch block before it descends; `quarry 1 deploy` still does only the
+deployment. A full depot no longer stops the run -- the junk tier goes on the
+tunnel floor and the turtle broadcasts on the rednet protocol "quarry", which
+the new alert.lua prints on a computer. That message is best effort: a modem's
+range shrinks with depth, so a turtle at y=-59 may reach nobody. It is always
+in the uploaded log as well. Do not build anything that depends on it arriving.
 
-A full depot no longer stops the run: the junk tier goes on the tunnel floor
-and the turtle broadcasts on the rednet protocol "quarry", which the new
-`alert.lua` prints on a computer. Range shrinks with depth -- the same physics
-that keeps GPS off the claim floor -- so the message may reach nobody; it is
-always in the uploaded log as well. Do not build anything that depends on it
-arriving.
+Phases 1 to 5 are built and all five have run in-game. Phase 6 (monitor,
+full-clear mode) is deferred. What is unproven in-game is fuel rationing (every
+dock so far found the tank full), two turtles working at once, and the two
+changes in the last build.
 
-Run Rpv9m was the first with the depot-under-the-floor build and it could not
-build a depot at all: the block under the trunk floor is BEDROCK. Bedrock
-scatters up through y=-60 and the floor stands at y=-59, so on most trunks that
-block will not open. With no depot anywhere the run mined 39 blocks and then
-stopped over 192 coal it could have burned itself. Both are fixed here --
-buildDepot falls back to an x-side niche one level up, and spare coal only
-flags a dock when there is a depot to bank it into -- so expect the run to say
-"placed a container beside the trunk at y=-58 instead". That is the fallback
-working, not a fault.
+Expect the run to say "the floor under the trunk will not open -- placed a
+container beside the trunk at y=-58 instead". Bedrock scatters up through y=-60
+and the floor stands at y=-59, so on most trunks the block below will not open;
+that line is the fallback working, not a fault.
 
-Storage is one substring word list now -- chest, barrel, shulker, crate,
-item_vault -- and it answers all four questions the program asks about storage:
-what can be a depot, what is never dug, what stays in the hold as kit, and what
-the kit audit counts. Sophisticated Storage already matched on barrel and
-chest; Create's item_vault did not. Drawers and bins are deliberately off the
-list: they lock to one item type, so a mixed dump fails on the second stack.
-The depot is ONE box and the kit audit now asks for one, not two.
+TESTING. Run `lua5.3 test_quarry.lua`, `lua5.3 test_probe.lua` and `lua5.3
+test_update.lua` before and after any change. All must pass: 66 tests in
+test_quarry, about 9 seconds. When you fix a bug, add a test and verify it
+FAILS against the unfixed code -- eighteen tests have been confirmed
+non-vacuous that way and it is worth the extra minute every time. Test worlds
+cap topY on purpose: with a full depot no longer stopping a run, an uncapped
+world mines its whole third and the suite takes a minute instead of nine
+seconds.
 
-The run before it, 45bPE, is why the depot goes under the floor: it built its
-depot from the chests turtle 1 was carrying, put them on sides 0 and 1 of the
-trunk floor, and then stopped on them, because every side of that block is a
-working row and a container is on the never-dig list. It also posted turtles 2
-and 3, the drive, the floppy and the modems into a chest as spoil; isKit keeps
-them in the hold now. Those two chests have been broken and their contents
-recovered.
+In-game, tell the user to fast-forward with the vanilla tick commands rather
+than watching a run in real time: `/tick sprint 20000` runs 20,000 ticks as
+fast as the server can, `/tick sprint stop` ends it early. The client looks
+frozen while it runs, and they must stay put -- the player standing in the
+centre chunk is the only thing keeping the claim loaded.
 
-A crash they reported (URkmo, then td7FE) was `CRASHED: no position fix` while
-they said "gps locate works". Both were true: the turtle was parked at the
-depot at y=-59 with its modem equipped, and a wireless modem's range shrinks
-with depth, so the surface constellation simply does not reach the claim floor.
-locate() now falls back to quarry.state, which carries the heading GPS never
-gives. Expect this to come back in some other shape -- ask for the crash line
-or `quarry --check`, which name their own cause now, before theorising.
+DESIGN. Settled. Do not reopen anything in RESUME.md's "Settled" list and do
+not reintroduce anything in its "Corrections already made" list. If you think a
+settled decision is wrong, say so and wait; do not quietly redesign. Two
+entries changed on 2026-08-28 on new evidence rather than second thoughts: the
+GPS one, and the fuel ration, now a floor rather than a fraction because
+floor(total/3) gave three dockers 100, then 66, then 44 of a 300-coal chest.
+One probe finding was later overturned in-game -- "a turtle is not a peripheral
+to another turtle" was the probe looking from a position it had already left --
+so trust RESUME.md over the probe results wherever they disagree.
 
-GPS itself is UP: run 45bPE opened with `quarry 1  at 243,73,734`, so the
-constellation the user rebuilt answers and startX/Y/Z are out of quarry.conf.
-It has failed once already, so do not assume it.
+Storage is one substring word list: chest, barrel, shulker, crate, item_vault.
+It answers all four questions the program asks about storage. Drawers and bins
+are deliberately off it -- they lock to one item type, so a mixed dump fails on
+the second stack.
 
-Phases 1 to 5 are built and all five have run in-game. Turtle 1 deployed turtle
-2, which booted, equipped its modem, calibrated, descended to y=-59 and mined
-177 blocks; turtle 1 has since mined 251 of its own and docked. Phase 6
-(monitor, full-clear mode) is deferred and not started. Rationing has never
-actually handed out coal -- every dock so far found the tank full -- and two
-turtles have never run at once.
+GPS is up but not reliable. It answered on 2026-08-28 morning, was dead that
+evening, and was rebuilt that night. It does not reach the claim floor at all
+and never will: a wireless modem's range shrinks with depth. Every fix a run
+gets is taken at the launch block; from there it dead-reckons and quarry.state
+is what a turtle at the floor resumes on. A NO FIX crash now names which of its
+three causes it is and uploads gps.locate's own debug output -- read those
+`gps    :` lines before theorising, and if a log has none, it predates them.
 
-The design is settled. Do not reopen anything in RESUME.md's "Settled" list and
-do not reintroduce anything in its "Corrections already made" list. If you think
-a settled decision is wrong, say so and wait; don't quietly redesign. Two
-entries were changed on 2026-08-28 on new evidence, not on second thoughts --
-the GPS one above, and the fuel ration, which is now a floor rather than a
-fraction because the old floor(total/3) gave three dockers 100, then 66, then
-44 of a 300-coal chest. Note also that one probe finding was later overturned
-in-game -- "a turtle is not a peripheral to another turtle" was the probe
-looking from a position it had already left -- so trust RESUME.md over the
-probe results wherever they disagree.
-
-Invoke the cc-tweaked-pack skill before writing any Lua. Its peripheral dump
+WRITING LUA. Invoke the cc-tweaked-pack skill first. Its peripheral dump
 outranks the wiki for what methods exist -- but read its headers: the dump was
 taken from a COMPUTER (turtle=false), so it does not describe what a turtle
 sees. That distinction has already cost one wrong conclusion. If a method you
 need is not in the dump, say so and ask for a re-survey; do not guess it. For
 behaviour that belongs to another mod, read that mod's own jar and config off
-disk (unzip, javap -c, config/*.toml). No CC:Tweaked jar or config is present
-in this sandbox -- checked -- so CC mod-side behaviour has to come from the
-wiki at tweaked.cc or from the user.
+disk (unzip, javap -c, config/*.toml). No CC:Tweaked jar or config is in this
+sandbox -- checked -- so CC mod-side behaviour comes from tweaked.cc or from
+the user. CC:Tweaked is Lua 5.2: no // and no bitwise operators.
 
-Run `lua5.3 test_quarry.lua`, `lua5.3 test_probe.lua` and `lua5.3
-test_update.lua` before and after any change; all of them must pass, 66 tests
-in test_quarry, about 14 seconds. Test worlds cap `topY` on purpose: with a full
-depot no longer stopping a run, an uncapped world mines its whole third and the
-suite takes a minute. When you fix a bug, add a test and
-verify it FAILS against the unfixed code -- sixteen tests have been confirmed
-non-vacuous that way and it is worth the extra minute every time.
+DELIVERY IS GITHUB. This directory is the working tree of
+https://github.com/zaBees/cc (public). Ship a fix by pushing and telling the
+user to run `update`, which replaces quarry, alert and itself, defeats the CDN
+cache with a `?t=` query and prints each file's fletcher32.
 
-quarry.lua was code-reviewed on 2026-08-28 and ALL NINE findings are fixed, each
-with a regression test (40-48) confirmed against its own unfixed code.
-reports/code-review-quarry.md records what each one was; RESUME.md summarises
-them. Nothing from that review is outstanding -- do not go looking for the "six
-open findings" an older copy of this prompt mentions. Tests 49-55 are the
-2026-08-28 evening fixes: the tank limit read from the turtle instead of a
-literal 20000, the fuel floor, the calibration guard, and startDir. Tests 56-60
-and the rewritten 33 are that night's: the kit staying out of the depot, the
-depot going under the trunk floor, the NO FIX crash naming its own cause,
-quarry.state standing in as a position source where GPS cannot reach, and the
-wired-modem case. Tests 62, 63 and 64 are late that night: the bedrock fallback
-for the depot niche, spare coal no longer stopping a run with no depot to bank
-it in, and the one STORAGE word list. Tests 65 and 66 are last: `quarry 1`
-deploying the turtles it carries, and a full depot dropping junk and calling
-home instead of ending the run. A NO FIX now uploads gps.locate's own debug output -- if a
-GPS question comes up, read those `gps    :` lines before theorising, and if
-they are absent from a log, the run predates them.
+VERIFY A PUSH AGAINST THE COMMIT-PINNED URL, never the branch one:
 
-DELIVERY IS GITHUB, changed 2026-08-28 at the user's instruction. This
-directory is the working tree of https://github.com/zaBees/cc (public). The
-in-game download is two lines:
+  curl -sS https://raw.githubusercontent.com/zaBees/cc/$(git rev-parse HEAD)/quarry.lua
+
+The /main/ URL is CDN-cached and served the previous build for over two minutes
+after a push on 2026-08-28, which looks exactly like a failed push. The same
+cache can hand the user a stale file if they re-download immediately.
+
+A hand-typed download is always TWO lines, `delete <name>` then the `wget`:
+CC's wget refuses to overwrite an existing file, prints "File already exists"
+and downloads nothing, which reads like success. There is no force flag and the
+CC shell has no && or ;.
 
   delete quarry
   wget https://raw.githubusercontent.com/zaBees/cc/main/quarry.lua quarry
 
-`alert.lua` is the third program, for a computer rather than a turtle, and
-`update` carries it alongside quarry and itself.
-
-The URL never changes, so a redelivery is `git push` and the user re-runs those
-same two lines -- or, once `update.lua` is on the turtle, just `update`, which
-does the delete, defeats the CDN cache with a `?t=` query and prints the file's
-fletcher32. Ship a fix by pushing and telling them to run `update`. VERIFY A PUSH AGAINST THE COMMIT-PINNED URL, not the branch
-one:
-
-  curl -sS https://raw.githubusercontent.com/zaBees/cc/$(git rev-parse HEAD)/quarry.lua
-
-The /main/ URL is CDN-cached and was still serving the previous build more than
-two minutes after a push, which looks exactly like a failed push. The same
-cache can hand the user a stale file if they re-download immediately; tell them
-to wait a moment and repeat the two lines. `update` sidesteps that entirely by
-appending `?t=<epoch>`, which is part of the CDN cache key.
-
-Every download line handed to the user is TWO lines, `delete <name>` then the
-`wget`: CC's wget refuses to overwrite an existing file, prints "File already
-exists" and downloads nothing, which reads like success. There is no force flag
-and the CC shell has no && or ;.
-
 paste.rs is retired for delivery -- it began refusing uploads over ~80,000
-bytes on 2026-08-28 and quarry.lua is past 100,000 -- but the program still
+bytes on 2026-08-28 and quarry.lua is past 120,000 -- but the program still
 POSTS its own crash reports there and that side works fine. Old pastes are
 still fetchable, so the historic builds can be read.
 
 cloudcat.py is archived in attic/ and must NOT be used unless the user asks for
-it by name. It pushes files straight into the game over cloud-catcher, split
-across packets and stitched back by a generated joiner, and it is the fallback
-if GitHub is ever unreachable in-game. It needs the websockets module, which is
-not installable system-wide here under PEP 668, and the in-game computer
-running `cloud <token>`. attic/sumfile.lua is its verifier: a file over ~18 KB
-cannot be pulled back, so you check a delivery by printing its fletcher32
-in-game and comparing against cloudcat.fletcher32 locally.
+it by name. It pushes files into the game over cloud-catcher, split across
+packets and stitched back, and it is the fallback if GitHub is ever unreachable
+in-game. It needs the websockets module (not installable system-wide here under
+PEP 668) and the in-game computer running `cloud <token>`.
 
 quarry.conf ships dry = false and lava = true, both at the user's explicit
 instruction on 2026-08-27. This overrides the old "never hand it over ready to
 mine" convention. Test 38 asserts both; do not revert them without being asked.
 
-This directory also holds an unrelated second thread: ROCKET-PLAN.md, spacex.lua
-and icmb.lua, a Create Aeronautics flight controller. Nine fixes are planned and
-none are implemented. Leave it alone unless the user raises it.
+This directory also holds an unrelated second thread: ROCKET-PLAN.md,
+spacex.lua and icmb.lua, a Create Aeronautics flight controller. Nine fixes are
+planned and none are implemented. Leave it alone unless the user raises it.
 
-Three standing rules from the user:
+THREE STANDING RULES FROM THE USER.
 - Work must survive their budget running out. Write deliverables and handoff
   updates to disk as you go, never only in chat. Rewrite RESUME.md whole at the
   end of every phase; never patch it with a blind search-and-replace.
 - Test under lua5.3 here before anything reaches their server. They run the
-  code and you never see the game, so a bug that ships costs them a round trip.
+  code and you never see the game, so a bug that ships costs a round trip.
 - Ask before reverting or deleting anything. This directory became a git
   repository on 2026-08-28, so there is an undo now, but the rule stands: ask,
   then revert deliberately with git rather than by hand.
 
-How these sessions actually go, because it will repeat: the user pastes a
+HOW THESE SESSIONS ACTUALLY GO, because it will repeat: the user pastes a
 paste.rs id of an in-game log and little else. Fetch it, read it as the primary
-evidence, and put the diagnostic INTO the program so the next single run answers
-the question. Five deploy runs were spent on a chain of separate bugs, each
-hidden behind the last, and a sixth was spent on a crash whose message named the
-symptom ("calibration moved 0,0") instead of the cause (a config that pinned the
-position). Do not theorise past the evidence -- when a log cannot distinguish
-two causes, add the line that will and say so.
+evidence, and put the diagnostic INTO the program so the next single run
+answers the question. Five deploy runs were spent on a chain of separate bugs,
+each hidden behind the last, and a sixth on a crash whose message named the
+symptom ("calibration moved 0,0") instead of the cause (a config that pinned
+the position). Do not theorise past the evidence -- when a log cannot
+distinguish two causes, add the line that will, and say so.
 ```
 
 ---

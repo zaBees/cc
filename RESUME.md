@@ -10,36 +10,20 @@ search-and-replace — a patch whose search string does not match fails silently
 which has already happened once and left this file describing an abandoned
 design. An asserted replace is fine; a hopeful one is not.
 
-**This file was trimmed on 2026-08-28** from 646 lines to roughly a third of
-that. Everything removed is in `reports/history-2026-08.md`, complete and
-unedited: the phase-by-phase narratives, the code review in full, the four
-failed deploy runs, the probe results. This file carries the state, the rules
-and the next action. Go there for the reasoning behind anything stated flatly
-here, or when something settled starts misbehaving again.
+**Everything this file has ever dropped is in `reports/history-2026-08.md`,**
+whole and unedited: the phase narratives, the code review, the four failed
+deploy runs, the probe results, and — moved there on 2026-08-28 — the four
+dated shipping logs of that day, the GPS outage that is over, and the `--check`
+audit that has been acted on. This file carries the state, the rules and the
+next action. Go there for the reasoning behind anything stated flatly here, or
+when something settled starts misbehaving again.
 
 ---
 
 ## Where the work stands
 
-Last updated **2026-08-28, late**, after two changes the user asked for that
-night: **a plain `quarry 1` now deploys turtles 2 and 3 before it descends**,
-and **a full depot no longer stops the run** — the junk tier goes on the tunnel
-floor and the player is told over rednet, which `alert.lua` prints on a
-computer. See "What shipped 2026-08-28, last" below. Everything under this
-heading is still the state of the mine.
-
-Before those, the last thing to come out of the game was log `Rpv9m`, the
-first run with the depot-under-the-floor build. It got a fix, crossed to its trunk, descended
-to y=-59, and then could not build a depot at all: **the block under the trunk
-floor is bedrock.** With no depot anywhere it mined 39 blocks and stopped, over
-coal it was perfectly able to burn itself. Both are fixed here: the depot falls
-back to a niche beside the trunk one level up, and spare coal is no longer a
-reason to stop when there is nowhere to bank it.
-
-The run before that (`45bPE`) mined 251 blocks, docked once, and stopped on its
-own depot: the two chests it had placed beside the trunk floor were blocks the
-pattern later walked into and refused to dig. That is why the depot goes under
-the floor, and why the fallback niche is a level UP rather than beside it.
+Last rewritten **2026-08-28, last**, after a day that shipped four builds. The
+mine is not blocked on anything: `update`, then `quarry 1` from the surface.
 
 | Phase | State |
 | --- | --- |
@@ -47,265 +31,125 @@ the floor, and why the fallback niche is a level UP rather than beside it.
 | 2 — one turtle, one branch | **Done. Ran in-game 2026-08-27** (turtle 2, 177 blocks). |
 | 3 — depot cycle, fuel, the work loop | **Partly run.** Travel, fuel, the work loop, building the depot, docking and dumping all ran in-game 2026-08-28. Rationing has still never handed out coal — the tank was full every time it docked. |
 | 4 — three turtles | **Partly run.** Turtle 2 worked its own third correctly. Two turtles have never run at once. |
-| 5 — deployment (`quarry 1 deploy`) | **Done. Ran in-game 2026-08-27** after four failed attempts; turtle 2 deployed, booted and mined. |
-| 6 — deferred (monitor, full-clear mode) | Not started |
+| 5 — deployment | **Done. Ran in-game 2026-08-27** after four failed attempts; turtle 2 deployed, booted and mined. A plain `quarry 1` now deploys the others itself; that part has not run in-game. |
+| 6 — deferred (monitor, full-clear mode) | Not started. |
 
-**What is still unproven in-game is rationing and the three-turtle interplay.**
-The turtle docked and dumped, but every dock found the tank already full, so no
-coal has ever been handed out, and two turtles have never run at once.
+**What is unproven in-game: rationing, two turtles at once, and the two changes
+from the last build** — the automatic deployment and the full-depot behaviour.
+
+The last log out of the game is `Rpv9m`. It got a fix, crossed to its trunk,
+descended to y=-59, and could not build a depot at all: **the block under the
+trunk floor was bedrock.** With no depot anywhere it mined 39 blocks and
+stopped, over coal it could have burnt itself. Both are fixed. The run before
+it, `45bPE`, mined 251 blocks and stopped on its own depot — two chests it had
+placed beside the trunk floor, which the pattern later walked into and refused
+to dig. That is why the depot goes under the floor, and why the fallback niche
+is a level up rather than beside it.
 
 ## Next action
 
-**Run it from the surface again**, from the same launch block as `Rpv9m`,
-carrying a barrel — and this time carrying turtles 2 and 3, the drive and the
-floppy as well, because `quarry 1` deploys them itself now.
+**Run it from the surface**, from the same launch block as `Rpv9m`
+(243,73,734), carrying **a barrel, turtles 2 and 3, the drive and the floppy**.
 
-1. **`update`** on the turtle, for the auto-deploy and full-depot build.
-2. **`quarry 1 --check`** and read the `position:` line against F3. Nobody has
+1. **`update`** on the turtle.
+2. **`quarry 1 --check`**, and read the `position:` line against F3. Nobody has
    ever confirmed the turtle's fix matches the real world, and the pattern
    anchors to absolute coordinates — a wrong origin mines a correct claim in
-   the wrong place.
+   the wrong place. The same `--check` reports the kit; believe it.
 3. **Launch from the same block** to reuse the trunk already cut at
    248,-59,711. The claim anchors to the launch block: `Rpv9m` anchored at
-   243,73,734, claim x 224..271, z 704..751. Launched from somewhere else it
-   cuts a fresh trunk somewhere else, which is correct behaviour and probably
-   not what is wanted.
-4. **A barrel in the hold**, then `quarry 1`. With the full kit aboard it
-   places the drive, the floppy and turtles 2 and 3 at the launch block first
-   — `deploy : turtles in the hold -- staffing the mine before I descend` —
-   and only then crosses to its trunk. `quarry 1 deploy` still does the
-   deployment on its own if that is wanted separately.
+   243,73,734, claim x 224..271, z 704..751. Somewhere else cuts a fresh trunk
+   somewhere else, which is correct and probably not what is wanted.
+4. **`quarry 1`.** With the kit aboard it now deploys turtles 2 and 3 at the
+   launch block before it descends — `deploy : turtles in the hold -- staffing
+   the mine before I descend` — and only then crosses to its trunk.
+   `quarry 1 deploy` still does the deployment alone if that is wanted.
 5. **Optional, and the only way to hear from the mine:** a computer with a
    wireless modem near the claim running `alert`. A full depot broadcasts on
    the `quarry` protocol; nothing else does yet.
 
 **Expect `depot  : the floor under the trunk will not open — placed a container
-beside the trunk at y=-58 instead`** (with a plain `--` in the real line). That
-is the fallback working, not a fault. If it says `nothing beside the trunk will
-open` instead, read the lines above it: all three candidate spots refused to be
-dug.
+beside the trunk at y=-58 instead`** (a plain `--` in the real line). That is
+the bedrock fallback working, not a fault. `nothing beside the trunk will open`
+instead means all three candidate spots refused to be dug; read the lines above
+it.
 
 **Two rows of the old trunk level are gone for good.** `Rpv9m` reported
-`taken  : y=-59 z=711 is already cut` and the same for z=706 — that was the
-run's own earlier work, read back as another turtle's once `quarry.state` was
-deleted. `mouthTaken()` cannot tell the difference and by design does not try.
+`taken  : y=-59 z=711 is already cut`, and the same for z=706 — its own earlier
+work, read back as another turtle's once `quarry.state` was deleted.
+`mouthTaken()` cannot tell the difference and by design does not try.
 Restarting over an old mine costs those rows; it is not a bug.
 
-Then run turtle 2 and watch it dock: dump, ration, restock.
+Then watch a dock: dump, ration, restock. That is the untested half of Phase 3.
 
-## What shipped 2026-08-28 evening
+**Fast-forward the run with `/tick sprint`.** A mining run is hours of real time
+and almost all of it is the turtle moving, which is tick-bound, so the vanilla
+1.20.3+ tick commands compress it:
 
-All tested under `lua5.3`, every regression confirmed to fail against its own
-unfixed code. `test_quarry.lua` was 55 checks at that point and is 57 now.
+```
+/tick sprint 20000     -- run 20,000 ticks as fast as the server can, ~17 min of game time
+/tick sprint stop      -- back to normal before the sprint finishes
+/tick query            -- what the rate is now
+```
 
-- **The fuel ration is a floor, not a fraction.** See the Settled list. New
-  `fuelFloor` setting, default 8, seeded into `quarry.conf`. Tests 51, 52.
-- **The `--check` tank line asks the turtle for its limit.** It printed
-  `this turtle holds 51183 of 20000` in-game, because 20,000 was a literal in
-  two places; an advanced turtle holds far more. Falls back to 20,000 if
-  `getFuelLimit` is absent. Tests 49, 50.
-- **`calibrate` refuses a pinned position instead of crashing on it.** Turtle 1
-  died with `calibration moved 0,0, which is not one block` because
-  `startX/Y/Z` in `quarry.conf` make `locate()` return a constant, so the
-  reading after the calibration move equals the reading before it. The message
-  named the symptom and hid the cause. Test 53.
-- **`startDir` lets a turtle run with GPS down.** 0, 1, 2, 3 = facing +z, -x,
-  -z, +x, validated on read. Only the initial heading actually needed GPS --
-  `locate()` is called at boot, resume and deploy and nowhere else, and
-  everything between dead-reckons -- so a stated heading is enough to mine on.
-  What it costs is recovery: a turtle that loses `quarry.state` cannot find
-  itself again. Tests 54, 55.
+Cheats or op are needed. The client looks frozen or badly lagged while a sprint
+runs — that is the server ticking flat out, not a crash. **Stay put while it
+runs:** the claim is loaded because the player stands in the centre chunk, and
+nothing else loads it. A sprint does not speed up the turtle's own computer
+budget, only the clock it moves on, so expect a large speed-up rather than an
+instant one.
 
-## What shipped 2026-08-28 night
+## What shipped on 2026-08-28
 
-Both from run `45bPE`, both confirmed to fail against the build that produced
-that log.
+Four builds in a day, each one from an in-game log. The full write-up of each
+is in `reports/history-2026-08.md`; this is the list. Every fix has a
+regression test confirmed to fail against its own unfixed code.
 
-- **The depot goes under the trunk floor.** `probeDepot` looks down before it
-  looks around, `buildDepot` digs out the block below and places one container
-  there, and `"down"` is a direction everywhere `st.depot` is read —
-  `faceDepot`, `depotDrop`, `depotSuck`. A container beside the floor is still
-  found and used, because someone may have placed one; it is just never built
-  there any more. Test 33 rewritten, test 57 new.
-- **The deployment kit stays in the hold.** `isKit` covers turtle, computer,
-  disk, modem, chest, barrel, shulker and bucket; `dumpLoad` and `restock` both
-  skip it. Test 56.
-- The report line is now `depot  : container at the trunk floor x,y,z
-  (dump down, fuel down)` — `%s`, not `%d`, because the side can be `"down"`.
-- **A NO FIX crash names its own cause.** `noFix()` reports the equipped sides
-  and picks one answer: no modem equipped, or a modem with no host answering.
-  The old line listed both at once, which is why `URkmo` could not be read.
-  `gps.locate`'s timeout went 2s → 5s. Test 58.
-- **`quarry.state` is a position source when GPS is silent.** Log `td7FE`:
-  turtle 1 at the depot, `left=modem`, no host answering in 5s. A wireless
-  modem's range shrinks with depth and the constellation is a hundred-odd
-  blocks above the claim floor, so **GPS answering at the surface says nothing
-  at y=-59** — and a turtle that cannot get a fix at the floor can never resume
-  its own job. `locate` now falls back to the saved position, which comes with
-  the saved heading, so `calibrate` has nothing to measure and nothing to be
-  told. It is announced every time, in `--check` and in the run, because a
-  turtle someone picked up and moved cannot know it. A state file with no
-  `dir` in it is not a fix. Test 59, three cases.
-- **A wired modem is a third cause of NO FIX, and it looked like the second.**
-  `peripheral.getType` answers `"modem"` for wired and wireless alike;
-  `gps.locate` does not take that on trust — it walks the sides asking
-  `isWireless()` and skips anything that fails. So a wired modem equips
-  cleanly, reads as a modem in every report the program printed, and never
-  yields a fix, which is indistinguishable from a dead constellation unless
-  something asks. `equippedSides` now reports `wireless modem` / `wired modem`,
-  and `hasModem` means wireless. Test 60.
-- **The run captures `gps.locate`'s own debug output.** Its second argument is a
-  debug flag; with it on the api prints which sides it tried, how many hosts
-  answered and whether they agreed — to the terminal, which an uploaded log
-  never sees. `gpsDebug()` borrows `print` for the call, so a NO FIX now uploads
-  `gps    : Received 0 responses.` instead of one bare `CRASHED` line. Three
-  sessions were spent theorising about a fix the api was willing to explain.
+**Morning, from the code review** (`reports/code-review-quarry.md`): all nine
+findings fixed, tests 40–48. The vein-chase counter, the empty-tank guard, the
+absolute vein sweep, three `pcall` result bugs, and the lava dedupe.
 
-## What shipped 2026-08-28 late night
+**Evening**, tests 49–55: the fuel ration became a floor rather than a fraction
+(`fuelFloor`, default 8); `--check` asks the turtle for its own tank limit
+instead of assuming 20,000; `calibrate` refuses a config-pinned position rather
+than crashing on it; `startDir` lets a turtle mine with GPS down, at the cost
+of ever recovering from a lost state file.
 
-Both from run `Rpv9m`, both confirmed to fail against the build that produced
-that log. `test_quarry.lua` is 62 checks now, tests 62 and 63.
+**Night**, from log `45bPE`, tests 56–60 and a rewritten 33: the depot moved
+**under** the trunk floor, the one neighbour the pattern never enters; the
+deployment kit stays in the hold instead of being dumped as spoil; a NO FIX
+crash names which of its three causes it is, uploads `gps.locate`'s own debug
+output, and tells a wired modem from a wireless one; `quarry.state` stands in
+as a position source where GPS cannot reach.
 
-- **Bedrock under the trunk floor no longer costs the run its depot.** The
-  depot still goes under the floor first — that is the one neighbour nothing
-  ever mines — but bedrock scatters up through y=-60 and the floor stands at
-  y=-59, so on most trunks the block below simply will not open. `Rpv9m` said
-  `the floor under the trunk will not open — no depot built` and then had
-  nowhere to put anything for the rest of the run. `buildDepot` now falls back
-  to a niche **beside the trunk, one level up**, on an x side: ±z is the spine
-  at every level, and the east-west legs only cross the trunk's own z on the
-  levels `isBranch` names — and a row never repeats on the next level up, since
-  it shifts 2 in z per level mod 5, so a free level is at most two up. It sets
-  `st.depot` itself, because `probeDepot` looks from the floor and would never
-  see it. Test 62.
-- **Spare coal is not a reason to stop when there is nowhere to bank it.**
-  `Rpv9m` ended `STOPPED: carrying 192 fuel and fuelShare is 128, which the
-  other turtles could burn` — on a full tank, with a nearly empty hold, 4520
-  fuel left and no depot in the claim. `fuelShare` means *the other two could
-  use some of this*, which needs a depot to put it in; without one it is just
-  fuel this turtle burns itself. `mineLeg` now flags the dock on spare coal only
-  when `st.depot` is set, the resume guard matches, and the halt reason is gone.
-  A full hold and a `tripBlocks` load still stop the run: with nowhere to empty
-  out, mining on only destroys the drops. Test 63.
-- **A dock flag whose reason has passed is cleared, not halted on.** Burning a
-  stack for the next branch empties the slot it came from, so a hold that was
-  full when the leg ended has room again by the time the loop looks. That used
-  to fall through to `STOPPED: a depot run was queued`, which named nothing.
-- `findSharedDepot` reported the depot sides with `%d`, which throws on the
-  `"down"` side the previous night's change introduced. Now `%s`.
-- The found-depot line is `depot  : container at x,y,z`, not `at the trunk
-  floor`: it may now be a level above it.
+**Late night**, from log `Rpv9m`, tests 62–64: bedrock under the trunk floor
+falls back to an x-side niche a level up; spare coal is no longer a reason to
+stop when there is no depot to bank it in; **one `STORAGE` word list** — chest,
+barrel, shulker, crate, item_vault, matched as a substring — answers all four
+questions the program asks about storage. Drawers and bins stay off it: they
+lock to one item type, so a mixed dump fails on the second stack.
 
-## What shipped 2026-08-28, last
+**Last**, at the user's instruction, tests 65–66:
 
-Both at the user's instruction. `test_quarry.lua` is 66 tests now; 65 and 66
-were both confirmed to fail against the build before them.
-
-- **`quarry 1` deploys the rest of the turtles by itself.** A turtle item in
-  turtle 1's hold means the mine is not staffed, so `runMine` runs the whole of
-  `runDeploy` at the launch block before it descends — the drive, the floppy,
-  the boot script and turtles 2..N, one at a time through the same spot.
-  Deployment used to be a mode you had to know about, and turtle 1 run without
-  it mined a third of the claim with the other two turtles in its inventory.
-  Recorded in `quarry.state` as `deployed` **before** it runs, so a deploy that
-  dies half way is not retried on every reboot; `quarry 1 deploy` still forces
-  one. A deploy that cannot happen — no drive aboard, a short kit — says so and
-  the turtle mines alone rather than stopping. Test 65.
-- **A full depot loses the junk, not the run.** `dumpLoad` used to hand back
-  `the depot chest is full`, which `dock` turned into a halt. What fills a depot
-  is the junk tier, so a drop the depot refuses now puts that stack on the
-  tunnel floor instead and the run carries on. Ore is still worth stopping for:
-  with the junk gone and the hold still full, mining on would only destroy the
-  drops. Test 66.
-- **The turtle tells someone.** `notify()` puts the line in the log — so the
-  uploaded paste carries it — and broadcasts it over rednet on the `quarry`
-  protocol through the equipped wireless modem, once per kind per run. A full
-  depot is the only thing that sends one so far.
-- **`alert.lua` is the other end of that**, a new program for a computer:
-  it finds a modem, prefers a wireless one, and prints what arrives.
-  `update` now carries three files — `quarry`, `update`, `alert`.
-  **Range is the catch**, and it is the same physics that keeps GPS off the
-  claim floor: a wireless modem's reach shrinks with depth. Put the computer
-  near the mine, or use an ender modem.
-- **Test worlds now cap `topY`.** A run that no longer stops on a full depot
-  mines its whole third, which took the suite from 10s to 68s. Ten of the
-  worlds cap the levels instead; the ones that assert the trunk shape or the
-  forage target still use the real ceiling.
-
-## Storage is one word list now, not four
-
-Added 2026-08-28 late night at the user's request, for Sophisticated Storage.
-
-`STORAGE = { "chest", "barrel", "shulker", "crate", "item_vault" }`, matched as
-a **substring of the block id**, and it answers four questions that used to
-carry four copies of the words: what can be a depot (`isContainer`), what is
-never dug (`protected`), what stays in the hold rather than being dumped as
-spoil (`isKit`), and what the kit audit counts.
-
-- **Sophisticated Storage already worked** — `sophisticatedstorage:barrel`,
-  `:iron_barrel`, `:limited_barrel_1`, `:chest` and the rest all contain
-  `barrel` or `chest`. So do Iron Chests, Expanded Storage and Quark. What was
-  genuinely missing was Create's `item_vault`, and `crate`.
-- **Drawers and bins are deliberately NOT on the list.** A Storage Drawer, a
-  Functional Storage drawer and a Mekanism bin each lock to one item type, so a
-  mixed dump into one fails on the second stack and the run halts with `the
-  depot chest is full`. They are storage; they are not depots.
-- **The kit audit wants ONE storage block, not two.** `buildDepot` has placed
-  exactly one since the depot moved under the floor — fuel and spoil share it,
-  which is the case the ration was already written for — but the audit still
-  asked for two and reported a shortfall for a correctly equipped turtle.
-  Label is now `storage block`.
-- Test 64, confirmed to fail against the three-word list.
-
-**Prefer a Sophisticated Storage barrel for the depot.** A full depot halts the
-run with `the depot chest is full`, and one box now serves all three turtles.
-
-## GPS was down on 2026-08-28 evening and is up again
-
-The user fixed the constellation that night. Run `45bPE` opened with
-`quarry 1  at 243,73,734` and mined a claim anchored there, so `gps.locate` is
-answering and `startX/Y/Z` are out of `quarry.conf`. What follows is kept
-because the constellation has now failed once and may again.
-
-
-
-`gps.locate` returns nil on turtle 1 with a modem equipped, so **no GPS host is
-answering**. It answered that morning, so something changed: hosts stopped,
-their chunks unloaded, the server restarted, or they are out of range. A GPS
-constellation wants four or more computers with wireless modems running
-`gps host <x> <y> <z>` at their true coordinates, in loaded chunks, in range.
-
-Two ways forward, and they are not equivalent:
-
-1. **Fix the constellation, delete `startX/Y/Z` from `quarry.conf`.** The right
-   answer. Position stays self-correcting, and a turtle that loses its state
-   file can still find itself.
-2. **Keep the pinned position and add `startDir`.** Mines fine -- everything
-   past the first fix dead-reckons -- but recovery is gone: a turtle that loses
-   `quarry.state` has no way back, and every missed move is a permanent offset.
-   Treat it as the way to get mining tonight, not the way to leave it.
-
-The live `quarry.conf` on turtle 1 as of 2026-08-28 evening sets
-`startX = 10`, `startY = 80`, `startZ = 5` and **no `startDir`**, so a run
-refuses to start until one of the two above is done.
-
-## Still outstanding from the 2026-08-28 `--check` (`u8p0M`)
-
-- `wireless modem 2 of 3 SHORT 1` — the known case: turtle 2's modem came back
-  as an attached upgrade, not a loose item. Believe the audit; a turtle with no
-  modem cannot GPS, so it cannot resume.
-- `empty bucket 2 of 3 SHORT 1`, `coal or charcoal 128 of 192 SHORT 64`.
-- `disk drive 57 of 1` is the user carrying a stack, not an audit bug.
-- **Whatever position the turtle ends up using must match real F3
-  coordinates**, whether it comes from a hand-configured GPS constellation or
-  from `startX/Y/Z`. The pattern anchors to absolute y and levels run
-  y -59..60, so a wrong origin mines a correct claim in the wrong place.
-  Bedrock still stops the trunk safely; the mine would just be somewhere else.
-  Nobody has checked this yet.
-
-After that the untested ground is **two turtles working at once** (the
-right-of-way rules in `giveWay`/`stepAside`), and the **`passed over:` line**
-from a run that finds ore, which is how the config learns this pack's ore ids.
+- **`quarry 1` staffs the mine itself.** A turtle item in the hold means
+  deployment never happened, so the run does the whole of `runDeploy` at the
+  launch block before it descends. Recorded in `quarry.state` *before* it runs,
+  so a deploy that dies half way is not retried on every reboot; a deploy that
+  cannot happen at all says so and the turtle mines alone.
+- **A full depot loses the junk, not the run.** A drop the depot refuses puts
+  that stack on the tunnel floor when it is the junk tier. Ore still stops the
+  run — mining on would only destroy the drops.
+- **`notify()` calls home.** The line goes in the log, so the uploaded paste
+  carries it, and out over rednet on the `quarry` protocol through the equipped
+  wireless modem, once per kind per run. A full depot is the only thing that
+  sends one so far.
+- **`alert.lua` is the other end**, a new program for a computer. Range is the
+  catch and it is physics, not a bug: a modem's reach shrinks with depth, the
+  same thing that keeps GPS off the claim floor.
+- **The test suite caps `topY` in eleven worlds.** A run that no longer stops
+  on a full depot mines its whole third, which took the suite from 10s to 68s;
+  it is about 9s now. The worlds that assert the trunk shape or the forage
+  target still use the real ceiling.
 
 ## Delivered
 
@@ -694,16 +538,18 @@ derives a heading by moving one block and diffing GPS.
 
 ## Waiting on the user
 
-- **Breaking the two chests turtle 1 built at 248,-59,711.** See Next action —
-  this is the blocker, and turtles 2 and 3 are inside one of them.
-- **The `passed over:` line from a real run** — this pack's real ore ids.
-- **192 coal or charcoal**, a stack per turtle. The only thing `deploy` is
-  short of.
-- **Break turtle 2 and pick it up** before the next deploy: it stands in the
-  deployment spot with a seeded DRY config, and `deploy` needs that block
-  clear. A broken turtle may come back with the modem attached as an upgrade
-  rather than as a loose item, in which case the kit audit reads 2 modems and
-  says `SHORT 1`. Believe the audit.
+- **The `passed over:` line from a real run** — this pack's real ore ids, which
+  is how `[oreNames]` in `quarry.conf` learns what Create and Mekanism call
+  things here.
+- **192 coal or charcoal**, a stack per turtle. The only thing the kit audit
+  was ever short of, along with a third wireless modem.
+- **Turtle 2 out of the deployment spot.** It was left standing there with a
+  seeded DRY config, and `deploy` needs that block clear. A broken turtle can
+  come back with its modem attached as an upgrade rather than as a loose item,
+  in which case the audit reads two modems and says `SHORT 1`. Believe the
+  audit: a turtle with no modem cannot GPS, so it cannot resume.
+- The two chests turtle 1 built at 248,-59,711 have been broken and their
+  contents recovered — that blocker is cleared.
 
 ## Conventions that govern the code
 
@@ -746,4 +592,4 @@ so CC mod-side behaviour comes from tweaked.cc or from the user.
 ## Open questions
 
 None on the design, and none blocking. What is left is verification: the depot
-cycle and two turtles running at once.
+cycle, two turtles at once, and the two changes in the last build.

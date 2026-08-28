@@ -660,3 +660,233 @@ out of the mod's own jar and config when they are on disk** (`unzip`, `javap
 
 None on the design, and none blocking. Every mechanic Phase 5 was waiting on is
 settled. What is left is verification: Phases 2 to 5 have never run in-game.
+
+---
+
+# Moved out of RESUME.md on 2026-08-28, last
+
+RESUME.md carried four dated "what shipped" logs for a single day, plus the
+narrative of a GPS outage that was over and a `--check` audit that had been
+acted on. They are kept here whole and unedited; RESUME.md now carries one
+summary of the day and the state that came out of it.
+
+## What shipped 2026-08-28 evening
+
+
+All tested under `lua5.3`, every regression confirmed to fail against its own
+unfixed code. `test_quarry.lua` was 55 checks at that point and is 57 now.
+
+- **The fuel ration is a floor, not a fraction.** See the Settled list. New
+  `fuelFloor` setting, default 8, seeded into `quarry.conf`. Tests 51, 52.
+- **The `--check` tank line asks the turtle for its limit.** It printed
+  `this turtle holds 51183 of 20000` in-game, because 20,000 was a literal in
+  two places; an advanced turtle holds far more. Falls back to 20,000 if
+  `getFuelLimit` is absent. Tests 49, 50.
+- **`calibrate` refuses a pinned position instead of crashing on it.** Turtle 1
+  died with `calibration moved 0,0, which is not one block` because
+  `startX/Y/Z` in `quarry.conf` make `locate()` return a constant, so the
+  reading after the calibration move equals the reading before it. The message
+  named the symptom and hid the cause. Test 53.
+- **`startDir` lets a turtle run with GPS down.** 0, 1, 2, 3 = facing +z, -x,
+  -z, +x, validated on read. Only the initial heading actually needed GPS --
+  `locate()` is called at boot, resume and deploy and nowhere else, and
+  everything between dead-reckons -- so a stated heading is enough to mine on.
+  What it costs is recovery: a turtle that loses `quarry.state` cannot find
+  itself again. Tests 54, 55.
+
+## What shipped 2026-08-28 night
+
+
+Both from run `45bPE`, both confirmed to fail against the build that produced
+that log.
+
+- **The depot goes under the trunk floor.** `probeDepot` looks down before it
+  looks around, `buildDepot` digs out the block below and places one container
+  there, and `"down"` is a direction everywhere `st.depot` is read —
+  `faceDepot`, `depotDrop`, `depotSuck`. A container beside the floor is still
+  found and used, because someone may have placed one; it is just never built
+  there any more. Test 33 rewritten, test 57 new.
+- **The deployment kit stays in the hold.** `isKit` covers turtle, computer,
+  disk, modem, chest, barrel, shulker and bucket; `dumpLoad` and `restock` both
+  skip it. Test 56.
+- The report line is now `depot  : container at the trunk floor x,y,z
+  (dump down, fuel down)` — `%s`, not `%d`, because the side can be `"down"`.
+- **A NO FIX crash names its own cause.** `noFix()` reports the equipped sides
+  and picks one answer: no modem equipped, or a modem with no host answering.
+  The old line listed both at once, which is why `URkmo` could not be read.
+  `gps.locate`'s timeout went 2s → 5s. Test 58.
+- **`quarry.state` is a position source when GPS is silent.** Log `td7FE`:
+  turtle 1 at the depot, `left=modem`, no host answering in 5s. A wireless
+  modem's range shrinks with depth and the constellation is a hundred-odd
+  blocks above the claim floor, so **GPS answering at the surface says nothing
+  at y=-59** — and a turtle that cannot get a fix at the floor can never resume
+  its own job. `locate` now falls back to the saved position, which comes with
+  the saved heading, so `calibrate` has nothing to measure and nothing to be
+  told. It is announced every time, in `--check` and in the run, because a
+  turtle someone picked up and moved cannot know it. A state file with no
+  `dir` in it is not a fix. Test 59, three cases.
+- **A wired modem is a third cause of NO FIX, and it looked like the second.**
+  `peripheral.getType` answers `"modem"` for wired and wireless alike;
+  `gps.locate` does not take that on trust — it walks the sides asking
+  `isWireless()` and skips anything that fails. So a wired modem equips
+  cleanly, reads as a modem in every report the program printed, and never
+  yields a fix, which is indistinguishable from a dead constellation unless
+  something asks. `equippedSides` now reports `wireless modem` / `wired modem`,
+  and `hasModem` means wireless. Test 60.
+- **The run captures `gps.locate`'s own debug output.** Its second argument is a
+  debug flag; with it on the api prints which sides it tried, how many hosts
+  answered and whether they agreed — to the terminal, which an uploaded log
+  never sees. `gpsDebug()` borrows `print` for the call, so a NO FIX now uploads
+  `gps    : Received 0 responses.` instead of one bare `CRASHED` line. Three
+  sessions were spent theorising about a fix the api was willing to explain.
+
+## What shipped 2026-08-28 late night
+
+
+Both from run `Rpv9m`, both confirmed to fail against the build that produced
+that log. `test_quarry.lua` is 62 checks now, tests 62 and 63.
+
+- **Bedrock under the trunk floor no longer costs the run its depot.** The
+  depot still goes under the floor first — that is the one neighbour nothing
+  ever mines — but bedrock scatters up through y=-60 and the floor stands at
+  y=-59, so on most trunks the block below simply will not open. `Rpv9m` said
+  `the floor under the trunk will not open — no depot built` and then had
+  nowhere to put anything for the rest of the run. `buildDepot` now falls back
+  to a niche **beside the trunk, one level up**, on an x side: ±z is the spine
+  at every level, and the east-west legs only cross the trunk's own z on the
+  levels `isBranch` names — and a row never repeats on the next level up, since
+  it shifts 2 in z per level mod 5, so a free level is at most two up. It sets
+  `st.depot` itself, because `probeDepot` looks from the floor and would never
+  see it. Test 62.
+- **Spare coal is not a reason to stop when there is nowhere to bank it.**
+  `Rpv9m` ended `STOPPED: carrying 192 fuel and fuelShare is 128, which the
+  other turtles could burn` — on a full tank, with a nearly empty hold, 4520
+  fuel left and no depot in the claim. `fuelShare` means *the other two could
+  use some of this*, which needs a depot to put it in; without one it is just
+  fuel this turtle burns itself. `mineLeg` now flags the dock on spare coal only
+  when `st.depot` is set, the resume guard matches, and the halt reason is gone.
+  A full hold and a `tripBlocks` load still stop the run: with nowhere to empty
+  out, mining on only destroys the drops. Test 63.
+- **A dock flag whose reason has passed is cleared, not halted on.** Burning a
+  stack for the next branch empties the slot it came from, so a hold that was
+  full when the leg ended has room again by the time the loop looks. That used
+  to fall through to `STOPPED: a depot run was queued`, which named nothing.
+- `findSharedDepot` reported the depot sides with `%d`, which throws on the
+  `"down"` side the previous night's change introduced. Now `%s`.
+- The found-depot line is `depot  : container at x,y,z`, not `at the trunk
+  floor`: it may now be a level above it.
+
+## What shipped 2026-08-28, last
+
+
+Both at the user's instruction. `test_quarry.lua` is 66 tests now; 65 and 66
+were both confirmed to fail against the build before them.
+
+- **`quarry 1` deploys the rest of the turtles by itself.** A turtle item in
+  turtle 1's hold means the mine is not staffed, so `runMine` runs the whole of
+  `runDeploy` at the launch block before it descends — the drive, the floppy,
+  the boot script and turtles 2..N, one at a time through the same spot.
+  Deployment used to be a mode you had to know about, and turtle 1 run without
+  it mined a third of the claim with the other two turtles in its inventory.
+  Recorded in `quarry.state` as `deployed` **before** it runs, so a deploy that
+  dies half way is not retried on every reboot; `quarry 1 deploy` still forces
+  one. A deploy that cannot happen — no drive aboard, a short kit — says so and
+  the turtle mines alone rather than stopping. Test 65.
+- **A full depot loses the junk, not the run.** `dumpLoad` used to hand back
+  `the depot chest is full`, which `dock` turned into a halt. What fills a depot
+  is the junk tier, so a drop the depot refuses now puts that stack on the
+  tunnel floor instead and the run carries on. Ore is still worth stopping for:
+  with the junk gone and the hold still full, mining on would only destroy the
+  drops. Test 66.
+- **The turtle tells someone.** `notify()` puts the line in the log — so the
+  uploaded paste carries it — and broadcasts it over rednet on the `quarry`
+  protocol through the equipped wireless modem, once per kind per run. A full
+  depot is the only thing that sends one so far.
+- **`alert.lua` is the other end of that**, a new program for a computer:
+  it finds a modem, prefers a wireless one, and prints what arrives.
+  `update` now carries three files — `quarry`, `update`, `alert`.
+  **Range is the catch**, and it is the same physics that keeps GPS off the
+  claim floor: a wireless modem's reach shrinks with depth. Put the computer
+  near the mine, or use an ender modem.
+- **Test worlds now cap `topY`.** A run that no longer stops on a full depot
+  mines its whole third, which took the suite from 10s to 68s. Ten of the
+  worlds cap the levels instead; the ones that assert the trunk shape or the
+  forage target still use the real ceiling.
+
+## Storage is one word list now, not four
+
+
+Added 2026-08-28 late night at the user's request, for Sophisticated Storage.
+
+`STORAGE = { "chest", "barrel", "shulker", "crate", "item_vault" }`, matched as
+a **substring of the block id**, and it answers four questions that used to
+carry four copies of the words: what can be a depot (`isContainer`), what is
+never dug (`protected`), what stays in the hold rather than being dumped as
+spoil (`isKit`), and what the kit audit counts.
+
+- **Sophisticated Storage already worked** — `sophisticatedstorage:barrel`,
+  `:iron_barrel`, `:limited_barrel_1`, `:chest` and the rest all contain
+  `barrel` or `chest`. So do Iron Chests, Expanded Storage and Quark. What was
+  genuinely missing was Create's `item_vault`, and `crate`.
+- **Drawers and bins are deliberately NOT on the list.** A Storage Drawer, a
+  Functional Storage drawer and a Mekanism bin each lock to one item type, so a
+  mixed dump into one fails on the second stack and the run halts with `the
+  depot chest is full`. They are storage; they are not depots.
+- **The kit audit wants ONE storage block, not two.** `buildDepot` has placed
+  exactly one since the depot moved under the floor — fuel and spoil share it,
+  which is the case the ration was already written for — but the audit still
+  asked for two and reported a shortfall for a correctly equipped turtle.
+  Label is now `storage block`.
+- Test 64, confirmed to fail against the three-word list.
+
+**Prefer a Sophisticated Storage barrel for the depot.** A full depot halts the
+run with `the depot chest is full`, and one box now serves all three turtles.
+
+## GPS was down on 2026-08-28 evening and is up again
+
+
+The user fixed the constellation that night. Run `45bPE` opened with
+`quarry 1  at 243,73,734` and mined a claim anchored there, so `gps.locate` is
+answering and `startX/Y/Z` are out of `quarry.conf`. What follows is kept
+because the constellation has now failed once and may again.
+
+
+
+`gps.locate` returns nil on turtle 1 with a modem equipped, so **no GPS host is
+answering**. It answered that morning, so something changed: hosts stopped,
+their chunks unloaded, the server restarted, or they are out of range. A GPS
+constellation wants four or more computers with wireless modems running
+`gps host <x> <y> <z>` at their true coordinates, in loaded chunks, in range.
+
+Two ways forward, and they are not equivalent:
+
+1. **Fix the constellation, delete `startX/Y/Z` from `quarry.conf`.** The right
+   answer. Position stays self-correcting, and a turtle that loses its state
+   file can still find itself.
+2. **Keep the pinned position and add `startDir`.** Mines fine -- everything
+   past the first fix dead-reckons -- but recovery is gone: a turtle that loses
+   `quarry.state` has no way back, and every missed move is a permanent offset.
+   Treat it as the way to get mining tonight, not the way to leave it.
+
+The live `quarry.conf` on turtle 1 as of 2026-08-28 evening sets
+`startX = 10`, `startY = 80`, `startZ = 5` and **no `startDir`**, so a run
+refuses to start until one of the two above is done.
+
+## Still outstanding from the 2026-08-28 `--check` (`u8p0M`)
+
+
+- `wireless modem 2 of 3 SHORT 1` — the known case: turtle 2's modem came back
+  as an attached upgrade, not a loose item. Believe the audit; a turtle with no
+  modem cannot GPS, so it cannot resume.
+- `empty bucket 2 of 3 SHORT 1`, `coal or charcoal 128 of 192 SHORT 64`.
+- `disk drive 57 of 1` is the user carrying a stack, not an audit bug.
+- **Whatever position the turtle ends up using must match real F3
+  coordinates**, whether it comes from a hand-configured GPS constellation or
+  from `startX/Y/Z`. The pattern anchors to absolute y and levels run
+  y -59..60, so a wrong origin mines a correct claim in the wrong place.
+  Bedrock still stops the trunk safely; the mine would just be somewhere else.
+  Nobody has checked this yet.
+
+After that the untested ground is **two turtles working at once** (the
+right-of-way rules in `giveWay`/`stepAside`), and the **`passed over:` line**
+from a run that finds ore, which is how the config learns this pack's ore ids.

@@ -133,16 +133,10 @@ lock to one item type, so a mixed dump fails on the second stack.
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. |
 | `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |
 
-See "Delivery goes through GitHub" below for the two `wget` lines. The setup
-artifact at
-https://claude.ai/code/artifact/6989784d-6bae-4da6-8158-0dc6464885c5 still
-describes the paste route and is **out of date** — update that same URL when it
-is regenerated, because a fresh publish makes a second page.
-
-**Superseded ids, which must not be run:** `swzlE` (pre-review: stops chasing
-ore after 64 blocks, says `work complete` on an empty tank), `4b9IM` (Phase 1,
-`--check` only), `4zMLm`, `kgXRL`, `uKUTW`, `3A9h2`, `lQszb`, `bO7bo`, `cpeuw`,
-`llZlk`, and `KRY8F` for the probe.
+`SETUP.md` carries the download lines for the user. The setup artifact at
+https://claude.ai/code/artifact/6989784d-6bae-4da6-8158-0dc6464885c5 predates
+GitHub delivery and is **out of date** — update that same URL when it is
+regenerated, because a fresh publish makes a second page.
 
 ## Delivery goes through GitHub
 
@@ -170,10 +164,9 @@ CC's `wget` refuses to overwrite an existing file — it prints `File already
 exists`, downloads nothing, and reads like success. No force flag, and the CC
 shell has no `&&` or `;`. `SETUP.md` carries the lines for the user.
 
-**paste.rs is retired for delivery** — it began refusing uploads over ~80,000
-bytes on 2026-08-28 and `quarry.lua` is past 120,000 — but the program still
-POSTS its own crash reports there and that side works fine. Old pastes are
-still fetchable, so the historic builds can be read.
+**Delivery is GitHub, and only GitHub.** The one other place a paste.rs id
+still comes from is the program's own crash report, which it POSTs there and
+the user pastes back — that is a log channel, not a delivery route.
 
 **cloudcat is archived in `attic/`. Do not use it unless the user asks for it
 by name.** It is the fallback if GitHub is ever unreachable in-game: it pushes
@@ -471,10 +464,9 @@ so CC mod-side behaviour comes from tweaked.cc or from the user.
 - **Ask before reverting or deleting anything.** This directory became a git
   repository on 2026-08-28, so there is an undo now — but the rule stands. Ask,
   then revert deliberately with git rather than by hand.
-- **How the sessions actually go:** the user pastes a paste.rs id of an in-game
-  log and little else — the program still uploads its own crash reports there,
-  and that side of paste.rs works fine; it is only uploads over ~80,000 bytes
-  that fail. Fetch it, read it as the primary evidence, and put the
+- **How the sessions actually go:** the user pastes the id of an in-game log —
+  the program POSTs its own report to paste.rs and prints the id — and little
+  else. Fetch it, read it as the primary evidence, and put the
   diagnostic INTO the program so the next single run answers the question. Five
   deploy runs were spent on a chain of separate bugs, each hidden behind the
   last. Do not theorise past the evidence — when a log cannot distinguish two

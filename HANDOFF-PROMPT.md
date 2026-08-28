@@ -101,10 +101,9 @@ CC shell has no && or ;.
   delete quarry
   wget https://raw.githubusercontent.com/zaBees/cc/main/quarry.lua quarry
 
-paste.rs is retired for delivery -- it began refusing uploads over ~80,000
-bytes on 2026-08-28 and quarry.lua is past 120,000 -- but the program still
-POSTS its own crash reports there and that side works fine. Old pastes are
-still fetchable, so the historic builds can be read.
+Delivery is GitHub and only GitHub. The one other place a paste.rs id still
+comes from is the program's own crash report, which it POSTs there and the user
+pastes back -- a log channel, not a delivery route.
 
 cloudcat.py is archived in attic/ and must NOT be used unless the user asks for
 it by name. It pushes files into the game over cloud-catcher, split across

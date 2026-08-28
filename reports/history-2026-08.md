@@ -925,3 +925,15 @@ waiting on them for, are `SETUP.md`'s job and are kept here.
   audit: a turtle with no modem cannot GPS, so it cannot resume.
 - The two chests turtle 1 built at 248,-59,711 have been broken and their
   contents recovered — that blocker is cleared.
+
+---
+
+# Superseded paste.rs build ids, removed from RESUME.md on 2026-08-28
+
+Delivery is GitHub now, so these are of historical interest only. They must not
+be run if anyone digs one out: `swzlE` (pre-review: stops chasing ore after 64
+blocks, says `work complete` on an empty tank), `4b9IM` (Phase 1, `--check`
+only), `4zMLm`, `kgXRL`, `uKUTW`, `3A9h2`, `lQszb`, `bO7bo`, `cpeuw`, `llZlk`,
+and `KRY8F` for the probe. `3PcMy` is the last paste.rs quarry and `4uJB7` the
+last probe; old pastes stay fetchable, so those builds can still be read.
+

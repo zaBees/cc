@@ -1178,7 +1178,7 @@ assert((sv19.junked or 0) > 0, "the state file counted no junk")
 -- foraging is for. Before the depot-full stop was lifted this world ended
 -- itself after a few docks, on a chest the stub caps at 27 stacks; now it runs
 -- until the claim or the coal does, so the claim is made small.
-world({ conf = "tripBlocks = 200\nlava = true\nlavaFloor = 0\ntopY = -59\n" .. SECTIONS, fuel = 2000,
+world({ conf = "tripBlocks = 60\nlava = true\nlavaFloor = 0\ntopY = -59\n" .. SECTIONS, fuel = 2000,
         disk = true,
         blocks = { [k3(DX, DY, DZ)] = "minecraft:chest",
                    [k3(145, BY - 1, BZ)] = "minecraft:lava" },
@@ -1697,10 +1697,9 @@ ok, err, log = runWorld("1")
 assert(ok, "the failing-inspect run crashed: " .. tostring(err))
 assert(not log:find("giveway"),
   "a failed inspect was read as another turtle in the way:\n" .. log)
-local sv44 = load("return " .. V.files["quarry.state"])()
-local n44 = 0
-for _ in pairs(sv44.done or {}) do n44 = n44 + 1 end
-assert(n44 > 0, "it mined nothing with inspect erroring:\n" .. log)
+-- rows are written off a pair at a time now, and this run stops on the trip
+-- limit before the pair is cut, so the proof it worked is the rock itself
+assert(blockAt(BX - 20, BY, BZ) == nil, "it mined nothing with inspect erroring:\n" .. log)
 
 -- 45. the lava dedupe does not outlive the queue it protects ---------------
 
@@ -2163,19 +2162,56 @@ assert(ok, "the walk-home run crashed: " .. tostring(err))
 assert(log:find("depot  : docking"), "it never docked, so nothing was tested:\n" .. log)
 assert(log:find("level  : moving to"), "it never left the depot's own level:\n" .. log)
 
--- Every block cut below the travel level is either the spine (the trunk, and
--- the corridor between this level's mouths) or a branch row of the level it is
--- on. A block off the spine that is not on its own level's row is rock nothing
--- asked for -- which is exactly what the old walk home cut.
+-- Every block cut below the travel level is the spine (the trunk, and the
+-- corridor between this level's mouths), a branch row of the level it is on,
+-- or the jog along a rim that carries the turtle from one row to the next. A
+-- block anywhere else is rock nothing asked for -- which is exactly what the
+-- old walk home cut.
+local wRim, eRim = log:match("claim x (%-?%d+)%.%.(%-?%d+)")
+assert(wRim, "the claim line is gone, so the rims are unknown:\n" .. log)
+wRim, eRim = tonumber(wRim), tonumber(eRim)
 for key, v in pairs(V.blocks) do
   if v == false then
     local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
     x, y, z = tonumber(x), tonumber(y), tonumber(z)
-    if y < TOPY and x ~= BX then
+    if y < TOPY and x ~= BX and x ~= wRim and x ~= eRim then
       assert((z - (-64) - 2 * y) % 5 == 0,
         ("it cut %s on the way home: y=%d has no branch row at z=%d"):format(key, y, z))
     end
   end
 end
+
+-- 69. the way back to the spine is the next row, not the one just cut --------
+
+-- A leg ends 24 blocks out and the corridor behind it is air, so walking it
+-- back mines nothing. The row 5 over has to come out anyway: the turtle jogs
+-- to it along the rim and cuts it inward instead, and the pair costs four legs
+-- and two jogs where it used to cost four legs and four empty walks.
+world({ conf = "topY = -59\ntripBlocks = 100000\n" .. SECTIONS, fuel = 20000,
+        blocks = { [k3(BX, BY - 1, BZ)] = "minecraft:barrel" },
+        chests = { [k3(BX, BY - 1, BZ)] = { { name = "minecraft:coal", count = 64 } } } })
+ok, err, log = runWorld("1")
+assert(ok, "the paired-row run crashed: " .. tostring(err))
+assert(log:find("leg back to the spine"),
+  "no row was cut inward, so nothing was paired:\n" .. log)
+
+local w69, e69 = log:match("claim x (%-?%d+)%.%.(%-?%d+)")
+w69, e69 = tonumber(w69), tonumber(e69)
+local jog = 0
+for key, v in pairs(V.blocks) do
+  if v == false then
+    local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
+    x, y, z = tonumber(x), tonumber(y), tonumber(z)
+    if (x == w69 or x == e69) and (z - (-64) - 2 * y) % 5 ~= 0 then jog = jog + 1 end
+  end
+end
+assert(jog > 0,
+  "it cut nothing along a rim, so it walked back down the corridor it had just cut:\n" .. log)
+
+-- and both rows of the pair are finished, not just the one it started on
+local sv69 = load("return " .. V.files["quarry.state"])()
+local n69 = 0
+for _ in pairs(sv69.done or {}) do n69 = n69 + 1 end
+assert(n69 >= 2, "only " .. n69 .. " row(s) were written off:\n" .. log)
 
 print("all quarry phase 5 checks passed")

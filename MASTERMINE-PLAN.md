@@ -505,8 +505,9 @@ shared-depot sweep waits until the depot is needed, and giving way may never
 move a turtle mid-leg. **All of them now live in `RESUME.md` under "Settled" and
 "Corrections already made"**, which is the list to read and the list to obey.
 The phase-by-phase account of how each was discovered is in
-`reports/history-2026-08.md`; the original schedule, with its status labels as
-they stood on 2026-08-25, is in `reports/plan-2026-08-25-full.md`.
+`reports/history-2026-08.md`. This file's own pre-2026-08-28 text, with the
+original phase schedule, is in git history and nowhere else — it was dropped on
+2026-08-28 because nothing read it.
 
 ---
 

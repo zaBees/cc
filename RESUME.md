@@ -193,8 +193,8 @@ and the in-game computer running `cloud <token>`.
 | `reports/mine-live-1-turtle2-2026-08-27.txt` | The 177-block in-game run. |
 | `reports/deploy-live-1..4-2026-08-27.txt` | The four failed deploy runs. |
 | `test_pattern.lua`, `test_coverage.lua` | The pattern proofs: `1,3,5,2,4`, and dug%/unseen% per candidate. |
-| `reports/plan-2026-08-25-full.md` | `MASTERMINE-PLAN.md` before its 2026-08-28 trim, with the original phase schedule. |
-| `HANDOFF-PROMPT.md` | The prompt to paste into a fresh session. |
+| `HANDOFF-PROMPT.md` | The pointer to paste into a fresh session. It says to read this file; it deliberately repeats nothing. |
+| `ROCKET-PLAN.md`, `spacex.lua`, `icmb.lua` | **An unrelated second thread**: a Create Aeronautics flight controller. Nine fixes planned, none implemented. Leave it alone unless the user raises it. |
 | `attic/` | Superseded and reserve work. `tunnel.lua` and its test, and the cloudcat delivery client. |
 | `attic/cloudcat.py` | **Archived 2026-08-28. Do not use unless the user asks.** Pushes files into the game over cloud-catcher, split and stitched. The fallback if GitHub is ever unreachable in-game. |
 | `attic/test_cloudcat.py` | fletcher32 vectors, plus a real split of `quarry.lua` whose generated joiner is run under `lua5.3` and diffed byte-for-byte. Run from inside `attic/`. |
@@ -443,8 +443,9 @@ raise it. Persist state every meaningful step. `pcall` every peripheral call —
 and remember it prepends its own success flag. Test under `lua5.3` before
 delivering; `test_quarry.lua` is the stubbed world to extend, not replace.
 **When you fix a bug, add a test and verify it FAILS against the unfixed
-code** — nine tests have been confirmed non-vacuous that way and it is worth
-the extra minute. Diagnostics go *in* the program so one in-game run answers
+code.** A test that passes against the bug asserts nothing — usually its world
+never reaches the path, or the string it greps for appears anyway. Eighteen
+tests here have been confirmed non-vacuous that way; it costs a minute. Diagnostics go *in* the program so one in-game run answers
 the question instead of three. Print a liveness line before any long work.
 CC:Tweaked is Lua 5.2. The peripheral dump in
 `~/.claude/skills/cc-tweaked-pack/references/` outranks the wiki, but read its

@@ -886,17 +886,28 @@ local DEPLOY_TANK = 1000
 local function topUp(l)
   -- Deployment is not finished while the depot is still in the hold, and the
   -- coal is then the mine's starting stock, not this turtle's tank [plan 13].
-  -- Burning it here strands turtles 2 and 3 at an empty fuel chest. It is only
-  -- held back while the tank can already pay for the ride down.
-  local bank = carryingContainer() and fuelLevel() >= DEPLOY_TANK
+  -- Burning it all here strands turtles 2 and 3 at an empty fuel chest, so
+  -- only the ride down is taken and the rest is left for the box.
+  -- This used to be a once-computed flag: hold the coal back if the tank is
+  -- ALREADY above DEPLOY_TANK, burn the stack whole if it is not. A turtle
+  -- placed with an empty tank fails that test on its first slot and puts the
+  -- mine's whole 192-coal kit into its own tank [in-game 2026-08-28, log
+  -- zog32]. What it needs is a partial burn, the same one burnFrom does.
+  local holding = carryingContainer()
   for s = 1, 16 do
     local ok, d = pcall(turtle.getItemDetail, s)
     if ok and d and isFuelItem(l, d.name) then
-      if bank and isCoalish(l, d.name) then
-        sayf("fuel   : keeping %d %s for the depot, tank is %d", d.count, d.name, fuelLevel())
-      else
+      local n = d.count
+      if holding and isCoalish(l, d.name) then
+        n = math.max(0, math.min(n, math.ceil((DEPLOY_TANK - fuelLevel()) / 80)))
+      end
+      if n > 0 then
         turtle.select(s)
-        pcall(turtle.refuel)
+        pcall(turtle.refuel, n)
+      end
+      if n < d.count then
+        sayf("fuel   : keeping %d %s for the depot, tank is %d",
+          d.count - n, d.name, fuelLevel())
       end
     end
   end
@@ -2246,6 +2257,11 @@ local function runMine(conf, l, index)
     local okd, whyd = pcall(runDeploy, conf, l, index)
     if not okd then
       sayf("deploy : could not deploy the others, mining alone -- %s", tostring(whyd))
+      -- clear() sets halt on the way out of a failed deploy, and a halt left
+      -- standing is read as this run's reason to stop: the mine descended,
+      -- built its depot and then signed off with the deploy's stale message on
+      -- its first dock request [log zog32].
+      halt, obstacle = nil, nil
     end
     st.task = "mine"
     save()
@@ -2786,6 +2802,12 @@ function runDeploy(conf, l, index)
     say("deploy : STOPPED. Nothing has been placed. Fill the gaps above and re-run.")
     return
   end
+
+  -- Fuel before the first move, and after the audit so it still counts a whole
+  -- kit. A freshly placed turtle has an empty tank with its coal in the hold,
+  -- and the deploy died on "cannot move up to place the drive" with 192 coal
+  -- aboard [in-game 2026-08-28, log zog32].
+  topUp(l)
 
   local driveSlot = slotLike("disk_drive")
   local floppySlot = slotLike("disk[^_]") or slotLike("disk$")

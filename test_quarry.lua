@@ -2122,4 +2122,27 @@ assert(log:find("STOPPED: the depot chest is full"),
 assert(V.sent[1] and V.sent[1].msg:find("I am holding ore"),
   "the message did not say why it stopped: " .. tostring(V.sent[1] and V.sent[1].msg))
 
+-- 67. a fresh turtle fuels itself BEFORE it deploys ---------------------------
+
+-- In-game 2026-08-28, log zog32: turtle 1 was placed with an empty tank and
+-- 192 coal in the hold. topUp ran after the deploy, so runDeploy tried to move
+-- up to place the drive on no fuel, clear() set halt, and three things went
+-- wrong at once: the mine was staffed by nobody, the whole 192 coal went into
+-- turtle 1's own tank because bank was computed once against an empty one, and
+-- the run signed off with the deploy's stale "out of fuel" halt on its first
+-- dock request -- 15,211 in the tank and 0 branches finished.
+world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 0,
+        inv = kit(), leaveAfter = 3 })
+ok, err, log = runWorld("1")
+assert(ok, "the empty-tank run crashed: " .. tostring(err))
+assert(not log:find("could not deploy"),
+  "an empty tank still cost the mine its other two turtles:\n" .. log)
+assert(log:find("deploy : 2 of 2 deployed"),
+  "it did not deploy on an empty tank:\n" .. log)
+assert(not log:find("STOPPED: out of fuel mid%-route"),
+  "the deploy's stale halt still ended the run:\n" .. log)
+assert(log:find("branch : "), "it never got to work:\n" .. log)
+assert(log:find("depot  : banked %d+ fuel"),
+  "it burnt the mine's whole coal stock into its own tank:\n" .. log)
+
 print("all quarry phase 5 checks passed")

@@ -1,6 +1,7 @@
 # Handoff prompt
 
 Paste this into a fresh session to resume the turtle mining build.
+Rewritten whole 2026-08-28 evening.
 
 ---
 
@@ -14,12 +15,41 @@ reports/history-2026-08.md, complete and unedited. Do not read that up front.
 Go there when you need the reasoning behind something RESUME.md states flatly,
 or when something settled starts misbehaving again.
 
+THE MINE IS BLOCKED ON TWO THINGS, IN THIS ORDER.
+
+1. GPS IS DOWN. gps.locate returns nil on turtle 1 with a modem equipped,
+   confirmed by running a probe on the turtle itself on 2026-08-28 evening. It
+   worked that morning (--check reported "position: 8,79,4 (gps)"), so the
+   constellation stopped rather than never existing. RESUME.md's Settled list
+   used to say "GPS exists on this server" and no longer does.
+
+   The live quarry.conf on turtle 1 sets startX = 10, startY = 80, startZ = 5
+   and NO startDir, so a run refuses to start. Either the user fixes the
+   constellation and deletes those three lines, or adds startDir (0, 1, 2, 3 =
+   facing +z, -x, -z, +x). Fixing GPS is the better answer and RESUME.md's
+   "GPS is down" section says why: with a pinned position everything
+   dead-reckons, so a turtle that loses quarry.state cannot find itself again.
+
+2. THE DEPOT. No container has ever been placed at the claim floor, so docking,
+   rationing, restocking and the three-turtle interplay are stub-tested only.
+   Either the user runs `quarry 1` and turtle 1 builds the depot from the
+   chests it carries, or they place a chest against a trunk's bottom block.
+   This is the one thing standing between here and a working mine.
+
+Phases 1 to 5 are built and all five have run in-game. Turtle 1 deployed turtle
+2, which booted, equipped its modem, calibrated, descended to y=-59 and mined
+177 blocks. Phase 6 (monitor, full-clear mode) is deferred and not started.
+
 The design is settled. Do not reopen anything in RESUME.md's "Settled" list and
 do not reintroduce anything in its "Corrections already made" list. If you think
-a settled decision is wrong, say so and wait; don't quietly redesign. Note that
-one probe finding was later overturned in-game -- "a turtle is not a peripheral
-to another turtle" was the probe looking from a position it had already left --
-so trust RESUME.md over the probe results wherever they disagree.
+a settled decision is wrong, say so and wait; don't quietly redesign. Two
+entries were changed on 2026-08-28 on new evidence, not on second thoughts --
+the GPS one above, and the fuel ration, which is now a floor rather than a
+fraction because the old floor(total/3) gave three dockers 100, then 66, then
+44 of a 300-coal chest. Note also that one probe finding was later overturned
+in-game -- "a turtle is not a peripheral to another turtle" was the probe
+looking from a position it had already left -- so trust RESUME.md over the
+probe results wherever they disagree.
 
 Invoke the cc-tweaked-pack skill before writing any Lua. Its peripheral dump
 outranks the wiki for what methods exist -- but read its headers: the dump was
@@ -31,61 +61,63 @@ disk (unzip, javap -c, config/*.toml). No CC:Tweaked jar or config is present
 in this sandbox -- checked -- so CC mod-side behaviour has to come from the
 wiki at tweaked.cc or from the user.
 
-GPS is DOWN on this server as of 2026-08-28 evening: gps.locate returns nil
-from turtle 1 with a modem equipped. It worked that morning. A run therefore
-needs either the constellation fixed, or startX/Y/Z plus startDir in
-quarry.conf -- see RESUME.md's "GPS is down". The live config on turtle 1 sets
-startX/Y/Z and NO startDir, so a run currently refuses to start.
-
-Phases 1 to 5 are built and ALL have now run in-game. Turtle 1 deployed turtle
-2, which booted, equipped its modem, calibrated, descended to y=-59 and mined
-177 blocks. What has never run is the DEPOT CYCLE: no container has ever been
-placed, so docking, rationing, restocking, and two turtles working at once are
-stub-tested only.
-
 Run `lua5.3 test_quarry.lua` and `lua5.3 test_probe.lua` before and after any
-change; all six suites must pass (55 checks). When you fix a bug, add a test and
-verify it FAILS against the unfixed code -- nine tests have been confirmed
-non-vacuous that way and it is worth the extra minute.
+change; all six suites must pass, 55 checks. When you fix a bug, add a test and
+verify it FAILS against the unfixed code -- sixteen tests have been confirmed
+non-vacuous that way and it is worth the extra minute every time.
 
 quarry.lua was code-reviewed on 2026-08-28 and ALL NINE findings are fixed, each
-with a regression test (40-48) confirmed to fail against its own unfixed code.
+with a regression test (40-48) confirmed against its own unfixed code.
 reports/code-review-quarry.md records what each one was; RESUME.md summarises
 them. Nothing from that review is outstanding -- do not go looking for the "six
-open findings" an older copy of this prompt mentions.
+open findings" an older copy of this prompt mentions. Tests 49-55 are the
+2026-08-28 evening fixes: the tank limit read from the turtle instead of a
+literal 20000, the fuel floor, the calibration guard, and startDir.
 
-Delivery is GitHub, changed 2026-08-28: this directory is the working tree of
-https://github.com/zaBees/cc (public). The in-game download is
+DELIVERY IS GITHUB, changed 2026-08-28 at the user's instruction. This
+directory is the working tree of https://github.com/zaBees/cc (public). The
+in-game download is two lines:
 
   delete quarry
   wget https://raw.githubusercontent.com/zaBees/cc/main/quarry.lua quarry
 
-and the URL never changes, so a redelivery is `git push` and the user re-runs
-those same two lines. Verify a push by fetching the raw URL back and diffing
-against disk; raw.githubusercontent.com is CDN-cached for a few minutes, so a
-fetch straight after a push can serve the old version.
+The URL never changes, so a redelivery is `git push` and the user re-runs those
+same two lines. VERIFY A PUSH AGAINST THE COMMIT-PINNED URL, not the branch
+one:
 
-quarry.conf now ships dry = false and lava = true, both at the user's explicit
-instruction on 2026-08-27. This overrides the old "never hand it over ready to
-mine" convention. Test 38 asserts both; do not revert them without being asked.
+  curl -sS https://raw.githubusercontent.com/zaBees/cc/$(git rev-parse HEAD)/quarry.lua
+
+The /main/ URL is CDN-cached and was still serving the previous build more than
+two minutes after a push, which looks exactly like a failed push. The same
+cache can hand the user a stale file if they re-download immediately; tell them
+to wait a moment and repeat the two lines.
 
 Every download line handed to the user is TWO lines, `delete <name>` then the
 `wget`: CC's wget refuses to overwrite an existing file, prints "File already
 exists" and downloads nothing, which reads like success. There is no force flag
 and the CC shell has no && or ;.
 
-paste.rs is retired for delivery -- it began refusing uploads over ~80,000 bytes
-on 2026-08-28 and quarry.lua is past 100,000 -- but the program still POSTS its
-crash reports there and that works fine. Old pastes are still fetchable.
+paste.rs is retired for delivery -- it began refusing uploads over ~80,000
+bytes on 2026-08-28 and quarry.lua is past 100,000 -- but the program still
+POSTS its own crash reports there and that side works fine. Old pastes are
+still fetchable, so the historic builds can be read.
 
 cloudcat.py is archived in attic/ and must NOT be used unless the user asks for
-it. It pushes files straight into the game over cloud-catcher, split across
-packets and stitched back, and it is the fallback if GitHub is ever unreachable
-in-game.
+it by name. It pushes files straight into the game over cloud-catcher, split
+across packets and stitched back by a generated joiner, and it is the fallback
+if GitHub is ever unreachable in-game. It needs the websockets module, which is
+not installable system-wide here under PEP 668, and the in-game computer
+running `cloud <token>`. attic/sumfile.lua is its verifier: a file over ~18 KB
+cannot be pulled back, so you check a delivery by printing its fletcher32
+in-game and comparing against cloudcat.fletcher32 locally.
 
-Pick up at RESUME.md's "Next action": the mine needs a depot. Either run
-`quarry 1` so turtle 1 builds one from the chests it carries, or have the user
-place a chest against a trunk's bottom block.
+quarry.conf ships dry = false and lava = true, both at the user's explicit
+instruction on 2026-08-27. This overrides the old "never hand it over ready to
+mine" convention. Test 38 asserts both; do not revert them without being asked.
+
+This directory also holds an unrelated second thread: ROCKET-PLAN.md, spacex.lua
+and icmb.lua, a Create Aeronautics flight controller. Nine fixes are planned and
+none are implemented. Leave it alone unless the user raises it.
 
 Three standing rules from the user:
 - Work must survive their budget running out. Write deliverables and handoff
@@ -97,12 +129,14 @@ Three standing rules from the user:
   repository on 2026-08-28, so there is an undo now, but the rule stands: ask,
   then revert deliberately with git rather than by hand.
 
-How this session actually went, because it will repeat: the user pastes a
+How these sessions actually go, because it will repeat: the user pastes a
 paste.rs id of an in-game log and little else. Fetch it, read it as the primary
 evidence, and put the diagnostic INTO the program so the next single run answers
 the question. Five deploy runs were spent on a chain of separate bugs, each
-hidden behind the last. Do not theorise past the evidence -- when a log cannot
-distinguish two causes, add the line that will and say so.
+hidden behind the last, and a sixth was spent on a crash whose message named the
+symptom ("calibration moved 0,0") instead of the cause (a config that pinned the
+position). Do not theorise past the evidence -- when a log cannot distinguish
+two causes, add the line that will and say so.
 ```
 
 ---

@@ -122,7 +122,7 @@ Leave turtles 2 and 3 in your inventory for now. Phase 4 is when they matter.
 
 ```
 delete quarry
-wget https://paste.rs/3PcMy quarry
+wget https://raw.githubusercontent.com/zaBees/cc/main/quarry.lua quarry
 ```
 
 > **The `delete` is not optional.** CC's `wget` refuses to overwrite a file that
@@ -131,32 +131,32 @@ wget https://paste.rs/3PcMy quarry
 > `&&` or `;`, so it has to be two lines. If the turtle is brand new and has no
 > `quarry` yet, `delete` says it cannot find the file — harmless, carry on.
 >
-> The id is **case-sensitive** and is `3PcMy`: digit three, capital P, small c,
-> capital M, small y. A 404 is usually a case slip.
->
-> Superseded ids, which must not be run: `swzlE` (pre-review: stops chasing ore
-> after 64 blocks, says `work complete` on an empty tank), `4b9IM` (Phase 1,
-> `--check` only), `4zMLm`, `kgXRL`, and for the probe `KRY8F`.
+> **The URL never changes.** It is the same two lines every time, however many
+> builds go by. That is why delivery moved to GitHub on 2026-08-28: the old
+> paste.rs route needed a fresh five-character id per edit, transcribed by eye,
+> and a `0` read as an `O` cost a round trip.
 >
 > The Phase 5 deployment probe is a separate, smaller program:
 >
 > ```
 > delete probe
-> wget https://paste.rs/4uJB7 probe
+> wget https://raw.githubusercontent.com/zaBees/cc/main/probe.lua probe
 > ```
 
 Those two lines are the whole delivery. The build behind them is the one tested
-here — 48 checks against a stubbed CC world, including a fake world with blocks
+here — 55 checks against a stubbed CC world, including a fake world with blocks
 in it that the turtle actually mines.
 
 Note that **Ctrl+V in a CC terminal pastes one line only** — that is why
 delivery is a single `wget` and never the program text itself. Do not try to
 paste the program.
 
-If I ever change `quarry.lua`, the URL changes with it — paste.rs pastes are
-immutable. I will give you a new one. `delete quarry` first, then `wget` the new
-id under the same `quarry` name: `wget` will not overwrite, and skipping the
-delete leaves you running the old build while the screen says it downloaded.
+When I change `quarry.lua` the URL stays the same — I push to the repo and you
+re-run those same two lines. **The `delete` still matters every time:** `wget`
+will not overwrite, so skipping it leaves you running the old build while the
+screen says it downloaded. If you re-download within a few minutes of my saying
+it is ready and get the old version anyway, that is GitHub's CDN cache — wait a
+moment and do it again.
 
 ---
 
@@ -533,7 +533,8 @@ program — the other two ride in turtle 1's inventory as items.
                                      |
               label set quarry1  ->  refuel all  ->  gps locate
                                      |
-        (turtle)  delete quarry  ->  wget https://paste.rs/3PcMy quarry
+        (turtle)  delete quarry
+        (turtle)  wget https://raw.githubusercontent.com/zaBees/cc/main/quarry.lua quarry
                                      |
                           (turtle)  quarry 1 --check
                                      |

@@ -31,6 +31,12 @@ disk (unzip, javap -c, config/*.toml). No CC:Tweaked jar or config is present
 in this sandbox -- checked -- so CC mod-side behaviour has to come from the
 wiki at tweaked.cc or from the user.
 
+GPS is DOWN on this server as of 2026-08-28 evening: gps.locate returns nil
+from turtle 1 with a modem equipped. It worked that morning. A run therefore
+needs either the constellation fixed, or startX/Y/Z plus startDir in
+quarry.conf -- see RESUME.md's "GPS is down". The live config on turtle 1 sets
+startX/Y/Z and NO startDir, so a run currently refuses to start.
+
 Phases 1 to 5 are built and ALL have now run in-game. Turtle 1 deployed turtle
 2, which booted, equipped its modem, calibrated, descended to y=-59 and mined
 177 blocks. What has never run is the DEPOT CYCLE: no container has ever been
@@ -38,7 +44,7 @@ placed, so docking, rationing, restocking, and two turtles working at once are
 stub-tested only.
 
 Run `lua5.3 test_quarry.lua` and `lua5.3 test_probe.lua` before and after any
-change; all six suites must pass (48 checks). When you fix a bug, add a test and
+change; all six suites must pass (55 checks). When you fix a bug, add a test and
 verify it FAILS against the unfixed code -- nine tests have been confirmed
 non-vacuous that way and it is worth the extra minute.
 
@@ -48,12 +54,16 @@ reports/code-review-quarry.md records what each one was; RESUME.md summarises
 them. Nothing from that review is outstanding -- do not go looking for the "six
 open findings" an older copy of this prompt mentions.
 
-Delivered and current:
-  quarry.lua -> https://paste.rs/3PcMy   (Phases 1-5, post-review, verified
-                                          by fetching it back and diffing)
-  probe.lua  -> https://paste.rs/4uJB7   (the Phase 5 deployment probe)
+Delivery is GitHub, changed 2026-08-28: this directory is the working tree of
+https://github.com/zaBees/cc (public). The in-game download is
 
-Superseded: swzlE is the pre-review quarry build and must not be run.
+  delete quarry
+  wget https://raw.githubusercontent.com/zaBees/cc/main/quarry.lua quarry
+
+and the URL never changes, so a redelivery is `git push` and the user re-runs
+those same two lines. Verify a push by fetching the raw URL back and diffing
+against disk; raw.githubusercontent.com is CDN-cached for a few minutes, so a
+fetch straight after a push can serve the old version.
 
 quarry.conf now ships dry = false and lava = true, both at the user's explicit
 instruction on 2026-08-27. This overrides the old "never hand it over ready to
@@ -64,12 +74,14 @@ Every download line handed to the user is TWO lines, `delete <name>` then the
 exists" and downloads nothing, which reads like success. There is no force flag
 and the CC shell has no && or ;.
 
-The sandbox can reach paste.rs, so upload from here rather than asking the user
-to run curl. paste.rs pastes are immutable: every edit needs a fresh upload and
-the new id written into RESUME.md and SETUP.md. Verify the upload by fetching it
-back and diffing against disk. Paste ids are CASE-SENSITIVE and users transcribe
-them by eye -- 0/O and l/1 are the usual slips. A 404 is very often a case
-error, so try variants before asking.
+paste.rs is retired for delivery -- it began refusing uploads over ~80,000 bytes
+on 2026-08-28 and quarry.lua is past 100,000 -- but the program still POSTS its
+crash reports there and that works fine. Old pastes are still fetchable.
+
+cloudcat.py is archived in attic/ and must NOT be used unless the user asks for
+it. It pushes files straight into the game over cloud-catcher, split across
+packets and stitched back, and it is the fallback if GitHub is ever unreachable
+in-game.
 
 Pick up at RESUME.md's "Next action": the mine needs a depot. Either run
 `quarry 1` so turtle 1 builds one from the chests it carries, or have the user
@@ -81,8 +93,9 @@ Three standing rules from the user:
   end of every phase; never patch it with a blind search-and-replace.
 - Test under lua5.3 here before anything reaches their server. They run the
   code and you never see the game, so a bug that ships costs them a round trip.
-- Ask before reverting or deleting anything. This directory is not a git
-  repository, so there is no undo.
+- Ask before reverting or deleting anything. This directory became a git
+  repository on 2026-08-28, so there is an undo now, but the rule stands: ask,
+  then revert deliberately with git rather than by hand.
 
 How this session actually went, because it will repeat: the user pastes a
 paste.rs id of an in-game log and little else. Fetch it, read it as the primary

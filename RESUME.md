@@ -118,95 +118,65 @@ from a run that finds ore, which is how the config learns this pack's ore ids.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | **delivered by `cloudcat.py`** | **CURRENT — 2026-08-28 evening.** Nine review findings, the fuel-floor ration, the tank-limit fix, the calibration guard, `startDir`. 100,496 bytes, fletcher32 `3090748686`, confirmed by running the checksum on turtle 1 itself. `paste.rs/3PcMy` is the last paste-delivered build and is four fixes behind. |
-| `probe.lua` | `https://paste.rs/4uJB7` | The Phase 5 deployment probe. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-28 evening.** Nine review findings, the fuel-floor ration, the tank-limit fix, the calibration guard, `startDir`. 100,496 bytes, fletcher32 `3090748686`, confirmed by running the checksum on turtle 1 itself. |
+| `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 
-**Deliver with `cloudcat.py`** — see "Delivery now goes through cloudcat"
-below. paste.rs can no longer take a file this size at all, and everything
-under this heading about `wget` is now the fallback route for `probe.lua` and
-for anything small enough to still fit.
-
-`4uJB7` and `3PcMy` are still fetchable, so the old builds can be pulled down.
-Ids are case-sensitive and a 404 is usually a case slip; `3PcMy` is digit
-three, capital P, small c, capital M, small y.
-
-**Every `wget` download is TWO lines.** CC's `wget` refuses to overwrite an
-existing file: it prints `File already exists`, downloads nothing, and reads
-like success. No force flag, and the CC shell has no `&&` or `;`.
-
-```
-delete probe
-wget https://paste.rs/4uJB7 probe
-```
-
-`SETUP.md` and the setup artifact at
+See "Delivery goes through GitHub" below for the two `wget` lines. The setup
+artifact at
 https://claude.ai/code/artifact/6989784d-6bae-4da6-8158-0dc6464885c5 still
-describe the paste route for `quarry.lua` and are **out of date** — update that
-same URL when they are rewritten, because a fresh publish makes a second page.
+describes the paste route and is **out of date** — update that same URL when it
+is regenerated, because a fresh publish makes a second page.
 
 **Superseded ids, which must not be run:** `swzlE` (pre-review: stops chasing
 ore after 64 blocks, says `work complete` on an empty tank), `4b9IM` (Phase 1,
 `--check` only), `4zMLm`, `kgXRL`, `uKUTW`, `3A9h2`, `lQszb`, `bO7bo`, `cpeuw`,
 `llZlk`, and `KRY8F` for the probe.
 
-## Delivery now goes through cloudcat, not paste.rs
+## Delivery goes through GitHub
 
-Changed 2026-08-28 evening, and this is the route to use from now on.
-
-**paste.rs stopped accepting the file.** Uploads over roughly 80,000 bytes get
-an nginx **500**: 80,000 went through first try; 85,000, 88,000, 92,000 and the
-full 97,892 each failed three attempts. It is not the new code being too big --
-**the exact 96,594-byte file live as `3PcMy` also fails to upload now**, so the
-cap tightened during the day. Fetching still works, so old pastes are readable.
-
-**`cloudcat.py` replaces it and is strictly better**: no ids to transcribe, no
-case-sensitivity traps, no two-line `delete`-then-`wget` dance, and the file is
-checksum-verified on the machine that will run it.
+Changed 2026-08-28 at the user's instruction. The repo is
+**https://github.com/zaBees/cc**, public, and this directory is now that repo's
+working tree -- it had no version control before, which is why the standing
+rule says there is no undo. There is one from here.
 
 ```
-python3 cloudcat.py <token> push quarry.lua quarry
-# then, on the computer:
-quarry.join
+delete quarry
+wget https://raw.githubusercontent.com/zaBees/cc/main/quarry.lua quarry
+
+delete probe
+wget https://raw.githubusercontent.com/zaBees/cc/main/probe.lua probe
 ```
 
-The token is the 32-character id from the cloud-catcher URL, and the in-game
-computer must be running `cloud <token>`.
+**The URL never changes.** That is the whole point of the switch: paste.rs ids
+were immutable, so every edit meant a fresh id written into three places and
+transcribed by eye, with `0`/`O` and `l`/`1` slips costing a round trip. A
+redelivery is now `git push`, and the user re-runs the same two lines.
 
-**What was added to `cloudcat.py`** — it could not do this as it stood:
+Still true, and unchanged by the move: **every download is TWO lines.** CC's
+`wget` refuses to overwrite an existing file -- it prints `File already exists`,
+downloads nothing, and reads like success. No force flag, and the CC shell has
+no `&&` or `;`.
 
-- The transport closes the socket with **1009 "message too big"** on an
-  oversized frame and the whole push is lost. Measured: a 16,000-byte file went
-  through, 32,000 did not. `PACKET_BUDGET` is 18,000 on the **encoded** packet,
-  not the file, because JSON escaping inflates Lua source by about a sixth.
-- `push` now splits on line boundaries when it has to, sends the pieces as
-  `<name>.p1..pN`, and sends a generated `<name>.join` that stitches them back,
-  **checks every part's length**, checks the total, writes the file and deletes
-  the parts. quarry.lua goes as 6 parts.
-- The `websockets` import is optional, so the pure helpers stay testable
-  without the dependency. It is **not installed system-wide here** (PEP 668);
-  there is a venv at the scratchpad path, or `pip install --user websockets`.
-- `test_cloudcat.py` now splits the real `quarry.lua`, runs the generated
-  joiner under `lua5.3` against a stub `fs`, and diffs the result byte-for-byte.
-  Run it with plain `python3 test_cloudcat.py`.
+**Verify after a push**, the same way as before: fetch the raw URL back here and
+diff it against disk. `raw.githubusercontent.com` is CDN-cached for a few
+minutes, so a fetch straight after a push can serve the previous version -- if
+the diff fails, wait and try again before believing you broke something.
 
-**Verify a delivery, do not assume it.** `pull` cannot fetch a 97,892-byte file
-back -- the 1009 cap applies in that direction too -- so the check is a
-checksum run in-game. `sumfile.lua` is pushed and does exactly that:
+**paste.rs is retired.** It stopped accepting uploads over roughly 80,000 bytes
+on 2026-08-28 (nginx 500; even the 96,594-byte file already live as `3PcMy`
+could no longer be re-uploaded), and quarry.lua is past 100,000. Old pastes are
+still fetchable, so the historic builds can be read: `3PcMy` quarry, `4uJB7`
+probe, and the superseded ids listed under Delivered.
 
-```
-python3 cloudcat.py <token> run "sumfile quarry"
-```
-
-It must print the same fletcher32 that `cloudcat.fletcher32` gives for the
-local file. On 2026-08-28 both said **97892 bytes, 1914288371**.
-
-Two files of mine are sitting on that computer: `sumfile.lua`, which is worth
-keeping, and `cctest.txt`, a reachability probe that is litter and can be
-deleted.
-
-Do not strip comments to fit a paste host. In-game errors print line numbers
-and the user pastes those logs back; a delivered copy whose lines do not match
-the disk copy makes every future log unreadable.
+**cloudcat is archived in `attic/` and is not to be used unless the user asks
+for it.** It works and it is the fallback if GitHub is ever unreachable in-game;
+`attic/test_cloudcat.py` still passes from where it sits. What it does: pushes a
+file straight into the game over cloud-catcher, splitting it across packets and
+stitching it back, so nothing is transcribed at all. It needs `websockets`
+(not installable system-wide here under PEP 668 -- use a venv) and the in-game
+computer running `cloud <token>`. `attic/sumfile.lua` is its verifier: pushed to
+the machine, it prints the file's fletcher32 to compare against
+`cloudcat.fletcher32` locally, because a file over ~18 KB cannot be pulled back.
 
 ## Files
 
@@ -226,10 +196,10 @@ the disk copy makes every future log unreadable.
 | `test_pattern.lua`, `test_coverage.lua` | The pattern proofs: `1,3,5,2,4`, and dug%/unseen% per candidate. |
 | `reports/plan-2026-08-25-full.md` | `MASTERMINE-PLAN.md` before its 2026-08-28 trim, with the original phase schedule. |
 | `HANDOFF-PROMPT.md` | The prompt to paste into a fresh session. |
-| `attic/` | Superseded work, kept because there is no undo here. `tunnel.lua` and its test live there now. |
-| `cloudcat.py` | **The delivery route.** Headless cloud-catcher client; pushes files straight into the game, splitting and stitching when they exceed the packet cap. Needs `websockets`. |
-| `test_cloudcat.py` | fletcher32 vectors, plus a real split of `quarry.lua` whose generated joiner is run under `lua5.3` and diffed byte-for-byte. `python3 test_cloudcat.py` |
-| `sumfile.lua` | Pushed to the game to checksum a delivered file: `cloudcat.py <token> run "sumfile quarry"`. Arithmetic-only fletcher32, because CC is Lua 5.2. |
+| `attic/` | Superseded and reserve work. `tunnel.lua` and its test, and the cloudcat delivery client. |
+| `attic/cloudcat.py` | **Archived 2026-08-28. Do not use unless the user asks.** Pushes files into the game over cloud-catcher, split and stitched. The fallback if GitHub is ever unreachable in-game. |
+| `attic/test_cloudcat.py` | fletcher32 vectors, plus a real split of `quarry.lua` whose generated joiner is run under `lua5.3` and diffed byte-for-byte. Run from inside `attic/`. |
+| `attic/sumfile.lua` | cloudcat's verifier: prints a file's fletcher32 in-game. Arithmetic-only, because CC is Lua 5.2. |
 
 ## The design in one paragraph
 
@@ -440,8 +410,8 @@ derives a heading by moving one block and diffing GPS.
 
 ## Conventions that govern the code
 
-One self-contained file, no `require`, delivered as a single `wget` from
-paste.rs. Opens `local DRY = true`; `quarry.conf` may lower it and may never
+One self-contained file, no `require`, delivered as a single `wget` from the
+GitHub repo. Opens `local DRY = true`; `quarry.conf` may lower it and may never
 raise it. Persist state every meaningful step. `pcall` every peripheral call —
 and remember it prepends its own success flag. Test under `lua5.3` before
 delivering; `test_quarry.lua` is the stubbed world to extend, not replace.
@@ -464,10 +434,13 @@ so CC mod-side behaviour comes from tweaked.cc or from the user.
   whole at the end of every phase.
 - **Test under lua5.3 here before anything reaches their server.** They run the
   code and you never see the game, so a bug that ships costs a round trip.
-- **Ask before reverting or deleting anything.** This directory is not a git
-  repository, so there is no undo.
+- **Ask before reverting or deleting anything.** This directory became a git
+  repository on 2026-08-28, so there is an undo now — but the rule stands. Ask,
+  then revert deliberately with git rather than by hand.
 - **How the sessions actually go:** the user pastes a paste.rs id of an in-game
-  log and little else. Fetch it, read it as the primary evidence, and put the
+  log and little else — the program still uploads its own crash reports there,
+  and that side of paste.rs works fine; it is only uploads over ~80,000 bytes
+  that fail. Fetch it, read it as the primary evidence, and put the
   diagnostic INTO the program so the next single run answers the question. Five
   deploy runs were spent on a chain of separate bugs, each hidden behind the
   last. Do not theorise past the evidence — when a log cannot distinguish two

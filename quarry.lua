@@ -1,5 +1,5 @@
 -- quarry : three turtles read a chunk-snapped 3x3 claim with mod-5 branches
--- wget https://paste.rs/XXXXX quarry
+-- wget https://raw.githubusercontent.com/zaBees/cc/main/quarry.lua quarry
 -- usage:  quarry <1|2|3> [--check|recall|deploy]
 --
 -- Phase 1: claim maths, branch/spine iterators, --check.

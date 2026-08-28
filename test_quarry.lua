@@ -2058,10 +2058,10 @@ assert(log:find("deploy : 2 of 2 deployed"),
   "a plain `quarry 1` did not deploy the turtles it was carrying:\n" .. log)
 assert(log:find("branch : "), "it deployed and then never mined:\n" .. log)
 local sv65 = load("return " .. V.files["quarry.state"])()
-assert(sv65.deployed == true, "the state file does not record the deployment")
+assert((sv65.deployTries or 0) > 0, "the state file does not record the attempt")
 assert(sv65.dug > 100, "it barely mined after deploying:\n" .. log)
 
--- and it is once per claim: the state says it is done, so a reboot mines
+-- and it does not do it twice: the hold is empty of turtles now, so a reboot mines
 V.log = {}
 ok, err, log = runWorld("1")
 assert(ok, "the resumed run crashed: " .. tostring(err))
@@ -2265,5 +2265,30 @@ end
 for y = -58, -55 do
   assert((perY[y] or 0) > 40, ("y=%d is inside the range and was not mined:\n%s"):format(y, log))
 end
+
+-- 72. turtles in the hold are the deploy signal, not a one-shot flag ---------
+
+-- st.deployed was written BEFORE the attempt so a deploy that died half way
+-- would not be retried on every reboot. The cost was every other failure: a
+-- short kit, a blocked spot, a crash -- the flag was set, and from then on
+-- `quarry 1` walked off with both turtles still in the hold and said nothing.
+-- A deploy that works empties the hold, so the hold is the flag.
+world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+        inv = kit(), leaveAfter = 3 })
+V.files["quarry.state"] = [[{ ["index"]=1, ["deployed"]=true, ["done"]={} }]]
+ok, err, log = runWorld("1")
+assert(ok, "the retried-deploy run crashed: " .. tostring(err))
+assert(log:find("deploy : 2 of 2 deployed"),
+  "a state file that says it already deployed kept the turtles in the hold:\n" .. log)
+
+-- but a deploy that keeps failing gives up rather than doing it every reboot
+world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+        inv = kit({ [2] = false, [3] = false }), leaveAfter = 3 })
+V.files["quarry.state"] = [[{ ["index"]=1, ["deployTries"]=3, ["done"]={} }]]
+ok, err, log = runWorld("1")
+assert(ok, "the given-up deploy run crashed: " .. tostring(err))
+assert(log:find("deploy : 2 turtles still in the hold"),
+  "it said nothing about the turtles it is still carrying:\n" .. log)
+assert(log:find("branch : "), "giving the deploy up stopped the mine:\n" .. log)
 
 print("all quarry phase 5 checks passed")

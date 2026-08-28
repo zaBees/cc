@@ -2312,10 +2312,18 @@ local function runMine(conf, l, index)
   -- into the depot as spoil, and now that they are kit they ride along instead,
   -- which is no more use. Deploy here, at the surface, on the launch block,
   -- where the drive goes and where every turtle agrees on the claim.
-  -- One attempt per claim: it is recorded before it runs, so a deploy that dies
-  -- half way does not get retried on every reboot. `quarry 1 deploy` retries it.
-  if index == 1 and (conf.turtles or 1) > 1 and not st.deployed and carryingTurtle() then
-    st.deployed = true
+  --
+  -- The signal is the hold: turtles aboard means turtles to place. It used to
+  -- be a once-per-claim flag written BEFORE the attempt, so a deploy that was
+  -- stopped by anything -- a short kit, a blocked spot, a crash -- was never
+  -- tried again, and every later `quarry 1` walked off with both turtles still
+  -- in the hold and said nothing about it [in-game 2026-08-28]. A deploy that
+  -- works empties the hold, so the hold is the flag. The counter is only there
+  -- to stop a deploy that fails the same way forever from doing it on every
+  -- reboot as well.
+  if index == 1 and (conf.turtles or 1) > 1 and carryingTurtle()
+     and (st.deployTries or 0) < 3 then
+    st.deployTries = (st.deployTries or 0) + 1
     save()
     say("deploy : turtles in the hold -- staffing the mine before I descend")
     local okd, whyd = pcall(runDeploy, conf, l, index)
@@ -2329,6 +2337,10 @@ local function runMine(conf, l, index)
     end
     st.task = "mine"
     save()
+  elseif index == 1 and (conf.turtles or 1) > 1 and carryingTurtle() then
+    sayf("deploy : %d turtles still in the hold, but the deploy has failed %d times",
+      conf.turtles - 1, st.deployTries or 0)
+    say("         already. Fix what it complained about and run `quarry 1 deploy`.")
   end
 
   -- The claim comes from the block the turtle was LAUNCHED on, never from

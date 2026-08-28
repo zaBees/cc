@@ -17,6 +17,7 @@ local function reset(o)
     placed = {},
     conf = o.conf,
     equip = o.equip or { right = "modem" },
+    wired = o.wired or {},                -- side -> true: a modem that is not wireless
   }
   if W.conf then W.files["quarry.conf"] = W.conf end
   if o.state then W.files["quarry.state"] = o.state end
@@ -71,14 +72,32 @@ local function mkenv()
 
   -- the gps api is always THERE on a real turtle; what a missing modem or a
   -- dead constellation costs is the answer, not the table
-  env.gps = { locate = function()
-    if not W.gps then return nil end
+  env.gps = { locate = function(_, debug)
+    -- the real api needs a modem whose isWireless() is true, and says so out
+    -- loud when asked to; the run captures that print, so the stub makes it
+    local wireless = false
+    for side, t in pairs(W.equip or {}) do
+      if t == "modem" and not W.wired[side] then wireless = true end
+    end
+    if not wireless then
+      if debug then env.print("No wireless modems attached. GPS requires a wireless modem.") end
+      return nil
+    end
+    if not W.gps then
+      if debug then env.print("Received 0 responses.") env.print("Could not determine position.") end
+      return nil
+    end
     return W.at[1], W.at[2], W.at[3]
   end }
 
   -- an equipped wireless modem is what gives a turtle gps.locate at all
+  -- a wired modem reports its type as "modem" exactly as a wireless one does;
+  -- isWireless is the only thing that tells them apart, and gps.locate asks it
   env.peripheral = {
     getType = function(side) return W.equip and W.equip[side] or nil end,
+    call = function(side, method)
+      if method == "isWireless" then return not W.wired[side] end
+    end,
   }
 
   env.http = { post = function(_, body)
@@ -314,7 +333,7 @@ reset({ equip = { right = "modem" }, inv = {
 } })
 ok, err, log = run("1", "--check")
 assert(ok, "modem --check crashed: " .. tostring(err))
-assert(log:find("equipped: left=tool or empty  right=modem"), "equipped line wrong:\n" .. log)
+assert(log:find("equipped: left=tool or empty  right=wireless modem"), "equipped line wrong:\n" .. log)
 assert(log:find("wireless modem%s+3 of%s+3%s+ok"),
   "an equipped modem was not counted toward the kit:\n" .. log)
 
@@ -335,7 +354,8 @@ assert(log:find("kit    :"), "the kit audit was skipped just because there was n
 -- with a modem, a fixless turtle must NOT blame the modem
 reset({ equip = { left = "modem" }, gps = false })
 ok, err, log = run("1", "--check")
-assert(log:find("A modem is equipped"), "a modem-equipped turtle was told to fit a modem:\n" .. log)
+assert(log:find("A wireless modem is equipped"),
+  "a modem-equipped turtle was told to fit a modem:\n" .. log)
 
 -- startXYZ works but must be called out as degraded, not endorsed
 reset({ equip = {}, gps = false, conf = "startX = 0\nstartY = 64\nstartZ = 0\n" })
@@ -406,10 +426,39 @@ assert(not log:find("no GPS host answered"),
 
 reset({ equip = { left = "modem" }, gps = false })
 ok, err, log = run("1")
-assert(log:find("a modem IS equipped"),
+assert(log:find("a wireless modem IS equipped"),
   "a modem-equipped run was told to equip a modem:\n" .. log .. tostring(err))
 assert(log:find("no GPS host answered"),
   "it did not name the constellation as the cause:\n" .. log)
+
+-- and whatever the cause, the log carries what gps.locate itself saw. Three
+-- sessions went on theories about a NO FIX the api was willing to explain:
+-- locate's second argument is a debug flag and its output goes to the terminal,
+-- which an uploaded log never sees. The run borrows print for the call.
+assert(log:find("gps    : Received 0 responses"),
+  "gps.locate's own debug output was thrown away:\n" .. log)
+
+-- 60. a WIRED modem is a third cause, not the second one -------------------
+
+-- peripheral.getType says "modem" for both kinds, and gps.locate takes neither
+-- on trust: it checks isWireless() and skips anything that fails. So a wired
+-- modem equips cleanly, reads as a modem in every report, and never yields a
+-- fix -- which reads exactly like a dead constellation unless something asks.
+reset({ equip = { right = "modem" }, wired = { right = true } })
+ok, err, log = run("1")
+assert(log:find("modem is WIRED"),
+  "a wired modem was reported as a constellation problem:\n" .. log .. tostring(err))
+assert(not log:find("no GPS host answered"),
+  "it blamed the hosts for a modem that cannot talk to them:\n" .. log)
+assert(log:find("No wireless modems attached"),
+  "gps.locate's own verdict on the wired modem was not captured:\n" .. log)
+
+reset({ equip = { right = "modem" }, wired = { right = true } })
+ok, err, log = run("1", "--check")
+assert(log:find("equipped: left=tool or empty  right=wired modem"),
+  "--check reported a wired modem as if it were wireless:\n" .. log)
+assert(log:find("CAUSE: the equipped modem is WIRED"),
+  "--check did not name the wired modem:\n" .. log)
 
 -- 59. with no GPS down the hole, the saved state IS the fix -----------------
 

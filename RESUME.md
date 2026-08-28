@@ -116,6 +116,20 @@ that log.
   told. It is announced every time, in `--check` and in the run, because a
   turtle someone picked up and moved cannot know it. A state file with no
   `dir` in it is not a fix. Test 59, three cases.
+- **A wired modem is a third cause of NO FIX, and it looked like the second.**
+  `peripheral.getType` answers `"modem"` for wired and wireless alike;
+  `gps.locate` does not take that on trust — it walks the sides asking
+  `isWireless()` and skips anything that fails. So a wired modem equips
+  cleanly, reads as a modem in every report the program printed, and never
+  yields a fix, which is indistinguishable from a dead constellation unless
+  something asks. `equippedSides` now reports `wireless modem` / `wired modem`,
+  and `hasModem` means wireless. Test 60.
+- **The run captures `gps.locate`'s own debug output.** Its second argument is a
+  debug flag; with it on the api prints which sides it tried, how many hosts
+  answered and whether they agreed — to the terminal, which an uploaded log
+  never sees. `gpsDebug()` borrows `print` for the call, so a NO FIX now uploads
+  `gps    : Received 0 responses.` instead of one bare `CRASHED` line. Three
+  sessions were spent theorising about a fix the api was willing to explain.
 
 ## GPS was down on 2026-08-28 evening and is up again
 
@@ -266,7 +280,7 @@ the machine, it prints the file's fletcher32 to compare against
 | --- | --- |
 | `MASTERMINE-PLAN.md` | The design, every decision and its reasoning. Read second. Trimmed 2026-08-28: §11 is now a status table, and the rules it used to carry are in this file's Settled and Corrections lists. |
 | `quarry.lua` | **The deliverable.** ~2,430 lines, Phases 1–5. Opens `local DRY = true`; the config lowers it. |
-| `test_quarry.lua` | Five suites against stubbed CC worlds, 59 checks. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–59 the night ones. `lua5.3 test_quarry.lua` |
+| `test_quarry.lua` | Five suites against stubbed CC worlds, 60 checks. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones. `lua5.3 test_quarry.lua` |
 | `update.lua` | The in-game updater: `update` replaces `quarry` and itself from GitHub. Downloaded once by hand. |
 | `test_update.lua` | Stubbed `http`/`fs` around the updater: the failed download, the HTML 404, the cache-buster, the checksum. `lua5.3 test_update.lua` |
 | `probe.lua` | The Phase 5 probe. `probe` is a dry run, `probe go` is the real one. |
@@ -370,6 +384,10 @@ Plan section numbers in brackets.
   the default lists outright** — a file with no `[blacklist]` section has no
   blacklist. That is deliberate; tests must spell out the lists they need.
 - **Save state every block** [10]. Measured at 1.35 ms against a 400 ms move.
+- **"A modem is equipped" was never the right question.** `getType` says
+  `"modem"` for a wired one too, and `gps.locate` only ever answers through a
+  modem whose `isWireless()` is true. Ask `isWireless`, not `getType`, anywhere
+  the answer decides whether GPS can work.
 - **GPS does not reach the claim floor, and that is physics, not a fault.**
   A wireless modem's range shrinks with depth; the hosts sit near the surface
   and the mine floor is y=-59, a hundred-odd blocks down. `gps.locate` answering

@@ -416,42 +416,89 @@ local function locate(conf)
   return nil, nil, nil, "no fix"
 end
 
--- A turtle reaches gps.locate only through an equipped WIRELESS modem. The
--- pickaxe is not a peripheral, so it reads as nil here; a modem reads as
--- "modem". This is the ground truth behind a NO FIX, so print it either way.
+-- A turtle reaches gps.locate only through an equipped WIRELESS modem, and
+-- "wireless" is not the same question as "is there a modem". CC's gps.locate
+-- walks the sides looking for one whose isWireless() is true, so a WIRED modem
+-- equips happily, reports its type as "modem" exactly as a wireless one does,
+-- and still yields no fix ever. Those are two different problems with two
+-- different answers, so this tells them apart rather than reporting "modem"
+-- for both. The pickaxe is not a peripheral, so it reads as nil here.
 local function equippedSides()
   local out = {}
   for _, side in ipairs({ "left", "right" }) do
     local ok, t = pcall(peripheral.getType, side)
-    out[side] = (ok and t) or nil
+    if ok and t then
+      out[side] = t
+      if t == "modem" then
+        local okw, wireless = pcall(peripheral.call, side, "isWireless")
+        -- an old build with no isWireless is not evidence of a wired modem
+        out[side] = (okw and wireless == false) and "wired modem" or "wireless modem"
+      end
+    end
   end
   return out
 end
 
 local function hasModem()
   local e = equippedSides()
-  return (e.left == "modem") or (e.right == "modem")
+  return (e.left == "wireless modem") or (e.right == "wireless modem")
 end
 
--- A NO FIX has two causes wanting two different answers, and the old crash line
--- listed both at once: "equip a wireless modem, or set startX/Y/Z". In-game
--- 2026-08-28 that read as a lie -- gps.locate answered when the user tried it
--- by hand and the run still refused to start -- because the message never said
--- which of the two it actually was. It says now, and each answer excludes the
--- other, so the crash line is evidence rather than a list.
+local function hasWiredModem()
+  local e = equippedSides()
+  return (e.left == "wired modem") or (e.right == "wired modem")
+end
+
+-- gps.locate's second argument is a debug flag, and with it on the api prints
+-- what it actually saw -- which sides it tried, how many hosts answered,
+-- whether they agreed -- straight to the terminal, where an uploaded log never
+-- sees it. Three sessions were spent guessing at a NO FIX that the api was
+-- willing to explain all along. Borrow print for the call so the next paste
+-- carries the answer instead of another theory.
+local function gpsDebug()
+  local lines = {}
+  local saved = print
+  print = function(...)
+    local t = {}
+    for i = 1, select("#", ...) do t[i] = tostring((select(i, ...))) end
+    lines[#lines + 1] = table.concat(t, " ")
+  end
+  pcall(gps.locate, GPS_TIMEOUT, true)
+  print = saved
+  return lines
+end
+
+-- A NO FIX has three causes wanting three different answers, and the first
+-- version of this line listed them all at once: "equip a wireless modem, or set
+-- startX/Y/Z". In-game 2026-08-28 that read as a lie -- gps.locate answered
+-- when the user tried it by hand and the run still refused to start -- because
+-- the message never said which cause it actually was. It says now, it says what
+-- gps.locate itself saw, and it goes through say() so the uploaded log carries
+-- the evidence instead of one bare CRASHED line.
 local function noFix()
   local e = equippedSides()
   local sides = ("left=%s right=%s"):format(tostring(e.left or "none"),
                                             tostring(e.right or "none"))
+  sayf("gps    : equipped %s", sides)
+  sayf("gps    : asking gps.locate again with debug on (%ds)", GPS_TIMEOUT)
+  local seen = gpsDebug()
+  if #seen == 0 then say("gps    : (it printed nothing at all)") end
+  for _, line in ipairs(seen) do sayf("gps    : %s", line) end
+
+  if hasWiredModem() and not hasModem() then
+    return "no position fix: the equipped modem is WIRED, not wireless (" .. sides
+      .. "). gps.locate only ever answers through a wireless modem -- it checks "
+      .. "isWireless() and skips the rest. Swap it for a wireless modem."
+  end
   if not hasModem() then
     return "no position fix: NO WIRELESS MODEM IS EQUIPPED (" .. sides .. "). GPS "
       .. "needs the modem ON the turtle, not in a slot: select it and run "
       .. "`equip right`, or run `quarry --check`, which reports both sides."
   end
-  return "no position fix: a modem IS equipped (" .. sides .. ") and no GPS host "
-    .. "answered in " .. GPS_TIMEOUT .. "s. The hosts must be running, in loaded "
-    .. "chunks, and in range of HERE -- range falls off underground. Or set "
-    .. "startX/Y/Z in quarry.conf."
+  return "no position fix: a wireless modem IS equipped (" .. sides .. ") and no "
+    .. "GPS host answered in " .. GPS_TIMEOUT .. "s. See the gps lines above for "
+    .. "what it saw. Hosts must be running, in loaded chunks, and in range of "
+    .. "HERE -- range falls off with depth. Or set startX/Y/Z in quarry.conf."
 end
 
 local function findItem(name)
@@ -588,12 +635,19 @@ local function check(conf, l, source, index)
 
   if not x then
     say("position: NO FIX -- gps.locate returned nothing and quarry.conf sets no startX/Y/Z")
-    if not hasModem() then
+    if hasWiredModem() and not hasModem() then
+      say("         CAUSE: the equipped modem is WIRED. gps.locate checks")
+      say("         isWireless() and skips anything that is not. Swap it.")
+    elseif not hasModem() then
       say("         CAUSE: no wireless modem is equipped. GPS needs one. Put a")
       say("         wireless modem in a slot, select it, and run: equip right")
     else
-      say("         A modem is equipped, so this is range or a missing GPS host.")
+      say("         A wireless modem is equipped, so this is range or a missing host.")
     end
+    sayf("         asking gps.locate again with debug on (%ds):", GPS_TIMEOUT)
+    local seen = gpsDebug()
+    if #seen == 0 then say("         (it printed nothing at all)") end
+    for _, line in ipairs(seen) do sayf("         %s", line) end
     say("         startX/startY/startZ is a fallback, not a fix: a turtle told its")
     say("         position once cannot re-locate after a freeze, so resume degrades.")
     say("Claim maths needs a position. The kit audit does not, so it follows.")

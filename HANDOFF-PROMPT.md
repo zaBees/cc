@@ -71,7 +71,7 @@ in this sandbox -- checked -- so CC mod-side behaviour has to come from the
 wiki at tweaked.cc or from the user.
 
 Run `lua5.3 test_quarry.lua`, `lua5.3 test_probe.lua` and `lua5.3
-test_update.lua` before and after any change; all of them must pass, 59 checks
+test_update.lua` before and after any change; all of them must pass, 60 checks
 in test_quarry. When you fix a bug, add a test and
 verify it FAILS against the unfixed code -- sixteen tests have been confirmed
 non-vacuous that way and it is worth the extra minute every time.
@@ -82,10 +82,13 @@ reports/code-review-quarry.md records what each one was; RESUME.md summarises
 them. Nothing from that review is outstanding -- do not go looking for the "six
 open findings" an older copy of this prompt mentions. Tests 49-55 are the
 2026-08-28 evening fixes: the tank limit read from the turtle instead of a
-literal 20000, the fuel floor, the calibration guard, and startDir. Tests 56-59
+literal 20000, the fuel floor, the calibration guard, and startDir. Tests 56-60
 and the rewritten 33 are that night's: the kit staying out of the depot, the
-depot going under the trunk floor, the NO FIX crash naming its own cause, and
-quarry.state standing in as a position source where GPS cannot reach.
+depot going under the trunk floor, the NO FIX crash naming its own cause,
+quarry.state standing in as a position source where GPS cannot reach, and the
+wired-modem case. A NO FIX now uploads gps.locate's own debug output -- if a
+GPS question comes up, read those `gps    :` lines before theorising, and if
+they are absent from a log, the run predates them.
 
 DELIVERY IS GITHUB, changed 2026-08-28 at the user's instruction. This
 directory is the working tree of https://github.com/zaBees/cc (public). The

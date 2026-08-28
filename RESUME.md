@@ -135,12 +135,14 @@ confirmed to fail against its own unfixed code:
 
 ## Next action
 
-The code is ready. The run to ask for: **`update`, then `quarry 1 deploy`**
-from the launch block, carrying a barrel, turtles 2 and 3, the drive and the
-floppy — and **stay at the turtle**: the deploy asks to have each new turtle
-right-clicked, and waits 60s for the answer. The turtle already standing at the
-depot does not need moving; the deploy will pick it up as turtle 2.
-`SETUP.md` is the player-facing version of this and of everything they place.
+The code is ready. The run to ask for: **`update`, then `quarry 1`** from the
+launch block, carrying a barrel, turtles 2 and 3, the drive and the floppy.
+`quarry 1` deploys by itself while turtles are in the hold, then mines;
+`quarry 1 deploy` is only for retrying the staffing alone. **Stay at the
+turtle**: it asks to have each new turtle right-clicked, and waits 60s for that
+one. The turtle already standing at the depot does not need moving and needs
+nothing typed on it — the deploy adopts it as turtle 2 and rewrites its floppy
+with the current build. `SETUP.md` is the player-facing version of all of this.
 
 What to read in the log that comes back:
 

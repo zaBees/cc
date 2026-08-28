@@ -515,6 +515,9 @@ print("all quarry phase 1 checks passed")
 
 local V   -- the phase 2 world
 
+-- topY in a test conf is a run bound, not a claim: a full depot no longer stops
+-- a run -- the junk goes on the tunnel floor -- so a world that does not cap the
+-- levels mines its whole third, which is a minute per test instead of a second.
 local function world(o)
   o = o or {}
   V = {
@@ -529,6 +532,7 @@ local function world(o)
     equip   = { right = "modem" },
     chests  = o.chests or {},        -- "x,y,z" -> { {name=, count=}, ... }
     disk    = o.disk or false,       -- a disk drive with a floppy at the depot
+    sent    = {},                    -- what notify() put on rednet
     sleeps  = 0,                     -- 1s polls burnt waiting for a deployed turtle
     leaveAfter = o.leaveAfter,       -- polls before a deployed turtle walks off
     handed  = {},                    -- what a deployed turtle was given
@@ -636,6 +640,13 @@ local function mkworldenv()
                end
              end }
   env.gps = { locate = function() return V.pos.x, V.pos.y, V.pos.z end }
+
+  -- rednet is the only channel out of the mine. Every world here equips a
+  -- wireless modem, so opening it is expected to work.
+  env.rednet = {
+    open      = function(side) V.rednetOpen = side end,
+    broadcast = function(msg, proto) V.sent[#V.sent + 1] = { msg = msg, proto = proto } end,
+  }
   -- A placed turtle IS visible as a peripheral to the one that placed it, which
   -- is how the deployer turns it on. Any other side reports the equipped item.
   env.peripheral = {
@@ -1161,12 +1172,17 @@ assert((sv19.junked or 0) > 0, "the state file counted no junk")
 
 -- 20. lava: recorded on the map, and scooped when the tank is low ---------
 
--- lavaFloor = 0 means never scoop, so this is purely the map
-world({ conf = "tripBlocks = 200\nlava = true\nlavaFloor = 0\n" .. SECTIONS, fuel = 2000,
+-- lavaFloor = 0 means never scoop a source the branch passes, so this is purely
+-- the map. The depot is stocked and the top level is pulled down to y=-57
+-- because a run that runs out of coal forages, and foraging takes a mapped
+-- source whatever lavaFloor says -- which is the point of foraging. Before the
+-- depot-full stop was lifted this world ended itself after a few docks, on a
+-- chest the stub caps at 27 stacks; now the run lives until the claim does.
+world({ conf = "tripBlocks = 200\nlava = true\nlavaFloor = 0\ntopY = -57\n" .. SECTIONS, fuel = 2000,
         disk = true,
         blocks = { [k3(DX, DY, DZ)] = "minecraft:chest",
                    [k3(145, BY - 1, BZ)] = "minecraft:lava" },
-        chests = coalChest(30),
+        chests = coalChest(2000),
         inv = { [16] = { name = "minecraft:bucket", count = 1 } } })
 ok, err, log = runWorld("1")
 assert(ok, "lava-map run crashed: " .. tostring(err))
@@ -1224,7 +1240,7 @@ assert(log:find("fuel   : burnt %d+ coal from the hold"),
 
 -- 23. a fuel find is banked for the other two ------------------------------
 
-world({ conf = "tripBlocks = 100000\nfuelShare = 8\n" .. SECTIONS, fuel = 20000,
+world({ conf = "topY = -55\ntripBlocks = 100000\nfuelShare = 8\n" .. SECTIONS, fuel = 20000,
         blocks = (function()
           local b = { [k3(DX, DY, DZ)] = "minecraft:chest" }
           -- east leg: the chest at 135 blocks the west one at the floor level
@@ -1296,7 +1312,7 @@ assert(n25 > 0, "it stopped for good the first time it met another turtle:\n" ..
 -- the chest is under turtle 2's trunk (z=-41); turtle 1 has none under its own
 -- and has to walk the spine to find it the first time it needs one
 local T2Z = -41
-world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
         blocks = { [k3(BX - 1, BY, T2Z)] = "minecraft:chest" },
         chests = { [k3(BX - 1, BY, T2Z)] = { { name = "minecraft:coal", count = 30 } } } })
 ok, err, log = runWorld("1")
@@ -1318,7 +1334,7 @@ assert(sv26.noDepot, "the empty answer was not written down")
 
 -- 27. recall brings it back to the block it was launched on ----------------
 
-world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
         blocks = { [k3(DX, DY, DZ)] = "minecraft:chest" },
         chests = coalChest(30) })
 ok, err, log = runWorld("1")
@@ -1437,7 +1453,7 @@ assert(not V.files["/disk/startup.lua"], "DRY deploy wrote a boot script")
 
 -- No container anywhere in the world: the old behaviour was to shrug and mine
 -- one load. Carrying chests means deployment is not finished, so it builds one.
-world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
         inv = { [1] = { name = "minecraft:chest", count = 2 },
                 [2] = { name = "minecraft:coal",  count = 64 } } })
 ok, err, log = runWorld("1")
@@ -1729,7 +1745,7 @@ assert(not log:find("built the depot here"),
 -- turtle 2's here, so the depot is below it and an upward-only lift sailed
 -- over it and wrote noDepot down for good.
 local T2LOW = -41
-world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
         blocks = { [k3(BX, BY + 1, BZ)] = "minecraft:bedrock",  -- our floor stops high
                    [k3(BX - 1, BY, T2LOW)] = "minecraft:chest" },
         chests = { [k3(BX - 1, BY, T2LOW)] = { { name = "minecraft:coal", count = 30 } } } })
@@ -1755,7 +1771,14 @@ assert(prog:find("seeding one from the defaults"),
 -- modems, the drive and the floppy, docked, and dumpLoad posted the lot into
 -- the depot as spoil -- it dumps everything that is not fuel, and only the
 -- bucket was named as kit. The other two turtles ended up in a chest.
-world({ conf = "tripBlocks = 20\n" .. SECTIONS, fuel = 20000, inv = kit() })
+--
+-- The kit is short of the drive and the floppy on purpose: with them aboard a
+-- plain `quarry 1` now deploys the other two before it descends (test 65), and
+-- there would be no turtles left in the hold to dump. Without a drive it
+-- cannot deploy, so it carries them down -- which is exactly the run that
+-- produced this bug.
+world({ conf = "topY = -55\ntripBlocks = 20\n" .. SECTIONS, fuel = 20000,
+        inv = kit({ [2] = false, [3] = false }) })
 ok, err, log = runWorld("1")
 assert(ok, "the kit-carrying run crashed: " .. tostring(err))
 assert(log:find("depot  : docking"), "it never docked, so nothing was dumped:\n" .. log)
@@ -1773,8 +1796,10 @@ for s = 1, 16 do
 end
 assert(aboard56["computercraft:turtle_advanced"] == 2,
   "the two turtles are not in the hold any more:\n" .. log)
-assert(aboard56["computercraft:disk_drive"] == 1, "the drive left the hold:\n" .. log)
-assert(aboard56["computercraft:disk"] == 1, "the floppy left the hold:\n" .. log)
+assert(aboard56["computercraft:wireless_modem_advanced"] == 3,
+  "the spare modems left the hold:\n" .. log)
+assert(log:find("staffing the mine"), "it never tried to deploy the turtles it carried:\n" .. log)
+assert(not V.disk, "it deployed with no drive in the hold:\n" .. log)
 
 -- 57. a container UNDER the trunk floor is the depot, and a barrel counts ---
 
@@ -1799,7 +1824,10 @@ assert(inBarrel > 30, "nothing was ever dumped into the barrel:\n" .. log)
 -- several. On the spine between two branch rows one used to end the whole run.
 -- z=-62 is turtle 1's next branch row after its trunk row at z=-57, so the
 -- chest at z=-60 sits square in the walk between them.
-world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+-- One level only: the chest sits ON the bottom branch row, so higher up it is
+-- an obstacle in a row rather than in a corridor, which is a different rule
+-- (it ends the leg) and a different test.
+world({ conf = "tripBlocks = 200\ntopY = -59\n" .. SECTIONS, fuel = 20000,
         blocks = { [k3(BX, BY - 1, BZ)] = "minecraft:barrel",
                    [k3(BX, BY, -60)] = "lootr:lootr_chest" },
         chests = { [k3(BX, BY - 1, BZ)] = { { name = "minecraft:coal", count = 30 } } } })
@@ -1833,7 +1861,7 @@ end
 -- boundary between the two.
 local westCut = { [k3(BX, BY - 1, BZ)] = "minecraft:barrel" }
 for x = BX - 24, BX do westCut[k3(x, BY, BZ)] = false end
-world({ conf = "tripBlocks = 100000\n" .. SECTIONS, fuel = 20000,
+world({ conf = "topY = -55\ntripBlocks = 100000\n" .. SECTIONS, fuel = 20000,
         at = { x = BX, y = BY, z = BZ }, blocks = westCut,
         chests = { [k3(BX, BY - 1, BZ)] = { { name = "minecraft:coal", count = 30 } } } })
 V.files["quarry.state"] = [[{
@@ -1905,7 +1933,7 @@ assert(log:find("startup: /startup is already here and is not mine"),
   "it overwrote or ignored a foreign startup silently:\n" .. log)
 
 -- and recall takes ours off again: a turtle called home stays home
-world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
         blocks = { [k3(DX, DY, DZ)] = "minecraft:chest" },
         chests = coalChest(30) })
 ok, err, log = runWorld("1")
@@ -1932,7 +1960,7 @@ assert(log:find("recall : removed /startup"), "it never said so:\n" .. log)
 -- fallback is beside the trunk one level UP, on an x side: +z/-z is the spine
 -- at every level, and the east-west legs only cross the trunk's own z on the
 -- levels isBranch names, which the next level up never is.
-world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
         blocks = { [k3(BX, BY - 1, BZ)] = "minecraft:bedrock" },
         inv = { [1] = { name = "minecraft:chest", count = 1 },
                 [2] = { name = "minecraft:coal",  count = 64 } } })
@@ -2014,5 +2042,84 @@ for _, c in pairs(V.chests) do
       "it posted a storage block into the depot as spoil:\n" .. log)
   end
 end
+
+-- 65. a plain `quarry 1` staffs the mine before it works it -----------------
+
+-- Deployment was a mode you had to know about: `quarry 1 deploy`. Turtle 1 run
+-- without it walked off with turtles 2 and 3 in the hold and mined the claim
+-- alone with two thirds of it untouched -- in-game 2026-08-28 it posted them
+-- into the depot as spoil, and once they became kit it just carried them.
+-- Turtles in the hold are now the signal: deploy at the surface, then descend.
+world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+        inv = kit(), leaveAfter = 3 })
+ok, err, log = runWorld("1")
+assert(ok, "the auto-deploy run crashed: " .. tostring(err))
+assert(log:find("staffing the mine"), "it never said why it was deploying:\n" .. log)
+assert(log:find("deploy : 2 of 2 deployed"),
+  "a plain `quarry 1` did not deploy the turtles it was carrying:\n" .. log)
+assert(log:find("branch : "), "it deployed and then never mined:\n" .. log)
+local sv65 = load("return " .. V.files["quarry.state"])()
+assert(sv65.deployed == true, "the state file does not record the deployment")
+assert(sv65.dug > 100, "it barely mined after deploying:\n" .. log)
+
+-- and it is once per claim: the state says it is done, so a reboot mines
+V.log = {}
+ok, err, log = runWorld("1")
+assert(ok, "the resumed run crashed: " .. tostring(err))
+assert(not log:find("staffing the mine"), "it tried to deploy all over again:\n" .. log)
+
+-- a turtle with no drive cannot deploy, and must mine rather than stop
+world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+        inv = kit({ [2] = false, [3] = false }), leaveAfter = 3 })
+ok, err, log = runWorld("1")
+assert(ok, "the driveless run crashed: " .. tostring(err))
+assert(log:find("staffing the mine"), "it never tried:\n" .. log)
+assert(log:find("branch : "), "a failed deploy stopped the mine:\n" .. log)
+
+-- 66. a full depot loses the junk, not the run -------------------------------
+
+-- The depot filling up ended the run outright: "STOPPED: the depot chest is
+-- full", with the player nowhere near it and no way to know. What fills it is
+-- the junk tier, so that goes on the tunnel floor instead and the run carries
+-- on -- and the player is told over rednet, because emptying the box is the one
+-- thing the turtle cannot do for itself.
+local function fullBarrel()
+  local c = { { name = "minecraft:coal", count = 30 } }
+  for _ = 2, 27 do c[#c + 1] = { name = "minecraft:stone", count = 64 } end
+  return { [k3(BX, BY - 1, BZ)] = c }        -- 27 stacks: the stub's chest cap
+end
+world({ conf = "topY = -55\ntripBlocks = 20\n" .. SECTIONS, fuel = 20000,
+        blocks = { [k3(BX, BY - 1, BZ)] = "minecraft:barrel" },
+        chests = fullBarrel() })
+ok, err, log = runWorld("1")
+assert(ok, "the full-depot run crashed: " .. tostring(err))
+assert(log:find("is FULL"), "a full depot said nothing:\n" .. log)
+assert(not log:find("STOPPED: the depot chest is full"),
+  "a full depot still ended the run:\n" .. log)
+assert(V.ground > 0, "the junk was not dropped on the tunnel floor:\n" .. log)
+assert(log:find("branch : "), "it never got back to work:\n" .. log)
+local sv66 = load("return " .. V.files["quarry.state"])()
+assert((sv66.junked or 0) > 0, "the state file counted no junk")
+
+-- and it went out over rednet, once, so a computer in range can print it
+assert(V.rednetOpen == "right", "it never opened the modem: " .. tostring(V.rednetOpen))
+assert(#V.sent == 1, "it sent " .. #V.sent .. " messages, not one")
+assert(V.sent[1].proto == "quarry", "the message is not on the quarry protocol")
+assert(V.sent[1].msg:find("FULL") and V.sent[1].msg:find("136,%-59,%-57"),
+  "the message does not name the full depot: " .. tostring(V.sent[1].msg))
+
+-- ore is worth stopping for: with the junk gone and the hold full of diamonds
+-- there is nowhere to put them, and mining on would only destroy the drops
+local held = {}
+for sl = 1, 15 do held[sl] = { name = "minecraft:diamond", count = 64 } end
+world({ conf = "topY = -55\ntripBlocks = 20\n" .. SECTIONS, fuel = 20000,
+        blocks = { [k3(BX, BY - 1, BZ)] = "minecraft:barrel" },
+        chests = fullBarrel(), inv = held })
+ok, err, log = runWorld("1")
+assert(ok, "the full-hold run crashed: " .. tostring(err))
+assert(log:find("STOPPED: the depot chest is full"),
+  "it mined on with a hold full of ore and nowhere to put it:\n" .. log)
+assert(V.sent[1] and V.sent[1].msg:find("I am holding ore"),
+  "the message did not say why it stopped: " .. tostring(V.sent[1] and V.sent[1].msg))
 
 print("all quarry phase 5 checks passed")

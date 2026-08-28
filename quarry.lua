@@ -441,14 +441,37 @@ local function equippedSides()
   return out
 end
 
-local function hasModem()
+local function modemSide()
   local e = equippedSides()
-  return (e.left == "wireless modem") or (e.right == "wireless modem")
+  if e.left  == "wireless modem" then return "left" end
+  if e.right == "wireless modem" then return "right" end
+end
+
+local function hasModem()
+  return modemSide() ~= nil
 end
 
 local function hasWiredModem()
   local e = equippedSides()
   return (e.left == "wired modem") or (e.right == "wired modem")
+end
+
+-- Tell the player something only they can fix. It always goes into the log, so
+-- the uploaded paste carries it either way, and it goes out over rednet as well
+-- when there is a wireless modem to send it with -- `alert` on a computer in
+-- range prints it. Best effort on purpose: a modem's range shrinks with depth,
+-- which is the same physics that keeps GPS off the claim floor, so a turtle at
+-- y=-59 may well be talking to nobody. Once per kind per run: a full depot is
+-- one fact, not one per stack.
+local notified = {}
+local function notify(kind, msg)
+  if notified[kind] then return end
+  notified[kind] = true
+  sayf("notify : %s", msg)
+  local side = modemSide()
+  if not side or type(rednet) ~= "table" then return end
+  pcall(rednet.open, side)
+  pcall(rednet.broadcast, ("quarry%s: %s"):format(tostring(st.index or 1), msg), "quarry")
 end
 
 -- gps.locate's second argument is a debug flag, and with it on the api prints
@@ -1486,21 +1509,22 @@ end
 -- Dump the junk tier to make one slot, so a full turtle mid-vein can finish
 -- the block it is standing on instead of walking away from it [plan 6, 8].
 -- The junk lands on the tunnel floor; it is junk, and it despawns.
+local function isJunk(l, name)
+  for _, n in ipairs(l.blacklist) do if n == name then return true end end
+  return false
+end
+
 function makeRoom(l)
   for s = 1, 16 do
     local ok, d = pcall(turtle.getItemDetail, s)
-    if ok and d then
-      for _, n in ipairs(l.blacklist) do
-        if d.name == n then
-          turtle.select(s)
-          local dropped = select(2, pcall(turtle.drop))
-          turtle.select(1)
-          if dropped then
-            st.junked = (st.junked or 0) + d.count
-            save()
-            return true
-          end
-        end
+    if ok and d and isJunk(l, d.name) then
+      turtle.select(s)
+      local dropped = select(2, pcall(turtle.drop))
+      turtle.select(1)
+      if dropped then
+        st.junked = (st.junked or 0) + d.count
+        save()
+        return true
       end
     end
   end
@@ -1556,6 +1580,16 @@ function carryingContainer()
   for s = 1, 16 do
     local ok, d = pcall(turtle.getItemDetail, s)
     if ok and d and isContainer(d.name) then return true end
+  end
+  return false
+end
+
+-- A turtle item in the hold means the mine is not staffed yet: turtles 2 and 3
+-- ride down with the kit and never work unless somebody deploys them.
+local function carryingTurtle()
+  for s = 1, 16 do
+    local ok, d = pcall(turtle.getItemDetail, s)
+    if ok and d and tostring(d.name):find("turtle", 1, true) then return true end
   end
   return false
 end
@@ -1652,23 +1686,43 @@ local function buildDepot(l, c)
 end
 
 local function dumpLoad(l)
-  local dir = st.depot and st.depot.dump
+  local dp  = st.depot
+  local dir = dp and dp.dump
   if not dir then return false, "no container at the trunk floor" end
   faceDepot(dir)
   local drop = depotDrop(dir)
+  -- A depot that will not take another stack used to end the run outright, and
+  -- what fills it is the junk tier -- stone, deepslate, gravel. So when a drop
+  -- comes back false the junk goes on the tunnel floor instead and the run
+  -- carries on; only ore, which is the point of the exercise, is worth stopping
+  -- over. The player is told, because emptying it is the one thing this turtle
+  -- cannot do for itself.
+  local floorDrop = (dir == "down") and turtle.drop or turtle.dropDown
+  local full = false
   for s = 1, 16 do
     local ok, d = pcall(turtle.getItemDetail, s)
     if ok and d and not isFuelItem(l, d.name) and not isKit(d.name) then
       turtle.select(s)
       local dropped = select(2, pcall(drop))
-      if not dropped then
-        turtle.select(1)
-        return false, "the depot chest is full"
+      if dropped then
+        st.hauled = (st.hauled or 0) + d.count
+      else
+        full = true
+        if not (isJunk(l, d.name) and select(2, pcall(floorDrop))) then
+          turtle.select(1)
+          notify("depot", ("the depot at %d,%d,%d is FULL and I am holding ore -- come and empty it")
+            :format(dp.x, dp.y, dp.z))
+          return false, "the depot chest is full"
+        end
+        st.junked = (st.junked or 0) + d.count
       end
-      st.hauled = (st.hauled or 0) + d.count
     end
   end
   turtle.select(1)
+  if full then
+    notify("depot", ("the depot at %d,%d,%d is FULL -- junk is going on the tunnel floor, come and empty it")
+      :format(dp.x, dp.y, dp.z))
+  end
   st.carried = 0
   save()
   return true
@@ -2150,6 +2204,10 @@ local function runRecall(conf, l, index)
   say("         the argument and it carries on where it stopped.")
 end
 
+-- Phase 5 lives below, but a plain `quarry 1` needs it: declared here,
+-- assigned there.
+local runDeploy
+
 local function runMine(conf, l, index)
   local x, y, z = locate(conf)
   if not x then error(noFix(), 0) end
@@ -2172,6 +2230,26 @@ local function runMine(conf, l, index)
   -- Before the walk, not after: the trunk descent alone is over a hundred
   -- blocks, and an unload partway down must not be what costs the mine.
   installStartup(index)
+
+  -- Staff the mine before working it. `quarry 1 deploy` is still the explicit
+  -- way to do it, but turtle 1 walking off with turtles 2 and 3 in the hold
+  -- just carries them for the whole shift -- in-game 2026-08-28 it posted them
+  -- into the depot as spoil, and now that they are kit they ride along instead,
+  -- which is no more use. Deploy here, at the surface, on the launch block,
+  -- where the drive goes and where every turtle agrees on the claim.
+  -- One attempt per claim: it is recorded before it runs, so a deploy that dies
+  -- half way does not get retried on every reboot. `quarry 1 deploy` retries it.
+  if index == 1 and (conf.turtles or 1) > 1 and not st.deployed and carryingTurtle() then
+    st.deployed = true
+    save()
+    say("deploy : turtles in the hold -- staffing the mine before I descend")
+    local okd, whyd = pcall(runDeploy, conf, l, index)
+    if not okd then
+      sayf("deploy : could not deploy the others, mining alone -- %s", tostring(whyd))
+    end
+    st.task = "mine"
+    save()
+  end
 
   -- The claim comes from the block the turtle was LAUNCHED on, never from
   -- where it happens to be standing now. A turtle resuming from 24 blocks
@@ -2698,7 +2776,7 @@ end
 -- Build the boot rig once, then run every remaining turtle through it. The
 -- drive stays where it is: it is also the lava map's home [plan 7], and
 -- breaking it to carry it down would cost the floppy inside it.
-local function runDeploy(conf, l, index)
+function runDeploy(conf, l, index)
   if index ~= 1 then
     error("deploy is turtle 1's job -- it is the one holding the kit", 0)
   end

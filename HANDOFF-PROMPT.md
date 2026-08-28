@@ -1,7 +1,8 @@
 # Handoff prompt
 
 Paste this into a fresh session to resume the turtle mining build.
-Rewritten whole 2026-08-28 evening, updated that night and again late that night.
+Rewritten whole 2026-08-28 evening, updated that night, late that night, and
+last after the auto-deploy and full-depot changes.
 
 ---
 
@@ -18,7 +19,17 @@ or when something settled starts misbehaving again.
 WHERE THE RUN STANDS, as of 2026-08-28 late night.
 
 Nothing is blocking a run: `update`, then `quarry 1` from the same launch
-block as Rpv9m (243,73,734) with a barrel aboard.
+block as Rpv9m (243,73,734) with a barrel aboard -- and with turtles 2 and 3,
+the drive and the floppy aboard too, because a plain `quarry 1` now deploys
+them at the launch block before it descends. `quarry 1 deploy` still exists and
+does only that.
+
+A full depot no longer stops the run: the junk tier goes on the tunnel floor
+and the turtle broadcasts on the rednet protocol "quarry", which the new
+`alert.lua` prints on a computer. Range shrinks with depth -- the same physics
+that keeps GPS off the claim floor -- so the message may reach nobody; it is
+always in the uploaded log as well. Do not build anything that depends on it
+arriving.
 
 Run Rpv9m was the first with the depot-under-the-floor build and it could not
 build a depot at all: the block under the trunk floor is BEDROCK. Bedrock
@@ -87,8 +98,10 @@ in this sandbox -- checked -- so CC mod-side behaviour has to come from the
 wiki at tweaked.cc or from the user.
 
 Run `lua5.3 test_quarry.lua`, `lua5.3 test_probe.lua` and `lua5.3
-test_update.lua` before and after any change; all of them must pass, 63 checks
-in test_quarry. When you fix a bug, add a test and
+test_update.lua` before and after any change; all of them must pass, 66 tests
+in test_quarry, about 14 seconds. Test worlds cap `topY` on purpose: with a full
+depot no longer stopping a run, an uncapped world mines its whole third and the
+suite takes a minute. When you fix a bug, add a test and
 verify it FAILS against the unfixed code -- sixteen tests have been confirmed
 non-vacuous that way and it is worth the extra minute every time.
 
@@ -104,7 +117,9 @@ depot going under the trunk floor, the NO FIX crash naming its own cause,
 quarry.state standing in as a position source where GPS cannot reach, and the
 wired-modem case. Tests 62, 63 and 64 are late that night: the bedrock fallback
 for the depot niche, spare coal no longer stopping a run with no depot to bank
-it in, and the one STORAGE word list. A NO FIX now uploads gps.locate's own debug output -- if a
+it in, and the one STORAGE word list. Tests 65 and 66 are last: `quarry 1`
+deploying the turtles it carries, and a full depot dropping junk and calling
+home instead of ending the run. A NO FIX now uploads gps.locate's own debug output -- if a
 GPS question comes up, read those `gps    :` lines before theorising, and if
 they are absent from a log, the run predates them.
 
@@ -114,6 +129,9 @@ in-game download is two lines:
 
   delete quarry
   wget https://raw.githubusercontent.com/zaBees/cc/main/quarry.lua quarry
+
+`alert.lua` is the third program, for a computer rather than a turtle, and
+`update` carries it alongside quarry and itself.
 
 The URL never changes, so a redelivery is `git push` and the user re-runs those
 same two lines -- or, once `update.lua` is on the turtle, just `update`, which

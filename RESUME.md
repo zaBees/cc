@@ -21,8 +21,15 @@ here, or when something settled starts misbehaving again.
 
 ## Where the work stands
 
-Last updated **2026-08-28 late night**, after log `Rpv9m` — the first run with
-the depot-under-the-floor build. It got a fix, crossed to its trunk, descended
+Last updated **2026-08-28, late**, after two changes the user asked for that
+night: **a plain `quarry 1` now deploys turtles 2 and 3 before it descends**,
+and **a full depot no longer stops the run** — the junk tier goes on the tunnel
+floor and the player is told over rednet, which `alert.lua` prints on a
+computer. See "What shipped 2026-08-28, last" below. Everything under this
+heading is still the state of the mine.
+
+Before those, the last thing to come out of the game was log `Rpv9m`, the
+first run with the depot-under-the-floor build. It got a fix, crossed to its trunk, descended
 to y=-59, and then could not build a depot at all: **the block under the trunk
 floor is bedrock.** With no depot anywhere it mined 39 blocks and stopped, over
 coal it was perfectly able to burn itself. Both are fixed here: the depot falls
@@ -50,9 +57,10 @@ coal has ever been handed out, and two turtles have never run at once.
 ## Next action
 
 **Run it from the surface again**, from the same launch block as `Rpv9m`,
-carrying a barrel.
+carrying a barrel — and this time carrying turtles 2 and 3, the drive and the
+floppy as well, because `quarry 1` deploys them itself now.
 
-1. **`update`** on the turtle, for the bedrock-fallback build.
+1. **`update`** on the turtle, for the auto-deploy and full-depot build.
 2. **`quarry 1 --check`** and read the `position:` line against F3. Nobody has
    ever confirmed the turtle's fix matches the real world, and the pattern
    anchors to absolute coordinates — a wrong origin mines a correct claim in
@@ -62,7 +70,14 @@ carrying a barrel.
    243,73,734, claim x 224..271, z 704..751. Launched from somewhere else it
    cuts a fresh trunk somewhere else, which is correct behaviour and probably
    not what is wanted.
-4. **A barrel in the hold**, then `quarry 1`.
+4. **A barrel in the hold**, then `quarry 1`. With the full kit aboard it
+   places the drive, the floppy and turtles 2 and 3 at the launch block first
+   — `deploy : turtles in the hold -- staffing the mine before I descend` —
+   and only then crosses to its trunk. `quarry 1 deploy` still does the
+   deployment on its own if that is wanted separately.
+5. **Optional, and the only way to hear from the mine:** a computer with a
+   wireless modem near the claim running `alert`. A full depot broadcasts on
+   the `quarry` protocol; nothing else does yet.
 
 **Expect `depot  : the floor under the trunk will not open — placed a container
 beside the trunk at y=-58 instead`** (with a plain `--` in the real line). That
@@ -181,6 +196,42 @@ that log. `test_quarry.lua` is 62 checks now, tests 62 and 63.
 - The found-depot line is `depot  : container at x,y,z`, not `at the trunk
   floor`: it may now be a level above it.
 
+## What shipped 2026-08-28, last
+
+Both at the user's instruction. `test_quarry.lua` is 66 tests now; 65 and 66
+were both confirmed to fail against the build before them.
+
+- **`quarry 1` deploys the rest of the turtles by itself.** A turtle item in
+  turtle 1's hold means the mine is not staffed, so `runMine` runs the whole of
+  `runDeploy` at the launch block before it descends — the drive, the floppy,
+  the boot script and turtles 2..N, one at a time through the same spot.
+  Deployment used to be a mode you had to know about, and turtle 1 run without
+  it mined a third of the claim with the other two turtles in its inventory.
+  Recorded in `quarry.state` as `deployed` **before** it runs, so a deploy that
+  dies half way is not retried on every reboot; `quarry 1 deploy` still forces
+  one. A deploy that cannot happen — no drive aboard, a short kit — says so and
+  the turtle mines alone rather than stopping. Test 65.
+- **A full depot loses the junk, not the run.** `dumpLoad` used to hand back
+  `the depot chest is full`, which `dock` turned into a halt. What fills a depot
+  is the junk tier, so a drop the depot refuses now puts that stack on the
+  tunnel floor instead and the run carries on. Ore is still worth stopping for:
+  with the junk gone and the hold still full, mining on would only destroy the
+  drops. Test 66.
+- **The turtle tells someone.** `notify()` puts the line in the log — so the
+  uploaded paste carries it — and broadcasts it over rednet on the `quarry`
+  protocol through the equipped wireless modem, once per kind per run. A full
+  depot is the only thing that sends one so far.
+- **`alert.lua` is the other end of that**, a new program for a computer:
+  it finds a modem, prefers a wireless one, and prints what arrives.
+  `update` now carries three files — `quarry`, `update`, `alert`.
+  **Range is the catch**, and it is the same physics that keeps GPS off the
+  claim floor: a wireless modem's reach shrinks with depth. Put the computer
+  near the mine, or use an ender modem.
+- **Test worlds now cap `topY`.** A run that no longer stops on a full depot
+  mines its whole third, which took the suite from 10s to 68s. Ten of the
+  worlds cap the levels instead; the ones that assert the trunk shape or the
+  forage target still use the real ceiling.
+
 ## Storage is one word list now, not four
 
 Added 2026-08-28 late night at the user's request, for Sophisticated Storage.
@@ -260,9 +311,10 @@ from a run that finds ore, which is how the config learns this pack's ore ids.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-28 late night.** The bedrock depot fallback, the spare-coal stop, and the one shared STORAGE word list. 120,037 bytes, fletcher32 `773510248`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-28, last.** Auto-deploy from a plain `quarry 1`, and a full depot that drops junk and calls home instead of stopping. 123,516 bytes, fletcher32 `522321319`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
-| `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry` and itself. |
+| `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. |
+| `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |
 
 See "Delivery goes through GitHub" below for the two `wget` lines. The setup
 artifact at
@@ -298,8 +350,15 @@ delete update
 wget https://raw.githubusercontent.com/zaBees/cc/main/update.lua update
 ```
 
+And on the computer that is to hear from the mine:
+
 ```
-update            -- every program: quarry and update itself
+delete alert
+wget https://raw.githubusercontent.com/zaBees/cc/main/alert.lua alert
+```
+
+```
+update            -- every program: quarry, alert and update itself
 update quarry     -- just that one
 ```
 
@@ -358,7 +417,8 @@ the machine, it prints the file's fletcher32 to compare against
 | --- | --- |
 | `MASTERMINE-PLAN.md` | The design, every decision and its reasoning. Read second. Trimmed 2026-08-28: §11 is now a status table, and the rules it used to carry are in this file's Settled and Corrections lists. |
 | `quarry.lua` | **The deliverable.** ~2,430 lines, Phases 1–5. Opens `local DRY = true`; the config lowers it. |
-| `test_quarry.lua` | Five suites against stubbed CC worlds, 63 checks. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones. `lua5.3 test_quarry.lua` |
+| `test_quarry.lua` | Five suites against stubbed CC worlds, 66 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot. `lua5.3 test_quarry.lua` |
+| `alert.lua` | For a computer: prints what the turtles broadcast on the `quarry` protocol. |
 | `update.lua` | The in-game updater: `update` replaces `quarry` and itself from GitHub. Downloaded once by hand. |
 | `test_update.lua` | Stubbed `http`/`fs` around the updater: the failed download, the HTML 404, the cache-buster, the checksum. `lua5.3 test_update.lua` |
 | `probe.lua` | The Phase 5 probe. `probe` is a dry run, `probe go` is the real one. |
@@ -499,6 +559,18 @@ Plan section numbers in brackets.
   placed turtle, and the trunk floor is a working row in every direction.
   It costs nothing: every turtle anchors its claim where it wakes, and they all
   wake in the centre chunk.
+- **Turtles in turtle 1's hold mean the mine is not staffed**, so a plain
+  `quarry 1` deploys them before it descends. `quarry 1 deploy` is kept as the
+  explicit form; the run-mode deploy is the same code, once per claim, recorded
+  in `quarry.state` before it runs.
+- **A full depot is not a reason to stop.** The junk tier goes on the tunnel
+  floor and the run carries on; only a hold that still cannot be emptied of ore
+  stops it. The player is told over rednet, because emptying the box is the one
+  thing the turtle cannot do for itself.
+- **Notifications are best effort and always logged.** A wireless modem's range
+  shrinks with depth, so a broadcast from y=-59 may reach nobody. `notify()`
+  writes the line into the report either way; do not build anything that
+  depends on the message arriving.
 - **The monitor is Phase 6.**
 
 ## The defaults, changed 2026-08-27 at the user's instruction

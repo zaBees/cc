@@ -10,7 +10,7 @@
 -- Configs are never touched: quarry.conf and quarry.state stay as they are.
 
 local RAW   = "https://raw.githubusercontent.com/zaBees/cc/main/"
-local FILES = { quarry = "quarry.lua", update = "update.lua" }
+local FILES = { quarry = "quarry.lua", update = "update.lua", alert = "alert.lua" }
 
 -- The /main/ URL is CDN-cached and has served a previous build more than two
 -- minutes after a push. A unique query string is part of the cache key and is

@@ -2009,6 +2009,13 @@ function dock(c, conf, l, want)
   st.task = "depot"
   save()
   sayf("depot  : docking with %d slots used, %d fuel", carrying(), fuelLevel())
+  -- Home the way the mine is already cut. goTo always moves y first, so from
+  -- 24 blocks out on a branch above the depot it sank a fresh shaft at the leg
+  -- end and then bulldozed home through solid rock at the depot's level. The
+  -- leg is air, the branch mouth is air, and the trunk is air: walk the leg
+  -- back to the spine, take the spine to the trunk column, and only then
+  -- change level. Same order recall uses, and the same reason.
+  if not goTo(dp.x, st.y, dp.z) then return false end
   if not goTo(dp.x, dp.y, dp.z) then return false end
 
   local okd, why = dumpLoad(l)

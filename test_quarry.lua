@@ -2145,4 +2145,37 @@ assert(log:find("branch : "), "it never got to work:\n" .. log)
 assert(log:find("depot  : banked %d+ fuel"),
   "it burnt the mine's whole coal stock into its own tank:\n" .. log)
 
+-- 68. the walk home uses the mine, not a fresh shaft --------------------------
+
+-- goTo moves y before it travels, so a dock called from 24 blocks out on a
+-- branch ABOVE the depot sank a shaft at the leg end and then cut its way home
+-- through solid rock at the depot's level -- a level whose branch rows are
+-- staggered somewhere else entirely, so none of it was ground the mine wanted.
+-- The way home is the way already cut: back down the leg, along the spine to
+-- the trunk -- the mouths this level has to open anyway -- and only then change
+-- level, in the trunk shaft.
+local TOPY = -57
+world({ conf = "topY = " .. TOPY .. "\ntripBlocks = 40\n" .. SECTIONS, fuel = 40000,
+        blocks = { [k3(BX, BY - 1, BZ)] = "minecraft:barrel" },
+        chests = { [k3(BX, BY - 1, BZ)] = { { name = "minecraft:coal", count = 64 } } } })
+ok, err, log = runWorld("1")
+assert(ok, "the walk-home run crashed: " .. tostring(err))
+assert(log:find("depot  : docking"), "it never docked, so nothing was tested:\n" .. log)
+assert(log:find("level  : moving to"), "it never left the depot's own level:\n" .. log)
+
+-- Every block cut below the travel level is either the spine (the trunk, and
+-- the corridor between this level's mouths) or a branch row of the level it is
+-- on. A block off the spine that is not on its own level's row is rock nothing
+-- asked for -- which is exactly what the old walk home cut.
+for key, v in pairs(V.blocks) do
+  if v == false then
+    local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
+    x, y, z = tonumber(x), tonumber(y), tonumber(z)
+    if y < TOPY and x ~= BX then
+      assert((z - (-64) - 2 * y) % 5 == 0,
+        ("it cut %s on the way home: y=%d has no branch row at z=%d"):format(key, y, z))
+    end
+  end
+end
+
 print("all quarry phase 5 checks passed")

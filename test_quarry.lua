@@ -1782,4 +1782,134 @@ local inBarrel = 0
 for _, it in ipairs(V.chests[k3(BX, BY - 1, BZ)] or {}) do inBarrel = inBarrel + it.count end
 assert(inBarrel > 30, "nothing was ever dumped into the barrel:\n" .. log)
 
+-- 58. a deny-list block in a travel corridor is walked around --------------
+
+-- A Lootr chest cannot be broken or emptied by a turtle, and a mineshaft has
+-- several. On the spine between two branch rows one used to end the whole run.
+-- z=-62 is turtle 1's next branch row after its trunk row at z=-57, so the
+-- chest at z=-60 sits square in the walk between them.
+world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+        blocks = { [k3(BX, BY - 1, BZ)] = "minecraft:barrel",
+                   [k3(BX, BY, -60)] = "lootr:lootr_chest" },
+        chests = { [k3(BX, BY - 1, BZ)] = { { name = "minecraft:coal", count = 30 } } } })
+ok, err, log = runWorld("1")
+assert(ok, "the go-around run crashed: " .. tostring(err))
+assert(log:find("around : lootr:lootr_chest"),
+  "it did not route around the lootr chest:\n" .. log)
+assert(not log:find("STOPPED: refusing to dig lootr"),
+  "a corridor obstacle still ended the run:\n" .. log)
+assert(blockAt(BX, BY, -60) == "lootr:lootr_chest", "the lootr chest was destroyed")
+assert(blockAt(BX - 20, BY, -62) == nil,
+  "it never reached the branch on the far side of the chest:\n" .. log)
+-- the way round stays inside the claim: x 112..159, z -64..-17. setAir writes
+-- false, so a false entry is a block the turtle dug and a named one is world
+-- that was seeded and left standing.
+for key, v in pairs(V.blocks) do
+  if v == false then
+    local x, _, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
+    x, z = tonumber(x), tonumber(z)
+    assert(x >= 112 and x <= 159 and z >= -64 and z <= -17,
+      ("it dug %s, which is outside the claim"):format(key))
+  end
+end
+
+-- 59. a dock on a leg boundary does not give the branch away ---------------
+
+-- st.leg is set before a leg cuts its first block, so leg="east", along=0 is a
+-- branch whose west half is already mined. Read as a fresh branch it walked to
+-- its own mouth, saw the air it had just cut, and wrote the row off as another
+-- turtle's -- losing the whole east leg every time the hold filled on the
+-- boundary between the two.
+local westCut = { [k3(BX, BY - 1, BZ)] = "minecraft:barrel" }
+for x = BX - 24, BX do westCut[k3(x, BY, BZ)] = false end
+world({ conf = "tripBlocks = 100000\n" .. SECTIONS, fuel = 20000,
+        at = { x = BX, y = BY, z = BZ }, blocks = westCut,
+        chests = { [k3(BX, BY - 1, BZ)] = { { name = "minecraft:coal", count = 30 } } } })
+V.files["quarry.state"] = [[{
+  ["index"]=1, ["home"]={["x"]=137,["y"]=83,["z"]=-42},
+  ["x"]=]] .. BX .. [[, ["y"]=]] .. BY .. [[, ["z"]=]] .. BZ .. [[, ["dir"]=0,
+  ["level"]=]] .. BY .. [[, ["branch"]=]] .. BZ .. [[, ["leg"]="east",
+  ["along"]=0, ["task"]="branch", ["dug"]=0, ["carried"]=0, ["done"]={}
+}]]
+ok, err, log = runWorld("1")
+assert(ok, "the leg-boundary resume crashed: " .. tostring(err))
+assert(not log:find("taken  :"),
+  "it read its own west leg as another turtle's claim:\n" .. log)
+for x = BX + 1, 159 do
+  assert(blockAt(x, BY, BZ) == nil,
+    ("the east leg was skipped: %d,%d,%d is still solid"):format(x, BY, BZ))
+end
+
+-- 60. a vein chase stops at the claim rim and at bottomY -------------------
+
+-- The west leg ends at x=112, which is the claim rim. A vein carrying on into
+-- x=111 is in the neighbouring claim: outside the 3x3 the player keeps loaded,
+-- and ground another turtle may own. The same guard caps the chase at topY,
+-- so it cannot climb out of the mine into the user's surface builds. There is
+-- no matching floor: test 12 chases ore below bottomY on purpose, because
+-- bedrock scatters up to -60 and that is where the deep ore is.
+world({ conf = "tripBlocks = 100000\n", blocks = {
+  [k3(112, BY, BZ)] = "minecraft:diamond_ore",       -- on the rim: fair game
+  [k3(111, BY, BZ)] = "minecraft:diamond_ore",       -- one past it: not
+  [k3(110, BY, BZ)] = "minecraft:diamond_ore",
+} })
+ok, err, log = runWorld("1")
+assert(ok, "the rim-chase run crashed: " .. tostring(err))
+assert(blockAt(112, BY, BZ) == nil, "it did not mine the ore on the rim itself")
+assert(blockAt(111, BY, BZ) == "minecraft:diamond_ore",
+  "it chased a vein out of the claim:\n" .. log)
+assert(blockAt(110, BY, BZ) == "minecraft:diamond_ore", "it chased two blocks out")
+for key, v in pairs(V.blocks) do
+  if v == false then
+    local x, y, z = key:match("^(-?%d+),(-?%d+),(-?%d+)$")
+    x, y, z = tonumber(x), tonumber(y), tonumber(z)
+    -- the launch column is the one shaft above topY: the drop to travel height
+    -- is travel, not mining, and the program says so
+    local shaft = (x == 137 and z == -42)
+    assert(x >= 112 and x <= 159 and z >= -64 and z <= -17 and (y <= 60 or shaft),
+      ("it dug %s, which is outside the claim"):format(key))
+  end
+end
+
+-- 61. it installs its own /startup, and recall takes it back off -----------
+
+-- A turtle unloaded with its chunk comes back by rebooting, so /startup is
+-- what decides whether the mine carries on. Deployed turtles get one from
+-- BOOT; turtle 1 is launched by hand and used to get nothing.
+world({ conf = "tripBlocks = 100000\n" })
+ok, err, log = runWorld("1")
+assert(ok, "the startup run crashed: " .. tostring(err))
+assert(V.files["/startup"] == "shell.run('quarry', '1')\n",
+  "turtle 1 did not install its own startup: " .. tostring(V.files["/startup"]))
+assert(log:find("startup: wrote /startup"), "it never said so:\n" .. log)
+
+-- somebody else's startup is not ours to overwrite
+world({ conf = "tripBlocks = 100000\n" })
+V.files["/startup"] = "shell.run('someone_elses_program')\n"
+ok, err, log = runWorld("1")
+assert(ok, "the foreign-startup run crashed: " .. tostring(err))
+assert(V.files["/startup"] == "shell.run('someone_elses_program')\n",
+  "it clobbered a startup that was not its own")
+assert(log:find("startup: /startup is already here and is not mine"),
+  "it overwrote or ignored a foreign startup silently:\n" .. log)
+
+-- and recall takes ours off again: a turtle called home stays home
+world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+        blocks = { [k3(DX, DY, DZ)] = "minecraft:chest" },
+        chests = coalChest(30) })
+ok, err, log = runWorld("1")
+assert(ok, "the run before the recall crashed: " .. tostring(err))
+assert(V.files["/startup"], "there was no startup for the recall to remove")
+local mined61, state61 = V.blocks, V.files["quarry.state"]
+local at61 = { x = V.pos.x, y = V.pos.y, z = V.pos.z }
+world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+        blocks = mined61, at = at61, chests = coalChest(30) })
+V.files["quarry.state"] = state61
+V.files["/startup"] = "shell.run('quarry', '1')\n"
+ok, err, log = runWorld("1", "recall")
+assert(ok, "the recall crashed: " .. tostring(err))
+assert(V.files["/startup"] == nil,
+  "recall left the startup on, so a reboot would send it back down:\n" .. log)
+assert(log:find("recall : removed /startup"), "it never said so:\n" .. log)
+
 print("all quarry phase 5 checks passed")

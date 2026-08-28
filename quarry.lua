@@ -993,12 +993,74 @@ end
 -- the walk to the trunk below topY, where the user's surface builds are not.
 -- A jam on the way is not a failure while there is still somewhere to pull
 -- aside to: step out of the corridor and let the loop route around it.
+-- A deny-listed block in a travel corridor used to end the whole run: clear()
+-- sets halt, goTo hands the false up, and the work loop breaks on it. Lootr
+-- chests are common and there are usually several, so a mine could stop on its
+-- first one. Step onto the corridor one block over and drive at the target
+-- again; the loop re-runs the axis from the new column, which is the go-around.
+-- Bounded, because a turtle that keeps sidestepping is not making progress.
+local DETOUR_TRIES = 8
+
+-- Never sidestep out of the claim. The claim is the 3x3 chunk region the
+-- player keeps loaded, so a detour past its border digs a neighbour's ground
+-- and walks into chunks that may not be ticking.
+local function inClaim(x, z)
+  local c = claim
+  if not c then return true end
+  return x >= c.xMin and x <= c.xMax and z >= c.zMin and z <= c.zMax
+end
+
 local function goTo(tx, ty, tz)
   local aside = 0
   local function blocked()
     if not jammed or aside >= 3 then return true end
     aside = aside + 1
     return not stepAside()
+  end
+
+  local detours = 0
+  -- Sidestep off the blocked corridor, then one block PAST the obstacle. The
+  -- second half is not optional: the loop drives the other axis first, so a
+  -- turtle that only stepped aside is walked straight back into the same
+  -- block on the next pass and never gets anywhere. Prefer the side the
+  -- target is on. Returns false for anything that is not a deny-list block,
+  -- so a jam or an empty tank still reaches blocked() as before.
+  local function detour(axis)
+    if not obstacle or detours >= DETOUR_TRIES then return false end
+    detours = detours + 1
+    local why, was = halt, obstacle
+    halt, obstacle = nil, nil
+    sayf("around : %s at %d,%d,%d -- taking the corridor one over (%d of %d)",
+      was, st.x, st.y, st.z, detours, DETOUR_TRIES)
+
+    local function go(d)
+      local v = DIRS[d]
+      if not inClaim(st.x + v[1], st.z + v[2]) then return false end
+      turnTo(d)
+      if step() then return true end
+      -- that way is a deny-list block too: forget it and try the other one
+      if obstacle then halt, obstacle = nil, nil end
+      return false
+    end
+
+    -- goX and goZ only fail while there is still ground to make on their own
+    -- axis, so the way past is always the way the loop was already going.
+    local past = (axis == "x") and ((tx > st.x) and 3 or 1)
+                                or ((tz > st.z) and 0 or 2)
+    local a, b
+    if axis == "x" then                       -- blocked going along x, so shift z
+      a, b = (tz > st.z) and 0 or 2, (tz > st.z) and 2 or 0
+    else                                      -- blocked going along z, so shift x
+      a, b = (tx > st.x) and 3 or 1, (tx > st.x) and 1 or 3
+    end
+    for _, side in ipairs({ a, b }) do
+      -- one over is progress whether or not the way past opens: the next pass
+      -- starts from a different column, and detours are capped either way
+      if go(side) then go(past) return true end
+    end
+    -- boxed in on both sides, or out of fuel mid-detour: hand the reason back
+    if not halt then halt, obstacle = why, was end
+    return false
   end
   local function goX()
     while st.x ~= tx do
@@ -1021,9 +1083,11 @@ local function goTo(tx, ty, tz)
     -- block sideways walks straight into whatever stands beside it -- which,
     -- at the trunk floor, is the depot chest. Travel z along the spine first
     -- and turn into the branch; anywhere else x is the corridor.
-    local first, second = goX, goZ
-    if claim and st.x == claim.spine then first, second = goZ, goX end
-    if not (first() and second()) and blocked() then return false end
+    local first, second, fa, sa = goX, goZ, "x", "z"
+    if claim and st.x == claim.spine then first, second, fa, sa = goZ, goX, "z", "x" end
+    local axis, ok = fa, first()
+    if ok then axis, ok = sa, second() end
+    if not ok and not detour(axis) and blocked() then return false end
   end
   return true
 end
@@ -1134,8 +1198,31 @@ local function chase(depth, l, conf)
   local px, py, pz = st.x, st.y, st.z
   local d0 = st.dir
 
+  -- A vein does not stop at the claim rim and chase() used to follow it out:
+  -- veinDepth is 12, so a vein off a rim branch walked the turtle twelve blocks
+  -- into the neighbouring claim -- ground nobody is keeping loaded, and outside
+  -- the 3x3 the player holds open by standing in the centre chunk. Upward it is
+  -- worse: past topY is the user's surface builds, which topY exists to protect.
+  -- There is no floor to match it: bottomY is where the TRUNK stops, and
+  -- bedrock scatters up to -60, so the ore worth having at the bottom of the
+  -- mine is under bottomY by definition. A failed dig on bedrock is the floor.
+  -- Every other mover is already bounded -- a leg ends at c.west/c.east, the
+  -- spine and trunk are interior, the goTo detour asks inClaim -- so this was
+  -- the one way out. Look at the ore, do not follow it.
+  local function reachable(move)
+    local nx, ny, nz = st.x, st.y, st.z
+    if move == stepUp then ny = ny + 1
+    elseif move == stepDown then ny = ny - 1
+    else
+      local v = DIRS[st.dir]
+      nx, nz = nx + v[1], nz + v[2]
+    end
+    return inClaim(nx, nz) and ny <= conf.topY
+  end
+
   local function into(move)
     if halt or st.chased >= conf.veinMax then return end
+    if not reachable(move) then return end
     if not move() then return end
     st.chased = st.chased + 1
     save()
@@ -1323,6 +1410,7 @@ end
 -- killed turtle picks up where it left off.
 
 local LAVAMAP   = "/disk/lava.txt"
+local LAVA_KEEP = 64             -- sources held in the state file between docks
 local CONTAINER = { "chest", "barrel", "shulker" }
 
 local function isContainer(name)
@@ -1346,10 +1434,10 @@ local function depotSuck(dir) return dir == "down" and turtle.suckDown or turtle
 -- and a dump that reads them as spoil posts the other two turtles into a barrel
 -- [in-game 2026-08-28: it did exactly that]. Buckets were already kit; this is
 -- the same rule with the rest of the kit named.
-local KIT = { "turtle", "computer", "disk", "modem", "chest", "barrel", "shulker", "bucket" }
+local KIT_NAMES = { "turtle", "computer", "disk", "modem", "chest", "barrel", "shulker", "bucket" }
 local function isKit(name)
   name = tostring(name)
-  for _, p in ipairs(KIT) do if name:find(p, 1, true) then return true end end
+  for _, p in ipairs(KIT_NAMES) do if name:find(p, 1, true) then return true end end
   return false
 end
 
@@ -1569,9 +1657,15 @@ local function restock(conf, l, want)
 end
 
 -- the lava map -------------------------------------------------------------
--- A disk drive with a floppy at the depot mounts /disk on every turtle that
--- docks, so the map needs no protocol: append while docked, read while docked.
--- One source per line, "x,y,z". No drive, no map, and nothing else changes.
+-- A turtle with a disk drive beside it mounts /disk, so the map needs no
+-- protocol: append while docked, read while docked. One source per line,
+-- "x,y,z". No drive, no map, and nothing else changes.
+--
+-- ponytail: the deploy rig leaves the drive at the SURFACE and the depot is at
+-- the trunk floor, so /disk is not mounted where dock() calls mapMerge and the
+-- map is latent -- it costs a bounded list in the state file and nothing else.
+-- To wake it up, stand a second drive beside the depot; the code needs no
+-- change, it only ever asks fs.exists("/disk").
 
 local function mapRead()
   local out = {}
@@ -1674,8 +1768,12 @@ function watchLava(conf, l)
       if took then
         mapDrop(x, y, z)
       else
+        -- Capped because save() serialises the whole state table on every dug
+        -- block, and mapMerge -- the only thing that empties these -- is a
+        -- no-op wherever /disk is not mounted. Unbounded, they turn every
+        -- save of a long run into a longer one.
         st.lava, st.lavaSeen = st.lava or {}, st.lavaSeen or {}
-        if not st.lavaSeen[k] then
+        if not st.lavaSeen[k] and #st.lava < LAVA_KEEP then
           st.lavaSeen[k] = true
           st.lava[#st.lava + 1] = { x = x, y = y, z = z }
           save()
@@ -1866,6 +1964,60 @@ local function findSharedDepot(c, conf, l, index, trunkZ)
   return false
 end
 
+-- startup ------------------------------------------------------------------
+-- A turtle in an unloaded chunk stops with the chunk, and comes back by
+-- REBOOTING, not by resuming: whatever /startup runs is what decides whether
+-- the mine carries on. BOOT writes one as it deploys turtles 2..N, so they
+-- come back by themselves; turtle 1 is started by hand and had none, and a
+-- chunk reload or a server restart left it parked at a prompt while the other
+-- two went back to work. quarry.state holds the branch, so all a reboot needs
+-- is somebody to type the command -- which is exactly what this is.
+
+local STARTUP = "/startup"
+
+-- true when /startup is one of ours, false when it is somebody else's, nil
+-- when there is none.
+local function ourStartup()
+  if not fs.exists(STARTUP) then return nil end
+  local f = fs.open(STARTUP, "r")
+  if not f then return nil end
+  local had = f.readAll()
+  f.close()
+  return tostring(had):find("quarry", 1, true) ~= nil
+end
+
+local function installStartup(index)
+  local line = ("shell.run('quarry', '%d')"):format(index)
+  local mine = ourStartup()
+  if mine == false then
+    say("startup: /startup is already here and is not mine, so I have left it.")
+    say("         This turtle will not restart itself after a chunk reload --")
+    say("         add " .. line .. " to it if you want it to.")
+    return
+  end
+  if mine then
+    local f = fs.open(STARTUP, "r")
+    local had = f.readAll()
+    f.close()
+    if tostring(had):find(line, 1, true) then return end   -- already right
+  end
+  local f = fs.open(STARTUP, "w")
+  if not f then return end
+  f.write(line .. "\n")
+  f.close()
+  sayf("startup: wrote %s, so a chunk reload or a server restart brings me back", STARTUP)
+end
+
+-- Recall is a deliberate stop, so it takes the startup back off with it. Left
+-- in place, the next reboot would send a turtle you had just called home
+-- straight back down the trunk.
+local function clearStartup()
+  if ourStartup() then
+    fs.delete(STARTUP)
+    sayf("recall : removed %s -- a recalled turtle stays put through a reboot", STARTUP)
+  end
+end
+
 -- Recall [plan 4]. Normal returns are independent -- tying them to the group
 -- would idle two turtles every time one filled -- but collecting the mine is
 -- collective: you type it on each turtle. It is also the only way to reach a
@@ -1913,6 +2065,7 @@ local function runRecall(conf, l, index)
   if not goTo(c.spine, h.y, trunkZ)  then say("recall : stopped inside the trunk")  return end
   if not goTo(h.x, h.y, h.z)         then say("recall : stopped short of home")     return end
   save()
+  clearStartup()
   say("recall : parked. quarry.state still holds the branch -- re-run without")
   say("         the argument and it carries on where it stopped.")
 end
@@ -1936,6 +2089,9 @@ local function runMine(conf, l, index)
   end
   st.home = st.home or { x = x, y = y, z = z }
   save()
+  -- Before the walk, not after: the trunk descent alone is over a hundred
+  -- blocks, and an unload partway down must not be what costs the mine.
+  installStartup(index)
 
   -- The claim comes from the block the turtle was LAUNCHED on, never from
   -- where it happens to be standing now. A turtle resuming from 24 blocks
@@ -2074,7 +2230,13 @@ local function runMine(conf, l, index)
     end
 
     -- walk to the work: the branch mouth, or the point in the leg it left off
-    if st.leg and (st.along or 0) > 0 then
+    -- st.leg is set before the first block of a leg is cut, so it alone means
+    -- this branch is already started. Testing st.along > 0 as well read a leg
+    -- that had docked on its own first block as a fresh branch, and mouthTaken()
+    -- then saw the air THIS turtle had just mined on the other leg and gave the
+    -- whole branch away as somebody else's. Half a branch, every time the hold
+    -- filled on a leg boundary.
+    if st.leg then
       local bx = c.spine + ((st.leg == "west") and -st.along or st.along)
       sayf("resume : %s leg of y=%d z=%d, %d out", st.leg, st.level, st.branch, st.along)
       if not goTo(bx, st.level, st.branch) then

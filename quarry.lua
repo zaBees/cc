@@ -72,8 +72,10 @@ local DEFAULT_CONF = [[
 # Written on first run. Delete it to get these defaults back.
 # name = value for the numbers, bare block names under the [headers].
 
-topY         = 60      # highest level mined
-bottomY      = -59     # safety floor; the real bottom is found by failed dig
+topY         = 60      # highest level mined -- nothing above this is touched
+bottomY      = -59     # lowest level mined, and the trunk's safety floor.
+                       # The two together are the range: -59 and -40 mine those
+                       # 20 levels and nothing else.
 deepestFirst = true    # mine the deepest level first and work up
 dry          = false   # true = plan the route and touch nothing. false = mine for real.
 turtles      = 3
@@ -753,7 +755,8 @@ local function check(conf, l, source, index)
   sayf("levels : y %d..%d, %d levels, %s first",
     conf.bottomY, conf.topY, conf.topY - conf.bottomY + 1,
     conf.deepestFirst and "deepest" or "highest")
-  say("the real floor is found by a failed dig on bedrock; bottomY is only the safety stop")
+  say("nothing outside that range is mined. Bedrock can stop the trunk higher than")
+  say("bottomY -- a failed dig is the real floor -- and levels under it are dropped.")
 
   -- The pattern read back off the maths rather than asserted, and deliberately
   -- sampled at a fixed y=0..9 rather than at bottomY: that makes the line a

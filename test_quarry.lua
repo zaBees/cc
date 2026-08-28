@@ -2236,4 +2236,34 @@ for x = BX + 1, 159 do
     ("the east leg went with the held one: %d,%d,%d is still solid"):format(x, BY, BZ))
 end
 
+-- 71. topY and bottomY are the range, and nothing outside it is mined --------
+
+-- "only from -59 to -40" is two config lines. The trunk still sinks to the
+-- floor and the descent shaft still passes through everything above, but the
+-- only levels that get branches are the ones inside the range.
+world({ conf = "topY = -55\nbottomY = -58\ntripBlocks = 100000\n" .. SECTIONS, fuel = 200000,
+        blocks = { [k3(BX, -59, BZ)] = "minecraft:barrel" },
+        chests = { [k3(BX, -59, BZ)] = { { name = "minecraft:coal", count = 64 } } } })
+ok, err, log = runWorld("1")
+assert(ok, "the level-range run crashed: " .. tostring(err))
+local perY = {}
+for key, v in pairs(V.blocks) do
+  if v == false then
+    local _, y = key:match("^(-?%d+),(-?%d+),")
+    y = tonumber(y)
+    perY[y] = (perY[y] or 0) + 1
+  end
+end
+for y, n in pairs(perY) do
+  -- a level outside the range is the descent shaft and the trunk: one column,
+  -- never a branch row's worth of blocks
+  if y > -55 or y < -58 then
+    assert(n <= 2, ("y=%d is outside %d..%d and %d blocks came out of it:\n%s")
+      :format(y, -58, -55, n, log))
+  end
+end
+for y = -58, -55 do
+  assert((perY[y] or 0) > 40, ("y=%d is inside the range and was not mined:\n%s"):format(y, log))
+end
+
 print("all quarry phase 5 checks passed")

@@ -2,6 +2,10 @@
 -- lua5.3 test_quarry.lua
 local PROG = "quarry.lua"
 
+-- CC has printError as a global beside print, and gps.locate uses it for the
+-- no-modem verdict. Plain Lua does not, so the harness supplies one.
+function printError(...) print(...) end
+
 local W
 
 local function reset(o)
@@ -72,6 +76,12 @@ local function mkenv()
 
   -- the gps api is always THERE on a real turtle; what a missing modem or a
   -- dead constellation costs is the answer, not the table
+  -- The gps api is NOT part of the program under test: it is a rom api with
+  -- its own environment, so its debug output goes through the GLOBAL print and
+  -- printError, never through the program's env. The stub prints the same way
+  -- on purpose -- calling env.print here would let a capture that only shadows
+  -- the program's own print look like it worked, which is exactly the bug that
+  -- shipped [paste fXOYd, 2026-08-28].
   env.gps = { locate = function(_, debug)
     -- the real api needs a modem whose isWireless() is true, and says so out
     -- loud when asked to; the run captures that print, so the stub makes it
@@ -80,11 +90,12 @@ local function mkenv()
       if t == "modem" and not W.wired[side] then wireless = true end
     end
     if not wireless then
-      if debug then env.print("No wireless modems attached. GPS requires a wireless modem.") end
+      -- the real api uses printError for this one
+      if debug then printError("No wireless modems attached. GPS requires a wireless modem.") end
       return nil
     end
     if not W.gps then
-      if debug then env.print("Received 0 responses.") env.print("Could not determine position.") end
+      if debug then print("Received 0 responses.") print("Could not determine position.") end
       return nil
     end
     return W.at[1], W.at[2], W.at[3]

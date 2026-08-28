@@ -457,16 +457,26 @@ end
 -- sees it. Three sessions were spent guessing at a NO FIX that the api was
 -- willing to explain all along. Borrow print for the call so the next paste
 -- carries the answer instead of another theory.
+--
+-- Borrow it from _G, not from here. shell.run gives a program its own
+-- environment table, and the rom apis keep their own: `print = f` in this file
+-- only ever shadowed print for quarry itself, so gps.locate went on writing to
+-- a terminal nobody was reading and the capture came back empty -- which the
+-- report then printed as "it printed nothing at all" [paste fXOYd, 2026-08-28,
+-- a turtle with a wireless modem equipped and no host in range]. printError
+-- goes with it: the no-modem line is the one verdict that comes out that way.
 local function gpsDebug()
   local lines = {}
-  local saved = print
-  print = function(...)
+  local function grab(...)
     local t = {}
     for i = 1, select("#", ...) do t[i] = tostring((select(i, ...))) end
     lines[#lines + 1] = table.concat(t, " ")
   end
+  local G = _G
+  local p, pe = G.print, G.printError
+  G.print, G.printError = grab, grab
   pcall(gps.locate, GPS_TIMEOUT, true)
-  print = saved
+  G.print, G.printError = p, pe
   return lines
 end
 

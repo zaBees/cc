@@ -27,7 +27,7 @@ yourself.
 | --- | --- | --- |
 | Mining Turtle | 3 | one to run the program, two as *items in its inventory* for it to place later |
 | Coal or charcoal | 192 (3 stacks) | a stack per turtle. The whole claim wants about 3,300. |
-| Storage block | 1 | the depot: one box, for ore and for the coal all three share. A chest, a vanilla barrel, a Sophisticated Storage barrel or chest of any tier, an Iron Chest, a shulker box or a Create item vault all count. Bigger is better — a Sophisticated barrel is the best of these, because a full depot stops the run. |
+| Storage block | 1 | the depot: one box, for ore and for the coal all three share. A chest, a vanilla barrel, a Sophisticated Storage barrel or chest of any tier, an Iron Chest, a shulker box or a Create item vault all count. Bigger is better — a Sophisticated barrel is the best of these. A full depot no longer stops the run (the junk goes on the tunnel floor and the turtle calls home), but everything it digs after that is lost. |
 | Disk Drive | 1 | the lava map, and the only way one turtle can hand code to another |
 | Floppy Disk | 1 | goes in the drive |
 | Wireless Modem | 3 | GPS. Turtle 1 is already wearing one, so 2 spares in the inventory. |
@@ -132,9 +132,7 @@ wget https://raw.githubusercontent.com/zaBees/cc/main/quarry.lua quarry
 > `quarry` yet, `delete` says it cannot find the file — harmless, carry on.
 >
 > **The URL never changes.** It is the same two lines every time, however many
-> builds go by. That is why delivery moved to GitHub on 2026-08-28: the old
-> paste.rs route needed a fresh five-character id per edit, transcribed by eye,
-> and a `0` read as an `O` cost a round trip.
+> builds go by. Everything is delivered from the GitHub repo.
 
 **Then get the updater, once, and you never type those lines again:**
 
@@ -149,7 +147,7 @@ From then on, whenever a new build ships:
 update
 ```
 
-That pulls `quarry` and `update` itself, does the `delete` for you, and prints
+That pulls `quarry`, `alert` and `update` itself, does the `delete` for you, and prints
 `quarry: N bytes, fletcher32 N` so the download can be checked against the
 copy on my side without anybody transcribing anything. `update quarry` does
 just the one. It never touches `quarry.conf` or `quarry.state`, and a download
@@ -166,8 +164,21 @@ hand you may get the old file and not know it; `update` cannot.
 > wget https://raw.githubusercontent.com/zaBees/cc/main/probe.lua probe
 > ```
 
-Those two lines are the whole delivery. The build behind them is the one tested
-here — 55 checks against a stubbed CC world, including a fake world with blocks
+**And one program that goes on a computer rather than a turtle:**
+
+```
+delete alert
+wget https://raw.githubusercontent.com/zaBees/cc/main/alert.lua alert
+```
+
+`alert` prints what the mine sends home — so far, a depot that has filled up.
+Run it on a computer with a wireless modem, near the claim: a modem's range
+shrinks with depth, the same thing that stops GPS reaching the mine floor, so a
+computer far away will hear nothing. An ender modem hears everything. Whatever
+it misses is still in the report the turtle posts at the end.
+
+Those lines are the whole delivery. The build behind them is the one tested
+here — 66 tests against stubbed CC worlds, including a fake world with blocks
 in it that the turtle actually mines.
 
 Note that **Ctrl+V in a CC terminal pastes one line only** — that is why
@@ -484,29 +495,29 @@ loses a slot's worth of convenience.
 
 ## 8. Later — do not build these yet
 
-**The depot (Phase 3).** It goes at the claim floor, roughly 130 blocks
-straight down. Do **not** hand-dig to it. The turtles cut their own vertical
-trunks in Phase 2, and you take that shaft down afterwards. `--check` prints
-the three trunk positions; the depot goes at the middle one, on the floor:
-
-- 2 chests — one the turtles dump ore into, one you keep stocked with coal.
-- 1 disk drive with a floppy in it, adjacent to where the turtles dock. This is
-  the shared lava map: plain text, one source per line, readable in-game with
-  `edit`.
-
-I will confirm the exact layout and chest order when Phase 3 lands.
+**The depot (Phase 3) has landed — §5c is the current word on it.** In short:
+one box, UNDER the trunk floor, roughly 130 blocks straight down, and the
+turtle will place it itself if you hand it a barrel. Do **not** hand-dig down
+to it; the turtles cut their own trunks and you take that shaft afterwards.
+Optionally a disk drive with a floppy beside the floor — the shared lava map,
+plain text, one source per line, readable in-game with `edit`.
 
 **Turtles 2 and 3 (Phase 4, or Phase 5 automatically).** By hand it is the same
 preparation as turtle 1 — label them `quarry2` and `quarry3`, fuel them, `wget`
 the same URL — launched as `quarry 2` and `quarry 3`. Place them anywhere in the
 centre chunk; they will agree with turtle 1 on the grid.
 
-**Phase 5 does this for you, and it is built.** Run this on turtle 1, standing
-on its launch block with the whole kit aboard:
+**Turtle 1 does this for you, and it is built.** Standing on its launch block
+with the whole kit aboard, a plain
 
 ```
-quarry 1 deploy
+quarry 1
 ```
+
+deploys the other two before it descends — `deploy : turtles in the hold --
+staffing the mine before I descend` — and then goes and mines. Turtles in its
+inventory are the signal; once they are placed it never does it again on that
+claim. To deploy and nothing else, run `quarry 1 deploy`.
 
 It audits the kit first and stops without placing anything if something is
 missing. Then it places the disk drive one block up and in front of itself,
@@ -527,13 +538,15 @@ home, and it is the only channel by which one turtle can hand code to another.
 trunk. All three agree on the same claim because the claim comes from the block
 each was standing on when it started, and they all start in the centre chunk.
 
-**The depot builds itself too.** Hand turtle 1 the two chests instead of placing
-them yourself, and when it reaches its trunk floor it cuts the alcoves, places
-both, and banks the coal it is still carrying into the first one. If you would
-rather place them yourself, do — a depot it finds always beats one it would
-build. It keeps the coal for the depot rather than burning it, so do not be
-surprised to see `fuel   : keeping 64 minecraft:coal for the depot` on the way
-down.
+**The depot builds itself too.** Hand turtle 1 a barrel instead of placing one
+yourself and, at its trunk floor, it digs out the block underneath and puts the
+barrel there, then banks the coal it is still carrying into it. If the block
+below is bedrock — which it usually is, since bedrock scatters up through y=-60
+and the floor sits at y=-59 — it falls back to a niche beside the trunk one
+level up and says so. A depot it finds always beats one it would build, so
+place one yourself if you would rather. It keeps the coal for the depot rather
+than burning it, so expect `fuel   : keeping 64 minecraft:coal for the depot`
+on the way down.
 
 That is why the kit in §1 lists three turtles when only one of them runs the
 program — the other two ride in turtle 1's inventory as items.
@@ -554,6 +567,7 @@ program — the other two ride in turtle 1's inventory as items.
 | `STOPPED: fuel reserve` | It stopped mid-branch with just enough left to walk home. Refuel and re-run; it resumes the same branch. |
 | `STOPPED: inventory full` | Phase 2 has no depot. Empty it by hand and re-run. It stopped rather than destroying the drop. |
 | `STOPPED: refusing to dig …` | Something on the deny list — any storage block, turtle, computer, disk drive — was in its path. Move it or move the turtle. |
+| `notify : the depot at x,y,z is FULL` | The depot will not take another stack. The junk tier goes on the tunnel floor and the run carries on, but everything dug after that is lost. Empty the box. If the hold is full of ore as well it stops instead, and waits for you. |
 | `moved: this is not the claim in quarry.state` | You carried it to a different chunk. It dropped the old claim and started a new one. That is intended. |
 | It prints the route and stops | `dry = true` in `quarry.conf`. Set it false to mine. |
 | `no http, report not uploaded` | HTTP is off for that computer. Read the numbers off the screen and tell me the ones you can. |
@@ -571,13 +585,15 @@ program — the other two ride in turtle 1's inventory as items.
                                      |
         (turtle)  delete update
         (turtle)  wget https://raw.githubusercontent.com/zaBees/cc/main/update.lua update
-        (turtle)  update                    <- gets quarry, and every build after
+        (turtle)  update                    <- gets quarry and alert, and every build after
                                      |
                           (turtle)  quarry 1 --check
                                      |
                         send me the URL it prints
                                      |
-                  (turtle)  quarry 1        <- mines for real, dry = false ships
+                  (turtle)  quarry 1        <- deploys 2 and 3, then mines for real
+                                     |
+        (optional, on a computer near the mine)  alert
                                      |
         (optional)  edit quarry.conf        <- dry = true to plan, not dig
                                      |

@@ -114,6 +114,19 @@ confirmed to fail against its own unfixed code:
     is relative -- so that run puts `quarry.conf`, `quarry.state` and
     `/startup` on the floppy the turtle then walks away from. Test 88.
 
+15. **A turtle above or below is waited for, not halted on.** `giveWay` was
+    only wired into horizontal moves; a vertical one went straight to `clear()`,
+    which saw a block on the deny list and ended the run. All three turtles
+    share one launch block and one depot column, so that is what "turtles
+    stacked on the depot and both say stopped" was, both times. Test 89.
+16. **The deployer's `quarry.conf` is a seed, not a master.** The boot script
+    re-copied it on every boot, so coordinates typed in by hand were wiped by
+    the next reboot and asked for again -- forever, while the turtle stood
+    beside the drive. Test 90.
+17. **A confirmation waits 10s, not 60.** The two prompts that need the player
+    to go and do something -- right-click a turtle, clear a blocked spot --
+    pass their own 60s. Test 91.
+
 ## Next action
 
 The code is ready. The run to ask for: **`update`, then `quarry 1 deploy`**

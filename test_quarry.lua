@@ -2706,4 +2706,48 @@ assert(ok, "the leading-slash run crashed: " .. tostring(err))
 assert(V.files["quarry.state"]:find("9"), "it overwrote the turtle's own state:\n" .. log)
 
 
+-- 89. a turtle above or below is waited for, not halted on -----------------
+-- All three share one launch block and one depot column, so they meet stacked
+-- as often as nose to nose. A vertical move had no right of way at all:
+-- clear() saw a turtle it may not dig and ended the run, which is both of them
+-- reported "stopped" on the depot [user, 2026-08-28, twice].
+
+world({ conf = "tripBlocks = 100000\n",
+        blocks = { [k3(137, 82, -42)] = "computercraft:turtle_advanced" } })
+V.placedTurtle, V.leaveAfter, V.sleeps = { x = 137, y = 82, z = -42 }, 2, 0
+ok, err, log = runWorld("1")
+assert(ok, "the stacked-turtle run crashed: " .. tostring(err))
+assert(log:find("giveway: turtle 1 waiting"), "it did not wait for the turtle below:\n" .. log)
+assert(not log:find("refusing to dig computercraft:turtle_advanced"),
+  "a turtle below still ended the run:\n" .. log)
+assert(log:find("descend"), "it never got past it:\n" .. log)
+
+-- 90. the deployer's config is a seed, not a master ------------------------
+-- It used to be re-copied on every boot, so coordinates typed in by hand were
+-- wiped by the next reboot and the turtle asked for them again, forever, for
+-- as long as it stood beside the drive.
+
+world({ inv = kit(), leaveAfter = 3 })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "deploy crashed: " .. tostring(err))
+local boot90 = V.files["/disk/startup.lua"]
+assert(boot90:find('not fs.exists("quarry.conf")', 1, true),
+  "the boot script still overwrites a config the turtle already has:\n" .. boot90)
+assert(boot90:find("keeping my own quarry.conf", 1, true),
+  "it does not say it kept the turtle's own config:\n" .. boot90)
+
+-- 91. a confirmation waits 10s; something the player must go and do waits 60 --
+
+world({ inv = kit({ [2] = false }), leaveAfter = 3 })   -- a slot short of a kit
+ok, err, log = runWorld("1", "deploy")
+assert(log:find("go on with what is aboard"), "the kit was not short after all:\n" .. log)
+assert(log:find("10s of silence"), "a confirmation still waits a minute:\n" .. log)
+
+world({ inv = kit() })                            -- nothing ever walks off
+ok, err, log = runWorld("1", "deploy")
+assert(log:find("RIGHT%-CLICK IT"), "it never asked for the right-click:\n" .. log)
+assert(log:find("60s of silence"),
+  "it gave the player 10s to walk over and click a turtle:\n" .. log)
+
+
 print("all quarry phase 5 checks passed")

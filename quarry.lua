@@ -400,16 +400,20 @@ end
 -- that waits forever is a mine that never restarts. Every question here answers
 -- itself after ASK_TIMEOUT with what the program used to do on its own, and
 -- says in the log that nobody answered -- an unattended answer reads as one.
-local ASK_TIMEOUT = 60
+-- Short, because most of these are confirmations of what the run was going to
+-- do anyway and a turtle nobody is watching should get on with it. The two
+-- that need the player to physically do something pass their own longer wait.
+local ASK_TIMEOUT = 10
 
-local function ask(prompt, default)
+local function ask(prompt, default, wait)
+  wait = wait or ASK_TIMEOUT
   say(prompt)
   sayf("         (type and press enter -- %ds of silence and I take \"%s\")",
-    ASK_TIMEOUT, default)
+    wait, default)
   local answer
   local lived = pcall(parallel.waitForAny,
     function() answer = read() end,
-    function() os.sleep(ASK_TIMEOUT) end)
+    function() os.sleep(wait) end)
   if not lived or answer == nil then
     sayf("         nobody answered, taking \"%s\"", default)
     return default, false
@@ -1126,6 +1130,7 @@ end
 
 local function stepUp()
   for _ = 1, 8 do
+    if not giveWay(turtle.detectUp, turtle.inspectUp) then return false end
     if not clear(turtle.digUp, turtle.detectUp, turtle.inspectUp) then return false end
     if turtle.up() then st.y = st.y + 1 save() return true end
     turtle.attackUp()
@@ -1135,6 +1140,7 @@ end
 
 local function stepDown()
   for _ = 1, 8 do
+    if not giveWay(turtle.detectDown, turtle.inspectDown) then return false end
     if not clear(turtle.digDown, turtle.detectDown, turtle.inspectDown) then return false end
     if turtle.down() then st.y = st.y - 1 save() return true end
     turtle.attackDown()
@@ -1165,27 +1171,35 @@ end
 -- corridor, 2 and 3 wait longer and are the ones that end up moving.
 local YIELD_TRIES = 6
 
-local function turtleAhead()
-  if not turtle.detect() then return false end
-  local ok, hit, d = pcall(turtle.inspect)
+local function turtleAt(detect, inspect)
+  if not detect() then return false end
+  local ok, hit, d = pcall(inspect)
   -- the and-chain used to be compared against nil, so a failed pcall came out
   -- false ~= nil = true and an inspect error read as another turtle
   if not ok or not hit or not d then return false end
   return tostring(d.name):find("turtle", 1, true) ~= nil
 end
 
+local function turtleAhead() return turtleAt(turtle.detect, turtle.inspect) end
+
 -- true when the way is ours, false when another turtle held it past every
 -- retry. Waits only -- it never moves, because the leg counter and the route
 -- both track position and a surprise sidestep would desync them. Moving out
 -- of the way is goTo's job, below, where the route is recomputed anyway.
-function giveWay()
-  if not turtleAhead() then return true end
+-- Any side, not just the front. All three turtles share one launch block and
+-- one depot column, so they meet stacked as often as nose to nose -- and a
+-- vertical move had no right of way at all: clear() saw a turtle it may not
+-- dig and halted the run outright, which is both of them "stopped" on the
+-- depot [user, 2026-08-28, twice].
+function giveWay(detect, inspect)
+  detect, inspect = detect or turtle.detect, inspect or turtle.inspect
+  if not turtleAt(detect, inspect) then return true end
   local idx = st.index or 1
   for try = 1, YIELD_TRIES do
     sayf("giveway: turtle %d waiting, another one is in the way (%d of %d)",
       idx, try, YIELD_TRIES)
     os.sleep(idx * 1.5)
-    if not turtleAhead() then return true end
+    if not turtleAt(detect, inspect) then return true end
   end
   jammed = true
   return false
@@ -2863,10 +2877,15 @@ fs.copy("/disk/quarry", "quarry.lua")
 -- -- so it goes live on settings its deployer never chose: veinMax, tripBlocks,
 -- the ore names and the fuel sections all revert. Same anti-drift rule as the
 -- program itself: take the deployer's file, do not re-derive one.
-if fs.exists("/disk/quarry.conf") then
-  if fs.exists("quarry.conf") then fs.delete("quarry.conf") end
+-- Only when this turtle has none of its own. It used to overwrite on every
+-- boot, so coordinates typed in by hand were wiped by the next reboot and the
+-- turtle asked for them again -- forever, for as long as it stood beside the
+-- drive [user, 2026-08-28].
+if fs.exists("/disk/quarry.conf") and not fs.exists("quarry.conf") then
   fs.copy("/disk/quarry.conf", "quarry.conf")
   note("took the deployer's quarry.conf")
+elseif fs.exists("quarry.conf") then
+  note("keeping my own quarry.conf")
 else
   note("WARNING: no quarry.conf on the floppy -- seeding one from the defaults;")
   note("         it MINES, but on default settings, not the deployer's")
@@ -3042,7 +3061,7 @@ local function deployOne(conf, l, index)
       break
     end
     say("deploy : something is in front of me, and it is not a turtle.")
-    local a = ask("deploy : d = dig it out, enter = I have cleared it, s = skip, q = stop.", "")
+    local a = ask("deploy : d = dig it out, enter = I have cleared it, s = skip, q = stop.", "", 60)
     if a:sub(1, 1) == "s" then return false, "skipped on your say-so" end
     if a:sub(1, 1) == "q" then return false, "stopped deploying on your say-so", "stop" end
     if a:sub(1, 1) == "d" then pcall(turtle.dig) end
@@ -3132,7 +3151,7 @@ local function deployOne(conf, l, index)
       sayf("deploy : nothing from turtle %d yet -- it is still switched off.", index)
       say("         RIGHT-CLICK IT. That turns it on and the disk startup runs.")
       say("         If its screen is already lit, type this on it:  disk/startup")
-      local a = ask("deploy : enter = done, s = skip this turtle, q = stop deploying.", "")
+      local a = ask("deploy : enter = done, s = skip this turtle, q = stop deploying.", "", 60)
       if a:sub(1, 1) == "s" then return false, "skipped on your say-so" end
       if a:sub(1, 1) == "q" then return false, "stopped deploying on your say-so", "stop" end
     end

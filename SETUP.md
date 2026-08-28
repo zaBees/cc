@@ -485,8 +485,8 @@ position: my x?
 
 Type it, press enter, answer y, z and the heading the same way. It writes them
 into `quarry.conf` for you, so the next reboot does not ask again. Press enter
-on an empty line — or leave it alone for a minute — and it stops exactly as it
-used to, without guessing anything.
+on an empty line — or leave it alone for ten seconds — and it stops exactly as
+it used to, without guessing anything.
 
 An answer it cannot read only costs you that one answer: it says so, asks the
 same question again, and keeps the coordinates you already typed.
@@ -630,6 +630,8 @@ program — the other two ride in turtle 1's inventory as items.
 | `a turtle is already standing here -- adopting it` | A turtle from an earlier deploy never booted and is still in the spot. It is not in the way, it *is* that turtle: the deploy switches it on and feeds it where it stands, rather than refusing. |
 | `the drive from the last run is still here -- reusing it` | Normal on every deploy after the first. The drive and floppy are told to stay put, so the next deploy picks them up again instead of failing. |
 | `I cannot read "..."` after typing a heading | Type any of `0`/`+z`/`south`, `1`/`-x`/`west`, `2`/`-z`/`north`, `3`/`+x`/`east`. It asks again for just that one answer and keeps the coordinates you already typed. Enter on its own still gives up. |
+| `giveway: turtle 2 waiting, another one is in the way` | Two turtles met in a corridor or stacked in the depot column. They sort it out themselves — the lower index holds the way, the higher one waits and then steps aside. Only if it never clears does the run stop. |
+| Two turtles standing on the depot, both saying `stopped` | Fixed: a turtle above or below is now waited for. If you still see it, send the log. |
 | You have to `cd disk` to find `quarry` on a deployed turtle | It never ran its boot script, so nothing was copied to the turtle itself. Run `disk/startup` instead — that does the whole job. If you do start it off the floppy, it now installs itself onto the turtle and restarts from there; otherwise its config, its state and its `/startup` all live on a floppy it walks away from. |
 | `turtles = 1 in quarry.conf, so there is nobody to deploy` | You lowered `turtles`. Raise it, or just run `quarry 1` and mine the whole claim with one. |
 

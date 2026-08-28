@@ -694,6 +694,7 @@ local function mkworldenv()
         local fx, fy, fz = ahead()
         local n = blockAt(fx, fy, fz)
         if n and n:find("turtle") then return "turtle" end
+        if n and n:find("disk_drive") then return "drive" end
       end
       return V.equip[side]
     end,
@@ -744,6 +745,9 @@ local function mkworldenv()
     elseif aheadName and (aheadName:find("turtle") or aheadName:find("disk_drive")) then
       -- a turtle and a drive are both inventories: this is the deployment channel
       V.handed[#V.handed + 1] = { name = it.name, count = take, into = aheadName }
+      -- and a floppy in the drive is what makes /disk appear
+      if aheadName:find("disk_drive") and it.name:find("disk")
+         and not it.name:find("disk_drive") then V.disk = true end
     else
       V.ground = V.ground + take                        -- junk on the tunnel floor
     end
@@ -785,10 +789,10 @@ local function mkworldenv()
                or it.name:find("chest") or it.name:find("barrel")) then
       if blockAt(x, y, z) then return false end
       V.blocks[k3(x, y, z)] = it.name
-      if it.name:find("disk_drive") then V.disk = true
-      elseif it.name:find("chest") or it.name:find("barrel") then
+      -- placing the drive does not mount /disk; the floppy going into it does
+      if it.name:find("chest") or it.name:find("barrel") then
         V.chests[k3(x, y, z)] = {}         -- a placed chest starts empty
-      else
+      elseif it.name:find("turtle") then
         V.placedTurtle, V.sleeps = { x = x, y = y, z = z }, 0
         V.periphStale = true      -- issue #660: freshly placed reads as air
       end
@@ -2569,6 +2573,99 @@ ok, err, log = runWorld("1", "deploy")
 assert(not ok or log:find("no coordinates given"), "it made a position up:\n" .. log)
 assert(log:find("no coordinates given"), "it did not say it had nothing to go on:\n" .. log)
 assert(not V.disk, "it placed the drive without knowing where it is")
+
+
+-- 84. a turtle already standing in front is adopted, not refused -----------
+-- Both turtles were refused with "something is in front of me" in-game on
+-- 2026-08-28 [log 0JCwD]: the stranded turtle 2 of the run before was still
+-- standing in the one spot the deploy places into.
+
+world({ inv = kit(), leaveAfter = 3,
+        blocks = { [k3(137, 83, -41)] = "computercraft:turtle_advanced" } })
+-- it walks off like any other, once something switches it on
+V.placedTurtle, V.sleeps = { x = 137, y = 83, z = -41 }, 0
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the adopt-a-standing-turtle deploy crashed: " .. tostring(err))
+assert(log:find("adopting it as turtle 2"), "it refused its own stranded turtle:\n" .. log)
+assert(not log:find("something is in front of me; move me"),
+  "it still treated a standing turtle as an obstruction:\n" .. log)
+assert(log:find("turnOn sent to turtle 2"), "it never switched the standing turtle on:\n" .. log)
+assert(log:find("deploy : 2 of 2 deployed"), "adopting one cost it the other:\n" .. log)
+
+-- 85. the drive the last deploy left standing is reused --------------------
+-- The end of a deploy says "the drive and floppy stay here", so the next
+-- `quarry 1 deploy` finds them. Refusing there fails every run after the first.
+
+world({ inv = kit(), leaveAfter = 3, disk = true,
+        blocks = { [k3(137, 84, -41)] = "computercraft:disk_drive" } })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the second deploy crashed on its own drive: " .. tostring(err))
+assert(log:find("still here %-%- reusing it"), "it did not reuse the standing drive:\n" .. log)
+assert(log:find("still in the drive"), "it tried to load a second floppy:\n" .. log)
+assert(V.files["/disk/quarry"], "nothing reached the floppy on a reused drive")
+assert(log:find("deploy : 2 of 2 deployed"), "the reused drive cost it the mine:\n" .. log)
+
+-- 86. anything else in front is asked about, not silently skipped ----------
+
+world({ inv = kit(), leaveAfter = 3, answers = { "d" },
+        blocks = { [k3(137, 83, -41)] = "minecraft:stone" } })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the dig-it-out deploy crashed: " .. tostring(err))
+assert(log:find("it is not a turtle"), "it never said what was wrong:\n" .. log)
+assert(log:find("d = dig it out"), "it did not offer to dig:\n" .. log)
+assert(log:find("deploy : 2 of 2 deployed"), "it did not dig and carry on:\n" .. log)
+
+-- q stops the whole deploy, and nobody at the keyboard is still a refusal
+world({ inv = kit(), leaveAfter = 3, answers = { "q" },
+        blocks = { [k3(137, 83, -41)] = "minecraft:stone" } })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the q deploy crashed: " .. tostring(err))
+assert(log:find("stopped deploying on your say%-so"), "q did not stop it:\n" .. log)
+assert(not log:find("boot script for turtle 3"), "q still went on to turtle 3:\n" .. log)
+
+world({ inv = kit(), leaveAfter = 3,
+        blocks = { [k3(137, 83, -41)] = "minecraft:stone" } })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the unattended blocked deploy crashed: " .. tostring(err))
+assert(log:find("move me somewhere clear"), "unattended, it did not fall back to refusing:\n" .. log)
+assert(log:find("deploy : 0 of 2 deployed"), "it deployed into a solid block:\n" .. log)
+
+
+-- 87. a heading read off F3, and one bad answer does not bin the good ones --
+-- In-game [log nznpx] the player typed "+z" for the heading and lost all four
+-- answers with it: "no coordinates given, so I have taken none of them".
+
+world({ inv = kit(), leaveAfter = 3, answers = { "1594", "78", "22", "+z" } })
+V.noGps = true
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the +z deploy crashed: " .. tostring(err))
+assert(not log:find("no coordinates given"), "it threw away three good answers:\n" .. log)
+local w87 = V.files["quarry.conf"]
+assert(w87:find("startX = 1594"), "x was lost with the heading:\n" .. w87)
+assert(w87:find("startDir = 0"), "+z was not read as a heading:\n" .. w87)
+
+-- south, north, east and west read the same way
+world({ inv = kit(), leaveAfter = 3, answers = { "1594", "78", "22", "West" } })
+V.noGps = true
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the compass-word deploy crashed: " .. tostring(err))
+assert(V.files["quarry.conf"]:find("startDir = 1"),
+  "west was not read as -x:\n" .. V.files["quarry.conf"])
+
+-- something unreadable is asked again, not fatal
+world({ inv = kit(), leaveAfter = 3, answers = { "1594", "78", "22", "sideways", "2" } })
+V.noGps = true
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the re-ask deploy crashed: " .. tostring(err))
+assert(log:find('I cannot read "sideways"'), "it did not say what it could not read:\n" .. log)
+assert(V.files["quarry.conf"]:find("startDir = 2"), "it did not take the second answer")
+
+-- and enter on its own still gives up rather than guessing
+world({ inv = kit(), leaveAfter = 3, answers = { "1594", "78", "22", "" } })
+V.noGps = true
+ok, err, log = runWorld("1", "deploy")
+assert(log:find("no coordinates given"), "an empty heading did not stop it:\n" .. log)
+assert(not V.disk, "it deployed on a position it had guessed")
 
 
 print("all quarry phase 5 checks passed")

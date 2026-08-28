@@ -83,21 +83,53 @@ to fail against its own unfixed code (tests 75-83, plus 29).
 
 Unproven in-game: all of it.
 
+## What shipped next, from logs 0JCwD and nznpx (2026-08-28)
+
+The run above got as far as the audit and then refused both turtles with
+`something is in front of me; move me somewhere clear`, deploying neither. The
+block in front was the stranded turtle 2 of the run before, still standing in
+the one spot a deploy places into. Four more changes, tests 84-87, each
+confirmed to fail against its own unfixed code:
+
+10. **A turtle already standing in front is adopted, not refused.** It is not
+    an obstruction, it *is* that turtle, already placed: skip the placing and
+    go straight to switching it on and feeding it. Without this a deploy that
+    strands a turtle can never be re-run at all.
+11. **Anything else in front is a question**, not a silent failure: `d` digs it
+    out, enter says the player has cleared it, `s` skips, `q` stops. Nobody at
+    the keyboard is still the old refusal.
+12. **The drive and floppy the last deploy left standing are reused.** The end
+    of a deploy tells the player they stay put, so every deploy after the first
+    used to die on `something is in front of me one block up`.
+13. **A heading typed as `+z` is read as a heading** — `+z`/`south`, `-x`/
+    `west`, `-z`/`north`, `+x`/`east`, or the raw `0..3`. And an answer that
+    cannot be read costs only that answer: it asks the same question again
+    instead of discarding the three good coordinates with it. In-game [nznpx]
+    the player typed `+z` and got `no coordinates given, so I have taken none
+    of them`.
+
 ## Next action
 
 The code is ready. The run to ask for: **`update`, then `quarry 1 deploy`**
 from the launch block, carrying a barrel, turtles 2 and 3, the drive and the
-floppy — and **stay at the turtle**: the deploy now asks to have each new
-turtle right-clicked, and waits 60s for the answer. `SETUP.md` is the
-player-facing version of this and of everything they have to place.
+floppy — and **stay at the turtle**: the deploy asks to have each new turtle
+right-clicked, and waits 60s for the answer. The turtle already standing at the
+depot does not need moving; the deploy will pick it up as turtle 2.
+`SETUP.md` is the player-facing version of this and of everything they place.
 
 What to read in the log that comes back:
 
+- **`a turtle is already standing here -- adopting it as turtle 2`**, or
+  `placed computercraft:turtle_advanced in front`. Either is the deploy getting
+  past the block that stopped log 0JCwD.
 - **`deploy : nothing from turtle 2 yet -- it is still switched off`** or its
   absence. That answers whether the `turnOn` on `front` reaches a freshly
   placed turtle at all, which two logs now disagree about.
 - **`deploy : claim anchor x,z on the floppy`**, then on turtle 2's own screen
   `took the deployer's claim anchor`. That is the fix for the second tunnel.
+- **A depot.** Log 0JCwD went short one storage block on the player's say-so
+  and the mine stopped at 194 blocks with nowhere to put them. The kit needs a
+  box.
 
 - **`position:` against F3.** Nobody has ever confirmed the turtle's fix
   matches the real world, and the pattern anchors to absolute coordinates — a

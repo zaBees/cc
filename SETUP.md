@@ -461,7 +461,10 @@ one line:
 Use the **turtle's** block position, not yours, if you are standing next to it.
 
 `startDir` has to go in too, because a turtle told its position by hand cannot
-measure which way it faces: `0` = +z, `1` = -x, `2` = -z, `3` = +x.
+measure which way it faces: `0` = +z, `1` = -x, `2` = -z, `3` = +x. At the
+prompt you can also type what F3 actually shows — `+z` or `south`, `-x` or
+`west`, `-z` or `north`, `+x` or `east`. In the config file itself it has to be
+the number.
 
 Deploying with manual coordinates is fine. Turtle 1 writes each deployed
 turtle's OWN position and heading onto the floppy rather than handing on its
@@ -484,6 +487,9 @@ Type it, press enter, answer y, z and the heading the same way. It writes them
 into `quarry.conf` for you, so the next reboot does not ask again. Press enter
 on an empty line — or leave it alone for a minute — and it stops exactly as it
 used to, without guessing anything.
+
+An answer it cannot read only costs you that one answer: it says so, asks the
+same question again, and keeps the coordinates you already typed.
 
 **Delete those four lines once GPS works again.** A pinned position is a
 starting value, not a sensor: the turtle believes it until its own
@@ -620,6 +626,10 @@ program — the other two ride in turtle 1's inventory as items.
 | `no http, report not uploaded` | HTTP is off for that computer. Read the numbers off the screen and tell me the ones you can. |
 | A turtle sitting there saying nothing | Run `quarry 2 --check` on it. The `last   :` line is why its previous run stopped — the reason is kept in `quarry.state`, so it survives the reboot and the scrollback. |
 | A deployed turtle never moved | It is switched off. Right-click it. If its screen is already lit, type `disk/startup` on it. |
+| `something is in front of me, and it is not a turtle` | The deploy spot is blocked by your build or by terrain. It asks: `d` digs it out, enter says you have cleared it, `s` skips that turtle, `q` stops. Unattended it refuses rather than digging. |
+| `a turtle is already standing here -- adopting it` | A turtle from an earlier deploy never booted and is still in the spot. It is not in the way, it *is* that turtle: the deploy switches it on and feeds it where it stands, rather than refusing. |
+| `the drive from the last run is still here -- reusing it` | Normal on every deploy after the first. The drive and floppy are told to stay put, so the next deploy picks them up again instead of failing. |
+| `I cannot read "..."` after typing a heading | Type any of `0`/`+z`/`south`, `1`/`-x`/`west`, `2`/`-z`/`north`, `3`/`+x`/`east`. It asks again for just that one answer and keeps the coordinates you already typed. Enter on its own still gives up. |
 | `turtles = 1 in quarry.conf, so there is nobody to deploy` | You lowered `turtles`. Raise it, or just run `quarry 1` and mine the whole claim with one. |
 
 ---

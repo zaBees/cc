@@ -609,6 +609,15 @@ end
 -- off their own screen. Ask for them instead, and write them into quarry.conf
 -- so the next reboot does not ask again. Nothing is assumed: a missing or
 -- unparseable answer, or nobody at the keyboard at all, gives the old error.
+-- What a player actually reads off F3 for a heading, alongside the raw 0..3.
+-- "Facing: south (Towards positive Z)" -- so south, +z and z all mean 0.
+local HEADINGS = {
+  ["0"] = 0, ["+z"] = 0, ["z"] = 0, ["south"] = 0, ["s"] = 0,
+  ["1"] = 1, ["-x"] = 1, ["west"]  = 1, ["w"] = 1,
+  ["2"] = 2, ["-z"] = 2, ["north"] = 2, ["n"] = 2,
+  ["3"] = 3, ["+x"] = 3, ["x"] = 3, ["east"]  = 3, ["e"] = 3,
+}
+
 local function locateOrAsk(conf)
   local x, y, z, how = locate(conf)
   if x then return x, y, z, how end
@@ -616,23 +625,35 @@ local function locateOrAsk(conf)
   sayf("position: %s", noFix())
   say("position: I can run on coordinates typed by hand instead. Press F3 and")
   say("          read off the block I am standing ON. Enter on its own gives up.")
-  local vals, typed = {}, true
+  local vals = {}
   for _, q in ipairs({ { "startX", "my x?" }, { "startY", "my y?" }, { "startZ", "my z?" },
-                       { "startDir", "which way am I facing? 0 = +z, 1 = -x, 2 = -z, 3 = +x" } }) do
-    local a = ask("position: " .. q[2], "")
-    vals[q[1]] = tonumber(a)
-    if not vals[q[1]] then typed = false break end
+                       { "startDir",
+                         "which way am I facing? 0 = +z south, 1 = -x west, 2 = -z north, 3 = +x east" } }) do
+    local v
+    while true do
+      local a = ask("position: " .. q[2], ""):lower()
+      -- F3 says "Facing: south (Towards positive Z)", so that is what a player
+      -- has in front of them and what they type. "+z" was typed in-game and
+      -- thrown away [log nznpx], taking the three good coordinates with it.
+      v = tonumber(a)
+      if q[1] == "startDir" then
+        v = HEADINGS[a] or v
+        if v and (v < 0 or v > 3) then v = nil end
+      end
+      if v then break end
+      -- Enter on its own is still "give up": nobody is at the keyboard on a
+      -- /startup reboot, and guessing a position is worse than stopping.
+      if a == "" then
+        say("position: no coordinates given, so I have taken none of them.")
+        return nil, nil, nil, "no fix"
+      end
+      -- One bad answer used to discard the other three. Ask again for the one
+      -- that did not read, and keep what is already good.
+      sayf("position: I cannot read \"%s\". Try again, or enter on its own to give up.", a)
+    end
+    vals[q[1]] = math.floor(v)
   end
-  if not typed then
-    say("position: no coordinates given, so I have taken none of them.")
-    return nil, nil, nil, "no fix"
-  end
-  if vals.startDir < 0 or vals.startDir > 3 then
-    sayf("position: %d is not a heading. 0, 1, 2 or 3 only, so I have taken none.",
-      vals.startDir)
-    return nil, nil, nil, "no fix"
-  end
-  for k, v in pairs(vals) do conf[k] = math.floor(v) end
+  for k, v in pairs(vals) do conf[k] = v end
 
   local body = ""
   local h = fs.open(CONF, "r")
@@ -2967,6 +2988,17 @@ local function slotLike(pat)
   end
 end
 
+-- What block is in front, by peripheral type. A block that has just appeared
+-- reads as nothing (CC:Tweaked #660 -- discovery goes stale); a turn refreshes
+-- it, and right-then-left is a no-op for the heading tracked in st.dir.
+local function frontType()
+  local t = select(2, pcall(peripheral.getType, "front"))
+  if t then return t end
+  pcall(turtle.turnRight)
+  pcall(turtle.turnLeft)
+  return (select(2, pcall(peripheral.getType, "front")))
+end
+
 -- Hand one item to the turtle in front. A turtle is an inventory, so a plain
 -- drop lands in its slots -- which is the only channel there is, now that the
 -- peripheral route is known to be closed.
@@ -2995,22 +3027,45 @@ end
 local function deployOne(conf, l, index)
   sayf("deploy : turtle %d", index)
 
-  local tSlot, tName = slotLike("turtle")
-  if not tSlot then return false, "no turtle item left in the hold" end
-
-  -- The spot has to be clear at both heights, and this is the surface, so
-  -- anything in the way is the user's build. Say so rather than digging it.
-  if turtle.detect() then return false, "something is in front of me; move me somewhere clear" end
-
-  turtle.select(tSlot)
-  -- pcall prepends its own success flag, so place's answer is the SECOND value.
-  -- Reading the first made a refused placement look placed, and the modem and
-  -- coal then went on the floor in front of nothing.
-  local lived, placed = pcall(turtle.place)
-  if not lived or placed == false then
-    return false, "the turtle item would not place: " .. tostring(placed)
+  -- What is in front is usually one of two things. Nothing, which is the happy
+  -- case. Or a turtle from an earlier deploy that was placed and never booted
+  -- and is still standing there -- both turtles were refused for exactly that
+  -- in-game on 2026-08-28 [log 0JCwD], with the stranded turtle 2 of the run
+  -- before blocking the spot. That is not an obstruction to route around, it
+  -- IS this turtle, already placed: adopt it and go straight to switching it
+  -- on. Anything else is the player's build, so ask rather than dig it.
+  local standing = false
+  while turtle.detect() do
+    if frontType() == "turtle" then
+      sayf("deploy : a turtle is already standing here -- adopting it as turtle %d", index)
+      standing = true
+      break
+    end
+    say("deploy : something is in front of me, and it is not a turtle.")
+    local a = ask("deploy : d = dig it out, enter = I have cleared it, s = skip, q = stop.", "")
+    if a:sub(1, 1) == "s" then return false, "skipped on your say-so" end
+    if a:sub(1, 1) == "q" then return false, "stopped deploying on your say-so", "stop" end
+    if a:sub(1, 1) == "d" then pcall(turtle.dig) end
+    -- Nobody answered and it is still blocked: the old behaviour, which is the
+    -- right one when there is no player to clear it.
+    if a == "" and turtle.detect() then
+      return false, "something is in front of me; move me somewhere clear"
+    end
   end
-  sayf("deploy : placed %s in front", tName)
+
+  local tSlot, tName = slotLike("turtle")
+  if not standing then
+    if not tSlot then return false, "no turtle item left in the hold" end
+    turtle.select(tSlot)
+    -- pcall prepends its own success flag, so place's answer is the SECOND
+    -- value. Reading the first made a refused placement look placed, and the
+    -- modem and coal then went on the floor in front of nothing.
+    local lived, placed = pcall(turtle.place)
+    if not lived or placed == false then
+      return false, "the turtle item would not place: " .. tostring(placed)
+    end
+    sayf("deploy : placed %s in front", tName)
+  end
 
   -- Turn it on. The probe read a nil peripheral.wrap and we took that to mean a
   -- placed turtle self-boots; two live deploys say otherwise -- it sat there
@@ -3190,10 +3245,11 @@ function runDeploy(conf, l, index)
   -- aboard [in-game 2026-08-28, log zog32].
   topUp(l)
 
+  -- Not required yet: the last deploy was told to leave its drive standing
+  -- here, so on every run after the first the drive and floppy are already in
+  -- place and the hold has neither. Check them where they are used.
   local driveSlot = slotLike("disk_drive")
   local floppySlot = slotLike("disk[^_]") or slotLike("disk$")
-  if not driveSlot then error("no disk drive in the hold", 0) end
-  if not floppySlot then error("no floppy in the hold", 0) end
 
   -- stepUp/stepDown keep the position in st, so deploy needs a fix before it
   -- moves -- and turtle 1 needs one to mine anyway. This also anchors the
@@ -3216,23 +3272,42 @@ function runDeploy(conf, l, index)
 
   -- 1. the drive, one block up, so it ends up directly above the new turtle.
   if not stepUp() then error("cannot move up to place the drive", 0) end
+  -- "the drive and floppy stay here" is what the end of a deploy tells the
+  -- player, so a second `quarry 1 deploy` finds its own drive in the spot it
+  -- wants. Refusing there would fail every deploy after the first. Reuse it.
+  local haveDrive = false
   if turtle.detect() then
-    pcall(stepDown)
-    error("something is in front of me one block up; move me somewhere clear", 0)
+    if frontType() == "drive" then
+      say("deploy : the drive from the last run is still here -- reusing it")
+      haveDrive = true
+    else
+      pcall(stepDown)
+      error("something is in front of me one block up; move me somewhere clear", 0)
+    end
   end
-  turtle.select(driveSlot)
-  local okd = select(2, pcall(turtle.place))
-  if okd == false then
-    pcall(stepDown)
-    error("the disk drive would not place", 0)
+  if not haveDrive then
+    if not driveSlot then error("no disk drive in the hold", 0) end
+    turtle.select(driveSlot)
+    local okd = select(2, pcall(turtle.place))
+    if okd == false then
+      pcall(stepDown)
+      error("the disk drive would not place", 0)
+    end
+    say("deploy : disk drive placed")
   end
-  say("deploy : disk drive placed")
 
-  turtle.select(floppySlot)
-  if select(2, pcall(turtle.drop)) == false then
-    error("the floppy would not go into the drive", 0)
+  -- /disk only exists when a floppy is in the drive, so it is the test for
+  -- whether the last run's floppy is still in there.
+  if fs.exists("/disk") then
+    say("deploy : the floppy from the last run is still in the drive")
+  else
+    if not floppySlot then error("no floppy in the hold", 0) end
+    turtle.select(floppySlot)
+    if select(2, pcall(turtle.drop)) == false then
+      error("the floppy would not go into the drive", 0)
+    end
+    say("deploy : floppy in the drive")
   end
-  say("deploy : floppy in the drive")
 
   -- 2. the payload. The program copies ITSELF, so a deployed turtle always
   --    runs the same build as the one that placed it -- no second wget, and no

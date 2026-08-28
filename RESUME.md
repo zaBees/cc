@@ -48,14 +48,56 @@ placed beside the trunk floor, which the pattern later walked into and refused
 to dig. That is why the depot goes under the floor, and why the fallback niche
 is a level up rather than beside it.
 
+## What shipped on 2026-08-28, after the deploy that left turtle 2 standing
+
+Nine changes, written as `DEPLOY-PLAN.md` first and then built. The user's
+report: turtle 2 never moved, the program was only on `/disk`, no modem got
+equipped, turtle 2 later dug a tunnel of its own, both turtles ended up on the
+depot saying "stopped". Every one of the nine has a regression test confirmed
+to fail against its own unfixed code (tests 75-83, plus 29).
+
+1. **Deploy asks for the right-click.** Twelve seconds of silence on the floppy
+   means the boot script never ran, which means the turtle is still off.
+   `enter` = done, `s` = skip this one, `q` = stop deploying.
+2. **Every question answers itself after 60s** through `ask()`, racing `read()`
+   against a timer in `parallel.waitForAny`, and says nobody answered. A turtle
+   rebooted by `/startup` with nobody watching must not hang on a prompt.
+3. **A no-fix run asks for the four numbers** and writes them into
+   `quarry.conf`. Empty answer or nobody there = the old refusal.
+4. **A pinned position needs no modem.** `manualFix(conf)` is all four of
+   `startX/Y/Z` and `startDir`; under it the kit audit wants none, the handover
+   is best-effort, and the boot script neither waits for one nor stops without
+   one.
+5. **`locate()` prefers `quarry.state` to the pin.** The pin is the launch
+   block; a running turtle is not standing on it, and with GPS unavailable
+   nothing else would ever catch that.
+6. **The deployed turtles inherit the deployer's claim anchor**, seeded as a
+   `home`-only `quarry.state` on the floppy. They wake one block in front of
+   turtle 1, which is over a chunk border often enough to matter -- that is
+   what "turtle 2 started a new tunnel" was.
+7. **`st.halt` outlives the run** and `--check` prints it as `last   :`.
+8. **The kit audit follows `conf.turtles`** rather than a hard-coded three, and
+   `turtles = 1` refuses to deploy instead of failing its own audit.
+9. **A failed deploy asks** rather than mining alone on its own, and the boot
+   script writes `quarry.lua`, the name `update` and turtle 1 both use.
+
+Unproven in-game: all of it.
+
 ## Next action
 
-The code is ready. The run to ask for: **`update`, then `quarry 1` from the
-same launch block as `Rpv9m` (243,73,734)**, carrying a barrel, turtles 2 and
-3, the drive and the floppy. `SETUP.md` is the player-facing version of this
-and of everything they have to place.
+The code is ready. The run to ask for: **`update`, then `quarry 1 deploy`**
+from the launch block, carrying a barrel, turtles 2 and 3, the drive and the
+floppy — and **stay at the turtle**: the deploy now asks to have each new
+turtle right-clicked, and waits 60s for the answer. `SETUP.md` is the
+player-facing version of this and of everything they have to place.
 
 What to read in the log that comes back:
+
+- **`deploy : nothing from turtle 2 yet -- it is still switched off`** or its
+  absence. That answers whether the `turnOn` on `front` reaches a freshly
+  placed turtle at all, which two logs now disagree about.
+- **`deploy : claim anchor x,z on the floppy`**, then on turtle 2's own screen
+  `took the deployer's claim anchor`. That is the fix for the second tunnel.
 
 - **`position:` against F3.** Nobody has ever confirmed the turtle's fix
   matches the real world, and the pattern anchors to absolute coordinates — a

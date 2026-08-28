@@ -468,6 +468,28 @@ turtle's OWN position and heading onto the floppy rather than handing on its
 own, so turtles 2 and 3 do not both think they are standing where turtle 1
 stands.
 
+**With all four lines set, no turtle needs a modem at all.** Nothing calls GPS
+any more, so the kit audit stops asking for modems and a deployed turtle no
+longer waits for one before it starts. Keep one on if you want the `alert`
+messages; the mine does not need it.
+
+**It asks, rather than giving up.** A run that cannot find itself now says what
+is wrong and then wants the four numbers typed in on the turtle:
+
+```
+position: my x?
+```
+
+Type it, press enter, answer y, z and the heading the same way. It writes them
+into `quarry.conf` for you, so the next reboot does not ask again. Press enter
+on an empty line — or leave it alone for a minute — and it stops exactly as it
+used to, without guessing anything.
+
+**Delete those four lines once GPS works again.** A pinned position is a
+starting value, not a sensor: the turtle believes it until its own
+`quarry.state` takes over, and a turtle picked up and carried somewhere else
+cannot tell.
+
 ---
 
 ## 7. Lava bucket — already settled, keep one on each turtle
@@ -527,14 +549,31 @@ staffing the mine before I descend` — and then goes and mines. Turtles in its
 inventory are the signal; once they are placed it never does it again on that
 claim. To deploy and nothing else, run `quarry 1 deploy`.
 
-It audits the kit first and stops without placing anything if something is
-missing. Then it places the disk drive one block up and in front of itself,
-drops the floppy into it, copies its own program onto the floppy, and for each
-of the other turtles: places it on the ground under the drive, hands it a
-wireless modem, 64 coal and a bucket, and waits for it to walk off to its own
-trunk. The placed turtle boots by itself — it takes about 23 seconds — labels
-itself, equips the modem on whichever side is not its pickaxe, burns the coal
-and starts mining.
+It audits the kit first, against what `turtles` in `quarry.conf` actually asks
+for, and asks before going on short. Then it places the disk drive one block up
+and in front of itself, drops the floppy into it, copies its own program onto
+the floppy, and for each of the other turtles: places it on the ground under
+the drive, hands it a wireless modem, 64 coal and a bucket, and waits for it to
+walk off to its own trunk.
+
+**Be ready to right-click each new turtle.** Deploy sends it a `turnOn`, and
+that has worked, but twice in-game the new turtle was still dark afterwards —
+unlabelled, program still only on the floppy. One right-click always fixes it:
+that turns it on and the disk startup runs, which labels it, takes the program,
+the config and the claim anchor off the floppy, equips the modem on whichever
+side is not its pickaxe, burns the coal and sends it to its own trunk. Deploy
+asks for the click by name after twelve seconds of silence, and waits:
+
+```
+deploy : nothing from turtle 2 yet -- it is still switched off.
+         RIGHT-CLICK IT. That turns it on and the disk startup runs.
+deploy : enter = done, s = skip this turtle, q = stop deploying.
+```
+
+Enter when you have clicked it, `s` to leave that one in the hold and go on to
+the next, `q` to stop deploying altogether. Say nothing for sixty seconds and it
+carries on waiting exactly as it used to — a turtle rebooted by a chunk reload
+with nobody watching still gets on with it.
 
 Leave two blocks clear in front of turtle 1, at its own height and one above.
 It will not dig your build to make room; it stops and says so.
@@ -579,6 +618,9 @@ program — the other two ride in turtle 1's inventory as items.
 | `moved: this is not the claim in quarry.state` | You carried it to a different chunk. It dropped the old claim and started a new one. That is intended. |
 | It prints the route and stops | `dry = true` in `quarry.conf`. Set it false to mine. |
 | `no http, report not uploaded` | HTTP is off for that computer. Read the numbers off the screen and tell me the ones you can. |
+| A turtle sitting there saying nothing | Run `quarry 2 --check` on it. The `last   :` line is why its previous run stopped — the reason is kept in `quarry.state`, so it survives the reboot and the scrollback. |
+| A deployed turtle never moved | It is switched off. Right-click it. If its screen is already lit, type `disk/startup` on it. |
+| `turtles = 1 in quarry.conf, so there is nobody to deploy` | You lowered `turtles`. Raise it, or just run `quarry 1` and mine the whole claim with one. |
 
 ---
 

@@ -93,7 +93,10 @@ oreTags      = c:ores  # the 1.21.1 tag. forge:ores is gone, do not put it back
 # them set the heading cannot be measured, so startDir must be given too:
 # 0, 1, 2, 3 = facing +z, -x, -z, +x. Position is then dead-reckoned, and a
 # turtle that loses quarry.state cannot find itself again -- fixing GPS is
-# better if you can. A turtle needs an equipped wireless modem for GPS.
+# better if you can. A turtle needs an equipped wireless modem for GPS; with
+# all four of these set it needs no modem at all, because nothing asks GPS.
+# They are a starting value, not a sensor: once quarry.state has a position and
+# a heading of its own, that is what the turtle believes.
 # startDir = 0
 # startX = 0
 # startY = 64
@@ -392,6 +395,40 @@ local function upload()
   end
 end
 
+-- Nobody may be watching this screen. /startup brings a turtle back after a
+-- chunk reload or a server restart with the player miles away, so a question
+-- that waits forever is a mine that never restarts. Every question here answers
+-- itself after ASK_TIMEOUT with what the program used to do on its own, and
+-- says in the log that nobody answered -- an unattended answer reads as one.
+local ASK_TIMEOUT = 60
+
+local function ask(prompt, default)
+  say(prompt)
+  sayf("         (type and press enter -- %ds of silence and I take \"%s\")",
+    ASK_TIMEOUT, default)
+  local answer
+  local lived = pcall(parallel.waitForAny,
+    function() answer = read() end,
+    function() os.sleep(ASK_TIMEOUT) end)
+  if not lived or answer == nil then
+    sayf("         nobody answered, taking \"%s\"", default)
+    return default, false
+  end
+  answer = answer:match("^%s*(.-)%s*$")
+  if answer == "" then answer = default end
+  sayf("         answered \"%s\"", answer)
+  return answer, true
+end
+
+-- startX/startY/startZ pin the position and startDir states the heading, which
+-- together are everything GPS would have provided. A turtle running on those
+-- never calls gps.locate, so it does not need a wireless modem either -- the
+-- kit audit, the deploy handover and the boot script all read this.
+local function manualFix(conf)
+  return conf.startX ~= nil and conf.startY ~= nil and conf.startZ ~= nil
+     and conf.startDir ~= nil
+end
+
 -- gps.locate's own default is 2s, which is one round trip to four hosts and no
 -- slack. A rebuilt constellation at the edge of modem range answers late rather
 -- than not at all, and this is called about four times in a whole run, so the
@@ -402,6 +439,15 @@ local GPS_TIMEOUT = 10
 
 local function locate(conf)
   if conf.startX and conf.startY and conf.startZ then
+    -- A pinned position is a starting value, not a sensor. It names the block
+    -- the turtle was launched from, and a turtle that has been running is not
+    -- standing there any more -- with no GPS to correct it, which is the whole
+    -- reason it is pinned, the saved state is the only thing that knows where
+    -- it went. So the state wins whenever it has a full fix of its own; a
+    -- freshly deployed turtle has none, and starts on the pin.
+    if st.x and st.y and st.z and st.dir then
+      return st.x, st.y, st.z, "quarry.state"
+    end
     return conf.startX, conf.startY, conf.startZ, "quarry.conf"
   end
   if gps then
@@ -541,6 +587,69 @@ local function noFix()
     .. "HERE -- range falls off with depth. Or set startX/Y/Z in quarry.conf."
 end
 
+-- Rewrite -- or add -- the four pin lines in a quarry.conf body. The shipped
+-- defaults carry them commented out, so the pattern eats an optional #:
+-- otherwise a pin lands in the file underneath a comment still saying it is
+-- unset, and the next reader believes the comment.
+local function pinBody(body, vals)
+  body = "\n" .. body            -- so a key on the very first line still matches
+  for _, k in ipairs({ "startX", "startY", "startZ", "startDir" }) do
+    if vals[k] then
+      local pat = "\n[ \t]*#?[ \t]*" .. k .. "[ \t]*=[^\n]*"
+      local rep = ("\n%s = %d"):format(k, vals[k])
+      if body:find(pat) then body = body:gsub(pat, rep, 1)
+      else body = body .. rep:sub(2) .. "\n" end
+    end
+  end
+  return body:sub(2)
+end
+
+-- A run that cannot find itself used to stop here, with the player standing
+-- next to a turtle that would not listen to the coordinates they could read
+-- off their own screen. Ask for them instead, and write them into quarry.conf
+-- so the next reboot does not ask again. Nothing is assumed: a missing or
+-- unparseable answer, or nobody at the keyboard at all, gives the old error.
+local function locateOrAsk(conf)
+  local x, y, z, how = locate(conf)
+  if x then return x, y, z, how end
+
+  sayf("position: %s", noFix())
+  say("position: I can run on coordinates typed by hand instead. Press F3 and")
+  say("          read off the block I am standing ON. Enter on its own gives up.")
+  local vals, typed = {}, true
+  for _, q in ipairs({ { "startX", "my x?" }, { "startY", "my y?" }, { "startZ", "my z?" },
+                       { "startDir", "which way am I facing? 0 = +z, 1 = -x, 2 = -z, 3 = +x" } }) do
+    local a = ask("position: " .. q[2], "")
+    vals[q[1]] = tonumber(a)
+    if not vals[q[1]] then typed = false break end
+  end
+  if not typed then
+    say("position: no coordinates given, so I have taken none of them.")
+    return nil, nil, nil, "no fix"
+  end
+  if vals.startDir < 0 or vals.startDir > 3 then
+    sayf("position: %d is not a heading. 0, 1, 2 or 3 only, so I have taken none.",
+      vals.startDir)
+    return nil, nil, nil, "no fix"
+  end
+  for k, v in pairs(vals) do conf[k] = math.floor(v) end
+
+  local body = ""
+  local h = fs.open(CONF, "r")
+  if h then body = h.readAll() h.close() end
+  local w = fs.open(CONF, "w")
+  if w then
+    w.write(pinBody(body, conf))
+    w.close()
+    sayf("position: written into %s -- %d,%d,%d facing %d. Delete those four lines",
+      CONF, conf.startX, conf.startY, conf.startZ, conf.startDir)
+    say("          when GPS works again, or I will keep believing them.")
+  else
+    say("position: could not write them into quarry.conf, so this run only.")
+  end
+  return conf.startX, conf.startY, conf.startZ, "typed"
+end
+
 local function findItem(name)
   for s = 1, 16 do
     local ok, d = pcall(turtle.getItemDetail, s)
@@ -621,30 +730,42 @@ end
 -- being silently ignored. One run and we know the real names.
 
 local KIT = {
-  { key = "turtle",   want = 2, label = "mining turtle",
+  { key = "turtle",   label = "mining turtle",
     match = function(n) return n:find("turtle") end,
-    why = "turtles 2 and 3, placed at their own trunks" },
-  { key = "chest",    want = 1, label = "storage block",
+    why = "the other turtles, placed at their own trunks" },
+  { key = "chest",    label = "storage block",
     match = function(n) return hasWord(STORAGE, n) end,
-    why = "the depot: one box, for ore and for the coal the three of us share" },
-  { key = "drive",    want = 1, label = "disk drive",
+    why = "the depot: one box, for ore and for the coal we share" },
+  { key = "drive",    label = "disk drive",
     match = function(n) return n:find("disk_drive") end,
     why = "the shared lava map, and the only way to hand code to a turtle" },
-  { key = "floppy",   want = 1, label = "floppy disk",
+  { key = "floppy",   label = "floppy disk",
     match = function(n) return n:find("disk") and not n:find("disk_drive") end,
     why = "goes in the drive" },
-  { key = "modem",    want = 3, label = "wireless modem",
+  { key = "modem",    label = "wireless modem",
     match = function(n) return n:find("wireless_modem") or n:find("ender_modem") end,
     why = "GPS. A turtle with no modem cannot locate itself, so it cannot resume" },
-  { key = "bucket",   want = 3, label = "empty bucket",
+  { key = "bucket",   label = "empty bucket",
     match = function(n) return n == "minecraft:bucket" end,
     why = "one per turtle. Lava scooping is confirmed working on this server" },
-  { key = "fuel",     want = 192, label = "coal or charcoal",
+  { key = "fuel",     label = "coal or charcoal",
     match = function(n) return n:find("coal") or n:find("charcoal") end,
     why = "a stack per turtle to start. The whole claim wants about 3,300" },
 }
 
-local function auditKit()
+-- What the mine needs follows quarry.conf, never a hard-coded three. A two
+-- turtle mine was failing its own audit over the third turtle and the third
+-- bucket it would never place, and turtles = 1 could not pass at all.
+-- Modems are the other half of it: with the position pinned by hand nothing
+-- ever calls gps.locate, so a modem is not kit, it is a spare part.
+local function kitWants(conf)
+  local n = conf.turtles or 1
+  return { turtle = n - 1, chest = 1, drive = 1, floppy = 1,
+           modem = manualFix(conf) and 0 or n, bucket = n, fuel = 64 * n }
+end
+
+local function auditKit(conf)
+  local want = kitWants(conf)
   local have, unknown = {}, {}
   for _, k in ipairs(KIT) do have[k.key] = 0 end
   -- a modem already equipped on this turtle is one it does not need as an item
@@ -661,12 +782,17 @@ local function auditKit()
   end
 
   local short = {}
-  say("kit    : what the mine needs, against what is in this turtle")
+  sayf("kit    : what a %d turtle mine needs, against what is in this turtle",
+    conf.turtles or 1)
   for _, k in ipairs(KIT) do
-    local n = have[k.key]
-    sayf("         %-16s %3d of %3d  %s", k.label, n, k.want,
-      n >= k.want and "ok" or ("SHORT " .. (k.want - n) .. " -- " .. k.why))
-    if n < k.want then short[#short + 1] = ("%d %s"):format(k.want - n, k.label) end
+    local n, w = have[k.key], want[k.key]
+    sayf("         %-16s %3d of %3d  %s", k.label, n, w,
+      n >= w and "ok" or ("SHORT " .. (w - n) .. " -- " .. k.why))
+    if n < w then short[#short + 1] = ("%d %s"):format(w - n, k.label) end
+  end
+  if want.modem == 0 then
+    say("         no modem is wanted: quarry.conf pins the position, so nothing")
+    say("         here ever calls gps.locate.")
   end
   if #unknown > 0 then
     sayf("         not recognised: %s", table.concat(unknown, ", "))
@@ -691,6 +817,7 @@ local function check(conf, l, source, index)
   local x, y, z, how = locate(conf)
   sayf("quarry --check   turtle %d of %d   %s", index, conf.turtles, DRY and "DRY" or "LIVE")
   sayf("config : %s (%s)", CONF, source)
+  if st.halt then sayf("last   : the last run stopped -- %s", st.halt) end
 
   local e = equippedSides()
   sayf("equipped: left=%s  right=%s", tostring(e.left or "tool or empty"),
@@ -714,7 +841,7 @@ local function check(conf, l, source, index)
     say("         startX/startY/startZ is a fallback, not a fix: a turtle told its")
     say("         position once cannot re-locate after a freeze, so resume degrades.")
     say("Claim maths needs a position. The kit audit does not, so it follows.")
-    auditKit()
+    auditKit(conf)
     return
   end
   sayf("position: %d,%d,%d (%s)", x, y, z, how)
@@ -807,7 +934,7 @@ local function check(conf, l, source, index)
   if ms > 40 then say("         WARNING: that is over a tenth of a move, saving every block will cost you") end
 
   checkLava()
-  auditKit()
+  auditKit(conf)
 
   local only = #l.only > 0
   sayf("ore    : %s", only
@@ -2135,6 +2262,11 @@ local function report(c, conf)
     say("WARNING: inspect returned no tags table, so oreTags is doing nothing here.")
     say("         Only the [oreNames] list is finding ore. Tell me and I will fix it.")
   end
+  -- The reason has to outlive the run. "Why are you stopped" gets asked at the
+  -- turtle, hours later, by somebody who never saw this screen and cannot
+  -- scroll it back -- so it goes in the state file and --check reads it out.
+  st.halt = halt
+  save()
   if halt then sayf("STOPPED: %s", halt) else say("work complete") end
 end
 
@@ -2249,8 +2381,8 @@ local function runRecall(conf, l, index)
     return
   end
 
-  local x, y, z = locate(conf)
-  if not x then error(noFix(), 0) end
+  local x, y, z = locateOrAsk(conf)
+  if not x then error("no position fix, and none was typed in", 0) end
   st.x, st.y, st.z = x, y, z
   st.task = "recall"
   save()
@@ -2284,8 +2416,9 @@ end
 local runDeploy
 
 local function runMine(conf, l, index)
-  local x, y, z = locate(conf)
-  if not x then error(noFix(), 0) end
+  local x, y, z = locateOrAsk(conf)
+  if not x then error("no position fix, and none was typed in", 0) end
+  st.halt = nil                 -- this run's reason to stop is not the last one's
   st.index = index
   st.x, st.y, st.z = x, y, z
   st.dug, st.chased, st.veined = st.dug or 0, 0, 0
@@ -2328,12 +2461,25 @@ local function runMine(conf, l, index)
     say("deploy : turtles in the hold -- staffing the mine before I descend")
     local okd, whyd = pcall(runDeploy, conf, l, index)
     if not okd then
-      sayf("deploy : could not deploy the others, mining alone -- %s", tostring(whyd))
+      sayf("deploy : the deploy stopped -- %s", tostring(whyd))
       -- clear() sets halt on the way out of a failed deploy, and a halt left
       -- standing is read as this run's reason to stop: the mine descended,
       -- built its depot and then signed off with the deploy's stale message on
       -- its first dock request [log zog32].
       halt, obstacle = nil, nil
+      -- Mining alone used to happen here on its own, and a turtle that quietly
+      -- carries its crew down the trunk is the one failure nobody notices for
+      -- an hour. Ask. Unattended, it does what it always did.
+      local a = ask("deploy : r = try the deploy again, a = mine alone, q = stop here.", "a")
+      if a:sub(1, 1) == "r" then
+        okd, whyd = pcall(runDeploy, conf, l, index)
+        if not okd then sayf("deploy : again -- %s", tostring(whyd)) end
+        halt, obstacle = nil, nil
+      elseif a:sub(1, 1) == "q" then
+        halt = "stopped on your say-so after the deploy failed: " .. tostring(whyd)
+        report(claimOf(st.home.x, st.home.z), conf)
+        return
+      end
     end
     st.task = "mine"
     save()
@@ -2667,6 +2813,9 @@ local BOOT = [==[
 -- written by quarry deploy. Runs on a freshly placed turtle: no label, no
 -- fuel, no modem, and an inventory its deployer is still filling.
 local N = %d
+-- true when quarry.conf pins the position by hand: nothing on this turtle then
+-- calls gps.locate, so it needs no modem and must not stop for the want of one.
+local MANUAL = %s
 os.setComputerLabel("quarry" .. N)
 
 -- Nobody is watching this screen. Every stage is written to the floppy as well,
@@ -2682,8 +2831,11 @@ end
 
 note("booted, waiting for my kit")
 
+-- quarry.lua, not quarry: that is the name turtle 1 runs and the name update
+-- writes, and a turtle carrying both ends up running whichever the shell picks.
 if fs.exists("quarry") then fs.delete("quarry") end
-fs.copy("/disk/quarry", "quarry")
+if fs.exists("quarry.lua") then fs.delete("quarry.lua") end
+fs.copy("/disk/quarry", "quarry.lua")
 
 -- The config has to follow the program. Without it this turtle seeds a fresh
 -- quarry.conf off the shipped defaults -- which since 2026-08-27 mine for real
@@ -2699,6 +2851,17 @@ else
   note("         it MINES, but on default settings, not the deployer's")
 end
 
+-- The claim is anchored on the block a turtle wakes on, and this turtle wakes
+-- one block in front of its deployer -- which is over a chunk border often
+-- enough to matter. claimOf() would then hand it a different 3x3 region and it
+-- would sink a trunk in a mine of its own. The deployer's anchor is on the
+-- floppy for exactly that reason; take it, and never overwrite a state file
+-- this turtle has already written for itself.
+if fs.exists("/disk/quarry.state") and not fs.exists("quarry.state") then
+  fs.copy("/disk/quarry.state", "quarry.state")
+  note("took the deployer's claim anchor")
+end
+
 local function slotLike(pat)
   for s = 1, 16 do
     local d = turtle.getItemDetail(s)
@@ -2711,50 +2874,57 @@ end
 local modemSlot
 for _ = 1, 60 do
   modemSlot = slotLike("modem")
-  if modemSlot and slotLike("coal") then break end
+  if (modemSlot or MANUAL) and slotLike("coal") then break end
   os.sleep(1)
 end
 if not modemSlot then
-  note("no modem arrived in 60s -- cannot GPS, stopping")
-  return
+  if not MANUAL then
+    note("no modem arrived in 60s -- cannot GPS, stopping")
+    return
+  end
+  note("no modem, and none needed: quarry.conf pins my position")
 end
 if not slotLike("coal") then
-  note("modem came but no coal did -- equipping anyway, will stop on fuel 0")
+  note("no coal arrived -- carrying on anyway, will stop on fuel 0")
 end
 
 -- Equip the modem on whichever side is not holding the pickaxe. Guessing wrong
 -- disarms the turtle: equip swaps, so the pickaxe would land in the inventory
 -- and this turtle could not dig. Do it, look at what came off, and undo it if
 -- that was the pickaxe.
-turtle.select(modemSlot)
-local okR = turtle.equipRight()
-local came = turtle.getItemDetail()
-if came and came.name:find("pickaxe") then
-  turtle.equipRight()             -- pickaxe back on the right, modem back in hand
-  local okL = turtle.equipLeft()  -- modem goes left instead
-  note("equipRight " .. tostring(okR) .. ", pickaxe came off, equipLeft " .. tostring(okL))
-else
-  note("equipRight " .. tostring(okR) .. ", nothing came off")
-end
+if modemSlot then
+  turtle.select(modemSlot)
+  local okR = turtle.equipRight()
+  local came = turtle.getItemDetail()
+  if came and came.name:find("pickaxe") then
+    turtle.equipRight()             -- pickaxe back on the right, modem back in hand
+    local okL = turtle.equipLeft()  -- modem goes left instead
+    note("equipRight " .. tostring(okR) .. ", pickaxe came off, equipLeft " .. tostring(okL))
+  else
+    note("equipRight " .. tostring(okR) .. ", nothing came off")
+  end
 
--- Do not trust the swap. Ask the peripheral API which side actually holds a
--- modem: on a turtle, left and right report the EQUIPPED upgrade, so this is a
--- direct answer rather than an inference from what came off in the hand.
-local modemSide
-for _, sd in ipairs({ "left", "right" }) do
-  local okp, t = pcall(peripheral.getType, sd)
-  if okp and t and tostring(t):find("modem") then modemSide = sd end
-end
-if modemSide then
-  note("modem confirmed equipped on " .. modemSide)
-else
-  note("STOPPED: no modem on either side after equipping. Without one there is")
-  note("no GPS, so I cannot find myself. Equip it by hand and reboot me.")
+  -- Do not trust the swap. Ask the peripheral API which side actually holds a
+  -- modem: on a turtle, left and right report the EQUIPPED upgrade, so this is
+  -- a direct answer rather than an inference from what came off in the hand.
+  local modemSide
   for _, sd in ipairs({ "left", "right" }) do
     local okp, t = pcall(peripheral.getType, sd)
-    note("  " .. sd .. " holds " .. tostring((okp and t) or "nothing"))
+    if okp and t and tostring(t):find("modem") then modemSide = sd end
   end
-  return
+  if modemSide then
+    note("modem confirmed equipped on " .. modemSide)
+  elseif not MANUAL then
+    note("STOPPED: no modem on either side after equipping. Without one there is")
+    note("no GPS, so I cannot find myself. Equip it by hand and reboot me.")
+    for _, sd in ipairs({ "left", "right" }) do
+      local okp, t = pcall(peripheral.getType, sd)
+      note("  " .. sd .. " holds " .. tostring((okp and t) or "nothing"))
+    end
+    return
+  else
+    note("the modem would not equip, but my position is pinned, so I carry on")
+  end
 end
 
 -- Burn everything it was handed. It carries no fuel items to the depot; the
@@ -2876,7 +3046,9 @@ local function deployOne(conf, l, index)
   -- The modem is not optional: without one the new turtle cannot reach GPS,
   -- cannot calibrate, and will stand there until someone notices. If it does
   -- not go across, say so here rather than waiting 90s to infer it.
-  if not handOver("modem", 1, "wireless modem") then
+  -- unless the position is pinned by hand, in which case nothing on the new
+  -- turtle ever calls gps.locate and a modem is a spare part [item 3].
+  if not handOver("modem", 1, "wireless modem") and not manualFix(conf) then
     return false, "the modem did not reach it -- it cannot GPS, so it will never move"
   end
   handOver("coal", 64, "coal")
@@ -2886,12 +3058,28 @@ local function deployOne(conf, l, index)
   -- front is the only signal available -- there is no peripheral to ask. The
   -- new turtle also writes its progress to the floppy, so read that back when
   -- it is in reach: it turns a screen nobody is looking at into output here.
-  local logf, said = ("/disk/deploy%d.log"):format(index), 0
+  local logf, said, asked = ("/disk/deploy%d.log"):format(index), 0, false
   sayf("deploy : waiting for turtle %d to boot and walk off (about 25s)", index)
   for i = 1, 90 do
     if not turtle.detect() then
       sayf("deploy : turtle %d left after %ds, its mine is its own now", index, i)
       return true
+    end
+    -- Silence on the floppy after 12s means the boot script never ran, and a
+    -- turtle that has not run its boot script is one that is still switched
+    -- off. The turnOn above is sent and has worked before, but twice in-game
+    -- on 2026-08-28 the new turtle was still dark afterwards -- unlabelled,
+    -- with the program still only on /disk. A player fixes that in one click.
+    -- Ask for it rather than burning the other 78 seconds and calling it a
+    -- failure, and go back to waiting once they say they have.
+    if not asked and i >= 12 and not fs.exists(logf) then
+      asked = true
+      sayf("deploy : nothing from turtle %d yet -- it is still switched off.", index)
+      say("         RIGHT-CLICK IT. That turns it on and the disk startup runs.")
+      say("         If its screen is already lit, type this on it:  disk/startup")
+      local a = ask("deploy : enter = done, s = skip this turtle, q = stop deploying.", "")
+      if a:sub(1, 1) == "s" then return false, "skipped on your say-so" end
+      if a:sub(1, 1) == "q" then return false, "stopped deploying on your say-so", "stop" end
     end
     if fs.exists(logf) then
       local h = fs.open(logf, "r")
@@ -2910,7 +3098,8 @@ local function deployOne(conf, l, index)
   -- It has the drive, the program and the config; what it has not done is run
   -- the disk startup. That is the one step nothing here can force -- a turtle
   -- is not a peripheral to another turtle, so there is no turnOn to call.
-  sayf("deploy : turtle %d did not boot into its startup. On ITS screen (Ctrl+T):", index)
+  sayf("deploy : turtle %d did not boot into its startup. Right-click it to turn", index)
+  say("         it on, and if its screen is already lit, on ITS screen:")
   say("           reboot          -- re-runs the disk startup, usually enough")
   say("           disk/startup    -- runs it by hand if reboot will not")
   sayf("         Either one makes it label itself quarry%d and leave.", index)
@@ -2966,12 +3155,7 @@ local function confForPlaced(conf, body)
   local d = DIRS[dir]
   local vals = { startX = st.x + d[1], startY = st.y, startZ = st.z + d[2],
                  startDir = (dir + 2) % 4 }
-  for k, v in pairs(vals) do
-    local pat = "\n[ \t]*" .. k .. "[ \t]*=[^\n]*"
-    local rep = ("\n%s = %d"):format(k, v)
-    if body:find(pat) then body = body:gsub(pat, rep, 1)
-    else body = body .. rep:sub(2) .. "\n" end
-  end
+  body = pinBody(body, vals)
   sayf("deploy : GPS is manual, so the floppy says %d,%d,%d facing %d -- where the",
     vals.startX, vals.startY, vals.startZ, vals.startDir)
   say("         placed turtle actually stands, not where I stand.")
@@ -2983,10 +3167,21 @@ function runDeploy(conf, l, index)
     error("deploy is turtle 1's job -- it is the one holding the kit", 0)
   end
 
-  say("deploy : auditing the kit before anything is placed")
-  if not auditKit() then
-    say("deploy : STOPPED. Nothing has been placed. Fill the gaps above and re-run.")
+  if (conf.turtles or 1) < 2 then
+    say("deploy : turtles = 1 in quarry.conf, so there is nobody to deploy.")
+    say("         Raise it and re-run, or just run `quarry 1` and mine alone.")
     return
+  end
+
+  say("deploy : auditing the kit before anything is placed")
+  if not auditKit(conf) then
+    say("deploy : nothing has been placed yet.")
+    local a = ask("deploy : y = go on with what is aboard, enter = stop and let me fill it.", "n")
+    if a:sub(1, 1) ~= "y" then
+      say("deploy : STOPPED. Fill the gaps above and re-run.")
+      return
+    end
+    say("deploy : going on short on your say-so.")
   end
 
   -- Fuel before the first move, and after the audit so it still counts a whole
@@ -3003,8 +3198,8 @@ function runDeploy(conf, l, index)
   -- stepUp/stepDown keep the position in st, so deploy needs a fix before it
   -- moves -- and turtle 1 needs one to mine anyway. This also anchors the
   -- claim on the launch block, which is where every turtle here agrees.
-  local x, y, z = locate(conf)
-  if not x then error(noFix(), 0) end
+  local x, y, z = locateOrAsk(conf)
+  if not x then error("no position fix, and none was typed in", 0) end
   st.x, st.y, st.z = x, y, z
   st.home = st.home or { x = x, y = y, z = z }
   st.task = "deploy"
@@ -3068,6 +3263,21 @@ function runDeploy(conf, l, index)
     h.write(body)
     h.close()
     sayf("deploy : copied %s to /disk/quarry.conf (dry = %s)", CONF, tostring(conf.dry))
+
+    -- The claim anchor rides with it. A placed turtle wakes one block in front
+    -- of me, which is over a chunk border often enough to matter, and claimOf()
+    -- would then give it a whole different 3x3 region to mine -- a second mine,
+    -- not a third of this one. Only the home is seeded: no position and no
+    -- heading, so locate() still starts it on its own pin, and its own state
+    -- overwrites this the moment it saves.
+    if fs.exists("/disk/quarry.state") then fs.delete("/disk/quarry.state") end
+    local sh = fs.open("/disk/quarry.state", "w")
+    if sh then
+      sh.write(textutils.serialise({ home = { x = st.home.x, y = st.home.y, z = st.home.z } }))
+      sh.close()
+      sayf("deploy : claim anchor %d,%d on the floppy, so we all mine one claim",
+        st.home.x, st.home.z)
+    end
     if conf.dry ~= false then
       say("         NOTE: dry is still true, so the turtles will plan and not move.")
     end
@@ -3088,7 +3298,7 @@ function runDeploy(conf, l, index)
     for _, name in ipairs({ "/disk/startup.lua", "/disk/startup" }) do
       local h = fs.open(name, "w")
       if h then
-        h.write(BOOT:format(n))
+        h.write(BOOT:format(n, tostring(manualFix(conf))))
         h.close()
         wrote = wrote + 1
       end
@@ -3096,10 +3306,17 @@ function runDeploy(conf, l, index)
     if wrote == 0 then error("cannot write the boot script to /disk", 0) end
     sayf("deploy : wrote the boot script for turtle %d (%d names)", n, wrote)
 
-    local okn, why = deployOne(conf, l, n)
+    local okn, why, stop = deployOne(conf, l, n)
     if okn then done = done + 1 else
       failed[#failed + 1] = ("turtle %d: %s"):format(n, tostring(why))
       sayf("deploy : turtle %d did not deploy -- %s", n, tostring(why))
+    end
+    if stop then
+      if n < conf.turtles then
+        sayf("deploy : turtle %d onwards is still in the hold. `quarry 1 deploy`", n + 1)
+        say("         again when you are ready for it.")
+      end
+      break
     end
   end
 

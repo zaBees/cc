@@ -553,6 +553,9 @@ local function world(o)
     sleeps  = 0,                     -- 1s polls burnt waiting for a deployed turtle
     leaveAfter = o.leaveAfter,       -- polls before a deployed turtle walks off
     handed  = {},                    -- what a deployed turtle was given
+    -- What a player types at a prompt, in order. Empty means nobody is at the
+    -- keyboard, which is the /startup case and must never hang the mine.
+    answers = o.answers or {}, asked = {},
   }
   V.files["quarry.conf"] = (o.conf or "") .. "dry = false\n"
   V.files["quarry"] = "-- the program itself, so deploy has something to copy"
@@ -656,7 +659,26 @@ local function mkworldenv()
                  V.placedTurtle = nil
                end
              end }
-  env.gps = { locate = function() return V.pos.x, V.pos.y, V.pos.z end }
+  env.gps = { locate = function()
+    if V.noGps then return nil end
+    return V.pos.x, V.pos.y, V.pos.z
+  end }
+
+  -- read() blocks forever on a turtle nobody is watching, so quarry races it
+  -- against a timer inside parallel.waitForAny. Model both arms: the read one
+  -- takes the next scripted answer and fails when there is none, and the loser
+  -- of that race is the timer, which is exactly what an empty queue means.
+  env.read = function()
+    local a = table.remove(V.answers, 1)
+    if a == nil then error("nobody at the keyboard", 0) end
+    V.asked[#V.asked + 1] = a
+    return a
+  end
+  env.parallel = { waitForAny = function(...)
+    for _, f in ipairs({ ... }) do
+      if pcall(f) then return end
+    end
+  end }
 
   -- rednet is the only channel out of the mine. Every world here equips a
   -- wireless modem, so opening it is expected to work.
@@ -1432,8 +1454,12 @@ world({ inv = kit({ [2] = false }), leaveAfter = 3 })   -- no disk drive
 ok, err, log = runWorld("1", "deploy")
 assert(ok, "the short-kit run crashed: " .. tostring(err))
 assert(log:find("MISSING"), "it did not report the missing drive:\n" .. log)
-assert(log:find("STOPPED. Nothing has been placed"),
+assert(log:find("nothing has been placed yet"),
+  "it did not say the kit was short before anything went down:\n" .. log)
+assert(log:find("STOPPED. Fill the gaps"),
   "it did not stop on a short kit:\n" .. log)
+assert(log:find("nobody answered"),
+  "an unattended short kit must take the safe answer and say so:\n" .. log)
 assert(not V.files["/disk/startup.lua"], "a short kit still wrote to a floppy")
 assert(not V.disk, "a short kit still placed the drive")
 
@@ -2357,5 +2383,192 @@ ok, err, log = runWorld("1", "deploy")
 assert(ok, "the GPS deploy crashed: " .. tostring(err))
 assert(V.files["/disk/quarry.conf"] == V.files["quarry.conf"],
   "a GPS deploy rewrote a config it had no reason to touch")
+
+-- 75. a placed turtle is off, so deploy asks for the one thing only a player --
+--     can do, and does what it is told ---------------------------------------
+
+-- In-game twice on 2026-08-28: turtle 2 stood there, unlabelled, with the
+-- program still only on /disk. Whatever the turnOn deploy sends did or did not
+-- reach, a turtle in that state is switched off, and one right-click is the
+-- one thing that always fixes it. Silence on the floppy is the signal: the
+-- boot script writes to it before anything else.
+world({ inv = kit(), answers = { "q" } })          -- leaveAfter nil: it never moves
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the stuck deploy crashed: " .. tostring(err))
+assert(log:find("RIGHT%-CLICK IT"), "it never asked for the one thing that works:\n" .. log)
+assert(log:find("stopped deploying on your say%-so"), "q did not stop it:\n" .. log)
+assert(not log:find("boot script for turtle 3"),
+  "q stopped nothing -- it went on to turtle 3:\n" .. log)
+assert(log:find("turtle 3 onwards is still in the hold"),
+  "it did not say what is left aboard:\n" .. log)
+
+-- s skips this one and moves on
+world({ inv = kit(), answers = { "s" } })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the skipped deploy crashed: " .. tostring(err))
+assert(log:find("skipped on your say%-so"), "s did not skip:\n" .. log)
+assert(log:find("boot script for turtle 3"),
+  "s stopped the whole run instead of one turtle:\n" .. log)
+
+-- and with nobody at the keyboard it waits it out exactly as it always did
+world({ inv = kit() })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the unattended deploy crashed: " .. tostring(err))
+assert(log:find("nobody answered"), "an unattended prompt must say so:\n" .. log)
+assert(log:find("did not boot into its startup"),
+  "unattended, it must still fall through to the old advice:\n" .. log)
+
+-- 76. pinned coordinates need no modem ---------------------------------------
+
+-- With startX/Y/Z and startDir set nothing ever calls gps.locate, so a modem is
+-- a spare part. It used to be kit: the audit demanded three, the handover
+-- called a missing one fatal, and the boot script stopped dead without one.
+local MANUAL = "startX = 137\nstartY = 83\nstartZ = -42\nstartDir = 0\n"
+world({ inv = kit({ [4] = false }), leaveAfter = 3, conf = MANUAL,
+        at = { x = 137, y = 83, z = -42 }, dir = 0 })
+V.equip = {}                                        -- no modem equipped either
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "a manual-GPS deploy with no modem crashed: " .. tostring(err))
+assert(log:find("wireless modem     0 of   0"),
+  "the audit still wants modems on a pinned position:\n" .. log)
+assert(log:find("deploy : turtle 2"), "it never got as far as placing:\n" .. log)
+local boot = V.files["/disk/startup.lua"]
+assert(boot, "no boot script reached the floppy")
+assert(boot:find("local MANUAL = true"), "the boot script was not told the position is pinned")
+assert(not log:find("it cannot GPS, so it will never move"),
+  "a missing modem is still fatal on a pinned position:\n" .. log)
+
+-- and on GPS it is kit again
+world({ inv = kit({ [4] = false }), leaveAfter = 3 })
+ok, err, log = runWorld("1", "deploy")
+assert(log:find("wireless modem     1 of   3"),
+  "GPS still needs one modem per turtle:\n" .. log)
+
+-- 77. the deployed turtles inherit the deployer's claim anchor ---------------
+
+-- They wake one block in front of the deployer. Over a chunk border that is a
+-- different 3x3 region, so each would sink a trunk in a mine of its own --
+-- which is what "turtle 2 started a new tunnel" was.
+world({ inv = kit(), leaveAfter = 3 })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the anchored deploy crashed: " .. tostring(err))
+local anchor = V.files["/disk/quarry.state"]
+assert(anchor, "no claim anchor reached the floppy:\n" .. log)
+assert(anchor:find("home"), "the seeded state carries no home: " .. anchor)
+assert(anchor:find("137") and anchor:find("%-42"), "the anchor is not the deployer's: " .. anchor)
+assert(not anchor:find("dir"),
+  "the anchor carries a heading, so the placed turtle will skip its own pin: " .. anchor)
+local boot2 = V.files["/disk/startup.lua"]
+assert(boot2:find('fs.copy("/disk/quarry.state", "quarry.state")', 1, true),
+  "the boot script does not take the anchor")
+assert(boot2:find('not fs.exists("quarry.state")', 1, true),
+  "it would overwrite a state file the turtle wrote for itself")
+
+-- 78. the program lands in root under the name everything else uses ----------
+
+assert(boot2:find('fs.copy("/disk/quarry", "quarry.lua")', 1, true),
+  "the boot script still writes a second name for the same program")
+assert(boot2:find('if fs.exists("quarry") then fs.delete("quarry") end', 1, true),
+  "a stale unsuffixed copy is left beside it for the shell to pick")
+
+-- 79. turtles = 1 has nobody to deploy --------------------------------------
+
+world({ inv = kit(), conf = "turtles = 1\n" })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "a one-turtle deploy crashed: " .. tostring(err))
+assert(log:find("nobody to deploy"), "it tried to staff a one-turtle mine:\n" .. log)
+assert(not V.disk, "a one-turtle deploy still placed the drive")
+
+-- and a two-turtle mine is audited as a two-turtle mine
+world({ inv = kit(), conf = "turtles = 2\n", leaveAfter = 3 })
+ok, err, log = runWorld("1", "deploy")
+assert(log:find("mining turtle      2 of   1"),
+  "the audit still wants a hard-coded three turtles:\n" .. log)
+assert(log:find("empty bucket       3 of   2"), "the bucket count does not follow turtles:\n" .. log)
+assert(log:find("coal or charcoal 192 of 128"), "the coal count does not follow turtles:\n" .. log)
+
+-- 80. mining alone is a question, not a decision -----------------------------
+
+-- A deploy that fails used to descend anyway, carrying the crew for the whole
+-- shift, and nobody found out for an hour.
+-- a block where the drive has to go: the audit passes, the deploy throws
+local SMALL = "topY = -55\nbottomY = -58\ntripBlocks = 100000\n" .. SECTIONS
+local BLOCKED = { [k3(137, 84, -41)] = "minecraft:stone" }
+
+world({ inv = kit(), fuel = 200000, conf = SMALL, blocks = BLOCKED })
+ok, err, log = runWorld("1")
+assert(ok, "the failed-deploy mine crashed: " .. tostring(err))
+assert(log:find("in front of me one block up"), "the deploy did not fail as set up:\n" .. log)
+assert(log:find("r = try the deploy again"), "it decided to mine alone on its own:\n" .. log)
+assert(log:find("nobody answered"), "unattended it must say which answer it took:\n" .. log)
+
+world({ inv = kit(), fuel = 200000, conf = SMALL, blocks = BLOCKED, answers = { "q" } })
+ok, err, log = runWorld("1")
+assert(ok, "the stopped mine crashed: " .. tostring(err))
+assert(log:find("stopped on your say%-so after the deploy failed"),
+  "q did not stop the mine:\n" .. log)
+assert(not log:find("trunk  : down to"), "q stopped it and it descended anyway:\n" .. log)
+
+-- 81. a stopped run says why, hours later ------------------------------------
+
+world({ inv = kit(), fuel = 10 })
+ok, err, log = runWorld("1")
+assert(ok, "the out-of-fuel run crashed: " .. tostring(err))
+assert(log:find("not enough fuel"), "it did not stop on fuel:\n" .. log)
+local saved = V.files["quarry.state"]
+assert(saved:find("not enough fuel"), "the reason died with the run: " .. tostring(saved))
+
+reset({ state = "{x=137,y=83,z=-42,dir=0,index=1,halt=\"not enough fuel: 10 in the tank\"}" })
+ok, err, log = run("1", "--check")
+assert(ok, "--check crashed: " .. tostring(err))
+assert(log:find("last   : the last run stopped %-%- not enough fuel"),
+  "--check cannot answer \"why are you stopped\":\n" .. log)
+
+-- 82. a pinned position is a starting value, not a sensor --------------------
+
+-- locate() read the pin before the state file, so a manual-GPS turtle that
+-- rebooted 100 blocks down its branch believed it was back on the launch block
+-- -- and there is no GPS to catch that, which is why it was pinned.
+reset({ gps = false, conf = MANUAL,
+        state = "{x=137,y=-59,z=-42,dir=1,index=1}" })
+ok, err, log = run("1", "--check")
+assert(ok, "--check on a pinned position crashed: " .. tostring(err))
+assert(log:find("position: 137,%-59,%-42 %(quarry.state%)"),
+  "the pin beat the state file, so a rebooted turtle is 142 blocks out:\n" .. log)
+
+-- with no state of its own it starts on the pin, which is what a deployed
+-- turtle does on its first boot
+reset({ gps = false, conf = MANUAL })
+ok, err, log = run("1", "--check")
+assert(log:find("position: 137,83,%-42 %(quarry.conf%)"),
+  "a turtle with no state must start on its pin:\n" .. log)
+
+-- 83. typed coordinates, when there is no other way ---------------------------
+
+-- The player is standing next to the turtle with the coordinates on their own
+-- screen, and the run used to stop rather than listen to them.
+world({ inv = kit(), leaveAfter = 3,
+        conf = "# startX = 0\n# startY = 64\n# startZ = 0\n# startDir = 0\n",
+        answers = { "137", "83", "-42", "0" } })
+V.noGps = true
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the typed-coordinates deploy crashed: " .. tostring(err))
+assert(log:find("no position fix"), "it did not say what was wrong first:\n" .. log)
+assert(log:find("written into quarry.conf"), "it never took the typed coordinates:\n" .. log)
+local written = V.files["quarry.conf"]
+assert(written:find("startX = 137"), "x was not written into quarry.conf:\n" .. written)
+assert(written:find("startDir = 0"), "the heading was not written:\n" .. written)
+assert(not written:find("# startX"),
+  "it wrote the pin and left the comment saying it is unset:\n" .. written)
+assert(log:find("deploy : turtle 2"), "it took the coordinates and stopped anyway:\n" .. log)
+
+-- and nobody at the keyboard is still a refusal, not a guess
+world({ inv = kit(), leaveAfter = 3 })
+V.noGps = true
+ok, err, log = runWorld("1", "deploy")
+assert(not ok or log:find("no coordinates given"), "it made a position up:\n" .. log)
+assert(log:find("no coordinates given"), "it did not say it had nothing to go on:\n" .. log)
+assert(not V.disk, "it placed the drive without knowing where it is")
+
 
 print("all quarry phase 5 checks passed")

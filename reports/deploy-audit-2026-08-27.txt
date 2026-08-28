@@ -1,0 +1,11 @@
+deploy : auditing the kit before anything is placed
+kit    : what the mine needs, against what is in this turtle
+         mining turtle      2 of   2  ok
+         chest              2 of   2  ok
+         disk drive         1 of   1  ok
+         floppy disk        1 of   1  ok
+         wireless modem     3 of   3  ok
+         empty bucket       3 of   3  ok
+         coal or charcoal   0 of 192  SHORT 192 -- a stack per turtle to start. The whole claim wants about 3,300
+         MISSING: 192 coal or charcoal
+deploy : STOPPED. Nothing has been placed. Fill the gaps above and re-run.

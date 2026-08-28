@@ -1,0 +1,479 @@
+# Resume here
+
+Handoff for the turtle mining build in this directory. If a session ends
+mid-task — budget exhausted, crash, context lost — a fresh session reads this
+file, then `MASTERMINE-PLAN.md`, and continues without re-deriving anything.
+
+**Rule: this file is rewritten whole at the end of every phase, before anything
+else.** Nothing important lives only in chat. Never patch it with a blind
+search-and-replace — a patch whose search string does not match fails silently,
+which has already happened once and left this file describing an abandoned
+design. An asserted replace is fine; a hopeful one is not.
+
+**This file was trimmed on 2026-08-28** from 646 lines to roughly a third of
+that. Everything removed is in `reports/history-2026-08.md`, complete and
+unedited: the phase-by-phase narratives, the code review in full, the four
+failed deploy runs, the probe results. This file carries the state, the rules
+and the next action. Go there for the reasoning behind anything stated flatly
+here, or when something settled starts misbehaving again.
+
+---
+
+## Where the work stands
+
+Last updated **2026-08-28**, after clearing every finding from the code review
+of `quarry.lua` — nine in all — uploading the fixed build as `3PcMy`, and
+regenerating the setup artifact.
+
+| Phase | State |
+| --- | --- |
+| 1 — claim maths, iterators, `--check`, kit audit | **Done. Ran in-game 2026-08-24.** |
+| 2 — one turtle, one branch | **Done. Ran in-game 2026-08-27** (turtle 2, 177 blocks). |
+| 3 — depot cycle, fuel, the work loop | **Partly run.** Travel, fuel and the work loop ran in-game; the depot cycle has never had a container to use. |
+| 4 — three turtles | **Partly run.** Turtle 2 worked its own third correctly. Two turtles have never run at once. |
+| 5 — deployment (`quarry 1 deploy`) | **Done. Ran in-game 2026-08-27** after four failed attempts; turtle 2 deployed, booted and mined. |
+| 6 — deferred (monitor, full-clear mode) | Not started |
+
+**The one thing never proven in-game is the depot cycle.** No container has ever
+been placed down there, so docking, rationing, restocking and the three-turtle
+interplay are stub-tested only.
+
+## Next action
+
+**Give it a depot.** That is the one thing standing between here and a
+working mine. Two ways:
+
+1. **Run `quarry 1`.** Turtle 1 carries the two chests and builds the depot
+   itself when it reaches its own trunk floor, banking its coal into the first.
+   This is the intended path and it exercises Phase 5's depot-building.
+2. **Place a chest by hand** against the bottom block of a trunk, with coal in
+   it. A second container on another side becomes the dump chest.
+
+Then re-run turtle 2 and watch it dock: dump, ration, restock.
+
+## What shipped 2026-08-28 evening
+
+All tested under `lua5.3`, every regression confirmed to fail against its own
+unfixed code. `test_quarry.lua` is now 55 checks.
+
+- **The fuel ration is a floor, not a fraction.** See the Settled list. New
+  `fuelFloor` setting, default 8, seeded into `quarry.conf`. Tests 51, 52.
+- **The `--check` tank line asks the turtle for its limit.** It printed
+  `this turtle holds 51183 of 20000` in-game, because 20,000 was a literal in
+  two places; an advanced turtle holds far more. Falls back to 20,000 if
+  `getFuelLimit` is absent. Tests 49, 50.
+- **`calibrate` refuses a pinned position instead of crashing on it.** Turtle 1
+  died with `calibration moved 0,0, which is not one block` because
+  `startX/Y/Z` in `quarry.conf` make `locate()` return a constant, so the
+  reading after the calibration move equals the reading before it. The message
+  named the symptom and hid the cause. Test 53.
+- **`startDir` lets a turtle run with GPS down.** 0, 1, 2, 3 = facing +z, -x,
+  -z, +x, validated on read. Only the initial heading actually needed GPS --
+  `locate()` is called at boot, resume and deploy and nowhere else, and
+  everything between dead-reckons -- so a stated heading is enough to mine on.
+  What it costs is recovery: a turtle that loses `quarry.state` cannot find
+  itself again. Tests 54, 55.
+
+## GPS is down — decide this before the next run
+
+`gps.locate` returns nil on turtle 1 with a modem equipped, so **no GPS host is
+answering**. It answered that morning, so something changed: hosts stopped,
+their chunks unloaded, the server restarted, or they are out of range. A GPS
+constellation wants four or more computers with wireless modems running
+`gps host <x> <y> <z>` at their true coordinates, in loaded chunks, in range.
+
+Two ways forward, and they are not equivalent:
+
+1. **Fix the constellation, delete `startX/Y/Z` from `quarry.conf`.** The right
+   answer. Position stays self-correcting, and a turtle that loses its state
+   file can still find itself.
+2. **Keep the pinned position and add `startDir`.** Mines fine -- everything
+   past the first fix dead-reckons -- but recovery is gone: a turtle that loses
+   `quarry.state` has no way back, and every missed move is a permanent offset.
+   Treat it as the way to get mining tonight, not the way to leave it.
+
+The live `quarry.conf` on turtle 1 as of 2026-08-28 evening sets
+`startX = 10`, `startY = 80`, `startZ = 5` and **no `startDir`**, so a run
+refuses to start until one of the two above is done.
+
+## Still outstanding from the 2026-08-28 `--check` (`u8p0M`)
+
+- `wireless modem 2 of 3 SHORT 1` — the known case: turtle 2's modem came back
+  as an attached upgrade, not a loose item. Believe the audit; a turtle with no
+  modem cannot GPS, so it cannot resume.
+- `empty bucket 2 of 3 SHORT 1`, `coal or charcoal 128 of 192 SHORT 64`.
+- `disk drive 57 of 1` is the user carrying a stack, not an audit bug.
+- **Whatever position the turtle ends up using must match real F3
+  coordinates**, whether it comes from a hand-configured GPS constellation or
+  from `startX/Y/Z`. The pattern anchors to absolute y and levels run
+  y -59..60, so a wrong origin mines a correct claim in the wrong place.
+  Bedrock still stops the trunk safely; the mine would just be somewhere else.
+  Nobody has checked this yet.
+
+After that the untested ground is **two turtles working at once** (the
+right-of-way rules in `giveWay`/`stepAside`), and the **`passed over:` line**
+from a run that finds ore, which is how the config learns this pack's ore ids.
+
+## Delivered
+
+| Program | URL | What it is |
+| --- | --- | --- |
+| `quarry.lua` | **delivered by `cloudcat.py`** | **CURRENT — 2026-08-28 evening.** Nine review findings, the fuel-floor ration, the tank-limit fix, the calibration guard, `startDir`. 100,496 bytes, fletcher32 `3090748686`, confirmed by running the checksum on turtle 1 itself. `paste.rs/3PcMy` is the last paste-delivered build and is four fixes behind. |
+| `probe.lua` | `https://paste.rs/4uJB7` | The Phase 5 deployment probe. |
+
+**Deliver with `cloudcat.py`** — see "Delivery now goes through cloudcat"
+below. paste.rs can no longer take a file this size at all, and everything
+under this heading about `wget` is now the fallback route for `probe.lua` and
+for anything small enough to still fit.
+
+`4uJB7` and `3PcMy` are still fetchable, so the old builds can be pulled down.
+Ids are case-sensitive and a 404 is usually a case slip; `3PcMy` is digit
+three, capital P, small c, capital M, small y.
+
+**Every `wget` download is TWO lines.** CC's `wget` refuses to overwrite an
+existing file: it prints `File already exists`, downloads nothing, and reads
+like success. No force flag, and the CC shell has no `&&` or `;`.
+
+```
+delete probe
+wget https://paste.rs/4uJB7 probe
+```
+
+`SETUP.md` and the setup artifact at
+https://claude.ai/code/artifact/6989784d-6bae-4da6-8158-0dc6464885c5 still
+describe the paste route for `quarry.lua` and are **out of date** — update that
+same URL when they are rewritten, because a fresh publish makes a second page.
+
+**Superseded ids, which must not be run:** `swzlE` (pre-review: stops chasing
+ore after 64 blocks, says `work complete` on an empty tank), `4b9IM` (Phase 1,
+`--check` only), `4zMLm`, `kgXRL`, `uKUTW`, `3A9h2`, `lQszb`, `bO7bo`, `cpeuw`,
+`llZlk`, and `KRY8F` for the probe.
+
+## Delivery now goes through cloudcat, not paste.rs
+
+Changed 2026-08-28 evening, and this is the route to use from now on.
+
+**paste.rs stopped accepting the file.** Uploads over roughly 80,000 bytes get
+an nginx **500**: 80,000 went through first try; 85,000, 88,000, 92,000 and the
+full 97,892 each failed three attempts. It is not the new code being too big --
+**the exact 96,594-byte file live as `3PcMy` also fails to upload now**, so the
+cap tightened during the day. Fetching still works, so old pastes are readable.
+
+**`cloudcat.py` replaces it and is strictly better**: no ids to transcribe, no
+case-sensitivity traps, no two-line `delete`-then-`wget` dance, and the file is
+checksum-verified on the machine that will run it.
+
+```
+python3 cloudcat.py <token> push quarry.lua quarry
+# then, on the computer:
+quarry.join
+```
+
+The token is the 32-character id from the cloud-catcher URL, and the in-game
+computer must be running `cloud <token>`.
+
+**What was added to `cloudcat.py`** — it could not do this as it stood:
+
+- The transport closes the socket with **1009 "message too big"** on an
+  oversized frame and the whole push is lost. Measured: a 16,000-byte file went
+  through, 32,000 did not. `PACKET_BUDGET` is 18,000 on the **encoded** packet,
+  not the file, because JSON escaping inflates Lua source by about a sixth.
+- `push` now splits on line boundaries when it has to, sends the pieces as
+  `<name>.p1..pN`, and sends a generated `<name>.join` that stitches them back,
+  **checks every part's length**, checks the total, writes the file and deletes
+  the parts. quarry.lua goes as 6 parts.
+- The `websockets` import is optional, so the pure helpers stay testable
+  without the dependency. It is **not installed system-wide here** (PEP 668);
+  there is a venv at the scratchpad path, or `pip install --user websockets`.
+- `test_cloudcat.py` now splits the real `quarry.lua`, runs the generated
+  joiner under `lua5.3` against a stub `fs`, and diffs the result byte-for-byte.
+  Run it with plain `python3 test_cloudcat.py`.
+
+**Verify a delivery, do not assume it.** `pull` cannot fetch a 97,892-byte file
+back -- the 1009 cap applies in that direction too -- so the check is a
+checksum run in-game. `sumfile.lua` is pushed and does exactly that:
+
+```
+python3 cloudcat.py <token> run "sumfile quarry"
+```
+
+It must print the same fletcher32 that `cloudcat.fletcher32` gives for the
+local file. On 2026-08-28 both said **97892 bytes, 1914288371**.
+
+Two files of mine are sitting on that computer: `sumfile.lua`, which is worth
+keeping, and `cctest.txt`, a reachability probe that is litter and can be
+deleted.
+
+Do not strip comments to fit a paste host. In-game errors print line numbers
+and the user pastes those logs back; a delivered copy whose lines do not match
+the disk copy makes every future log unreadable.
+
+## Files
+
+| File | What it is |
+| --- | --- |
+| `MASTERMINE-PLAN.md` | The design, every decision and its reasoning. Read second. Trimmed 2026-08-28: §11 is now a status table, and the rules it used to carry are in this file's Settled and Corrections lists. |
+| `quarry.lua` | **The deliverable.** ~2,430 lines, Phases 1–5. Opens `local DRY = true`; the config lowers it. |
+| `test_quarry.lua` | Five suites against stubbed CC worlds, 48 checks. Tests 40–48 are the 2026-08-28 review regressions. `lua5.3 test_quarry.lua` |
+| `probe.lua` | The Phase 5 probe. `probe` is a dry run, `probe go` is the real one. |
+| `test_probe.lua` | Stubbed world for the probe, live and DRY paths. `lua5.3 test_probe.lua` |
+| `SETUP.md` | What the user does in-game. The setup artifact is generated from it. |
+| `reports/history-2026-08.md` | **Everything this file used to say.** The phase narratives, the deploy-run post-mortems, the probe findings. |
+| `reports/code-review-quarry.md` | The 2026-08-28 review. All nine findings, all fixed, each with its test. |
+| `reports/check-1-2026-08-24.txt` | The first real `--check` output, verbatim. |
+| `reports/mine-live-1-turtle2-2026-08-27.txt` | The 177-block in-game run. |
+| `reports/deploy-live-1..4-2026-08-27.txt` | The four failed deploy runs. |
+| `test_pattern.lua`, `test_coverage.lua` | The pattern proofs: `1,3,5,2,4`, and dug%/unseen% per candidate. |
+| `reports/plan-2026-08-25-full.md` | `MASTERMINE-PLAN.md` before its 2026-08-28 trim, with the original phase schedule. |
+| `HANDOFF-PROMPT.md` | The prompt to paste into a fresh session. |
+| `attic/` | Superseded work, kept because there is no undo here. `tunnel.lua` and its test live there now. |
+| `cloudcat.py` | **The delivery route.** Headless cloud-catcher client; pushes files straight into the game, splitting and stitching when they exceed the packet cap. Needs `websockets`. |
+| `test_cloudcat.py` | fletcher32 vectors, plus a real split of `quarry.lua` whose generated joiner is run under `lua5.3` and diffed byte-for-byte. `python3 test_cloudcat.py` |
+| `sumfile.lua` | Pushed to the game to checksum a delivered file: `cloudcat.py <token> run "sumfile quarry"`. Arithmetic-only fletcher32, because CC is Lua 5.2. |
+
+## The design in one paragraph
+
+Three turtles work a chunk-snapped 3×3 chunk claim (48×48) with no chunk
+loader — the player standing in the centre chunk is what keeps it loaded.
+Branches are 1-high, 1-wide, run along x, and are sunk wherever
+`z ≡ 2y (mod 5)` **measured from the claim's own corner**; that is the user's
+`1,3,5,2,4` sequence and it reads the claim interior exactly for ~22% dug,
+which is the proven floor. A spine runs along z at the claim's x-centre with
+branch mouths every 5 blocks; branches run 24 west and 23 east. Each turtle has
+its own vertical trunk at the centre of its own third. Levels run deepest
+first, from one above bedrock up to y=60. The depot is at the claim floor;
+turtles never surface except on `recall`.
+
+## Settled — do not reopen these
+
+Plan section numbers in brackets.
+
+- **Harvest Mastermine, do not port it** [1]. `forge:ores` must become `c:ores`.
+- **Claim is chunk-snapped** 3×3; **the pattern anchors to the claim corner and
+  absolute y**, never to a turtle's start block and never to a config value [2].
+  **The claim itself anchors to `st.home`, the launch block, and is persisted.**
+- **Geometry: horizontal 1-high branches along x**, `z ≡ 2y (mod 5)` [3].
+- **Spine along z at the x-centre**, branches 24 west and 23 east [3].
+- **One trunk per turtle** at the centre of its third [3, 4]. Trunks sit on the
+  spine, so they cost **no extra blocks**.
+- **Bottom is one level above bedrock**, found by failed dig [3]. `bottomY=-59`
+  is the safety stop. **Top is y=60.** Both configurable.
+- **Deepest first, working up** [3]. Direction and range configurable.
+- **Three turtles on the same level**, z split into thirds [4].
+- **Branch claiming: an air mouth is already taken** [4]. `st.done` is the
+  per-turtle exact record; the mouth test is what stops two turtles taking the
+  same row. `mouthTaken()` runs **only on a fresh claim**, or a turtle resuming
+  its own half-mined branch reads its own work as somebody else's.
+- **Depot at the claim floor** [5], **found by looking, not configured**. One
+  chest serves all three; a turtle with none under its own trunk walks the
+  spine to the others, once, and writes `st.noDepot` if the answer is no.
+- **The depot queue is the waiting, not a queue** [5]. Mastermine's linked-list
+  route was for a hub with a monitor and any number of turtles. Do not build it.
+- **Right of way by launch index** — lower wins, higher moves [8]. `giveWay`
+  only ever waits; moving aside is `goTo`'s job, because a sidestep inside
+  `mineLeg` would desync `st.along`.
+- **`recall` is per-turtle and typed; normal returns are independent** [4].
+- **Haul everything; the blacklist is a junk tier**, dumped first on overflow
+  [6]. A turtle cannot decline to pick up what it digs.
+- **Ore = `c:ores` + config names**; `only` restricts to an exact list [6]. No
+  fuzzy `find("ore")` fallback. Ancient debris excluded — nether-only.
+- **No `--scan` mode** [6]. The `passed over:` line does that job.
+- **Fuel: coal, coal blocks, charcoal, lava buckets only** [7].
+- **Depot-first, forage only when dry** [7]. Inventory is the trip trigger.
+- **A find is shared, not hoarded** [7]: `fuelShare` coal in the hold is a dock
+  trigger, and a low tank burns the hold before it costs a trip.
+- **Depot fuel rationed by a FLOOR, not a fraction** [7]. **Learned by taking,
+  because a turtle cannot read a chest it is not wired to.** A turtle takes
+  what the trip needs (`want`) down to `fuelFloor` coal per OTHER turtle --
+  default 8, so 16 with three running -- and takes nothing at all below that,
+  which drops it into the designed forage path. Changed 2026-08-28 at the
+  user's instruction. The old rule took `floor(total / 3)` and made the shares
+  unequal: on 300 coal three dockers took 100, then 66, then 44, because each
+  took a third of what the last one left, and 90 sat in the chest for good. It
+  also divided by a literal 3 however many turtles were configured. Tests 51
+  and 52, both confirmed to fail against the old line.
+- **Lava map shared on a depot disk drive** [7], read and written while docked.
+- **Never dig into a full inventory** [8]. `dig` succeeds and destroys the drop.
+- **Never dig a turtle, computer, disk drive, chest, or anything `lootr`** [8].
+  In a branch leg that ends the leg; anywhere else it stops the run.
+- **Config is a self-seeding data file**, `quarry.conf`, plain format, not Lua
+  [9]. Nothing in it may affect the branch pattern. **A config file replaces
+  the default lists outright** — a file with no `[blacklist]` section has no
+  blacklist. That is deliberate; tests must spell out the lists they need.
+- **Save state every block** [10]. Measured at 1.35 ms against a 400 ms move.
+- **GPS is NOT reliable on this server.** It worked on 2026-08-28 morning
+  (`--check` reported `position: 8,79,4 (gps)`) and was dead that evening:
+  `gps.locate` returned nil from turtle 1 with `left=modem` equipped, so no
+  host answered. A turtle still reaches GPS only through an equipped wireless
+  modem, but the constellation itself cannot be assumed up. See `startDir`.
+- **Claim exhaustion: stop, report, idle** [12].
+- **Deployment happens at the surface launch block, not at the claim floor** —
+  a deliberate deviation from plan §13. The drive must sit directly above the
+  placed turtle, and a trunk floor has no spare side once two chests are down.
+  It costs nothing: every turtle anchors its claim where it wakes, and they all
+  wake in the centre chunk.
+- **The monitor is Phase 6.**
+
+## The defaults, changed 2026-08-27 at the user's instruction
+
+`quarry.conf` ships **`dry = false`** and **`lava = true`**.
+
+This overrides the old convention that the program is never handed over ready
+to mine. `local DRY = true` still opens the file and the config lowers it as it
+always did — the change is only to what the seeded config says. It matters more
+than it looks: **`deploy` copies that same file to every turtle**, so the old
+`dry = true` default is what stranded turtle 2 on the first live run. Test 38
+asserts both values so a later edit cannot revert them quietly. Tests that want
+a dry run write `dry = true` into the stub config explicitly.
+
+## Corrections already made — do not reintroduce
+
+- 1-high tunnels at 3×3 spacing leave **44% unseen**; 2-high layered 4 apart
+  leave **33%**. A tunnel sees `z±1` only at its own `y`.
+- The vertical-shaft (`canes`) design is superseded but measures identically.
+- **The stagger's 0% unseen is a toroidal figure.** On the real claim it is
+  1.16%, all on the claim face. Do not "fix" it.
+- **Trunks cost no blocks.** Do not re-add the 360-block line to a cost table.
+- `turtle.dig` on a full inventory destroys the drop. Issue #1046, closed
+  `invalid`.
+- Ancient debris is nether-only.
+- Turtles are lavaproof and submersible; `detect()` is false for liquid. All
+  liquid-sealing logic was deleted.
+- **CC:Tweaked is Lua 5.2 (Cobalt).** No `//`, no bitwise operators. `goto` is
+  fine — 5.2 has it, and the work loop uses several.
+- **A turtle needs a wireless modem for GPS.**
+- **Never derive the claim from the turtle's current position after boot.**
+- **`DRY` is not edited in the program.** `dry` in `quarry.conf` is what goes
+  live, because the config survives a re-download.
+- **Lootr loot is unreachable to a turtle, by both routes.** Do not add a
+  `turtle.suck` at a Lootr container, and do not add a config switch to dig
+  them: the break is cancelled server-side, and `should_drop_player_loot` is
+  false by default, so a break that did land would destroy the loot.
+- **"Burn on pickup, carry no fuel items" is about depot coal, not mined coal.**
+  Coal dug on a branch rides home to the chest. Do not add a burn-it-where-you-
+  find-it rule; that is the hoarding the sharing rule exists to stop.
+- **The depot chest stands on a branch row.** The trunk is on the spine, so its
+  four neighbours are spine or branch. One leg of one branch is lost at the
+  floor level. Do not redesign the geometry for it — but do remember `goTo`
+  must leave a spine block along z, or it walks into that chest.
+- **Do not sweep the spine for the shared depot on boot.** It costs ~70 dug
+  blocks every boot on a claim that has no chest. It waits until the depot is
+  needed.
+- **`os.getComputerLabel()` returns NO values on an unlabelled computer**, not
+  nil. `tostring(os.getComputerLabel())` throws `bad argument #1 to 'tostring'
+  (value expected)`. A local or a parameter collapses a zero-return to nil; an
+  argument list does not. A placed turtle is always unlabelled.
+- **A placed turtle IS visible as a peripheral on `front`** — but discovery
+  goes stale (CC:Tweaked #660), so it reads as air right after `turtle.place`.
+  `deploy` retries six times with a `turnRight`+`turnLeft` between attempts to
+  force a refresh. **That pair is the spinning the user sees; it is cosmetic.**
+  An earlier note here said a turtle is not a peripheral to another turtle —
+  that was the probe looking from a position it had already left, and it cost
+  three deploy runs.
+- **On a turtle, `left` and `right` report the EQUIPPED upgrade, not the
+  adjacent block.** So `front` is the valid way to see a placed turtle. The
+  peripheral dump in the skill's references was taken from a COMPUTER
+  (`turtle=false`) and never described what a turtle sees.
+- **`pcall` prepends its own success flag.** Two locals binds `data` to a
+  boolean. This has now been got wrong four times, in `checkLava`, `deployOne`,
+  `buildDepot` and `turtleAhead`. Capture both values and test the second
+  against `false` explicitly — and remember a *failed* `pcall` puts an error
+  STRING second, which is not `false`. Tests 41, 44, 46.
+- **`st.chased` is a per-chase counter, not a run total.** Reset it where a
+  chase begins, never where a run begins, or `veinMax` silently switches off
+  all vein chasing for the rest of the shift. `st.veined` is the run total.
+  Test 40.
+- **An empty tank is not a wall.** `turtle.forward()` returns false either way,
+  so any move path with no fuel check reports the wrong thing — and with `halt`
+  unset, `report` calls a stranded turtle finished. The guard lives at the top
+  of `clear()`, which every stepper routes through; do not move it into one
+  caller. Test 42.
+- **The vein sweep must be absolute.** `goTo` faces the direction it travels,
+  so `st.dir` after a chase is the walk home's heading, not the cell's. Anchor
+  the four-way sweep to a `d0` captured on entry. Test 43.
+- **Probe for the shared depot in both directions.** Bedrock scatters over four
+  blocks either way, so a neighbour's floor can be below this turtle's, not
+  only above. Test 47.
+
+## This pack's real ids, settled in-game
+
+`computercraft:turtle_advanced`, `computercraft:disk_drive`,
+`computercraft:disk`, `computercraft:wireless_modem_advanced`. All four already
+match the kit audit's patterns; nothing is hard-coded and nothing needs to be.
+
+**The turtles are advanced *and* mining** — both share
+`computercraft:turtle_advanced`, so no audit can tell them apart. Do not add a
+check for it.
+
+**`inspect` returns a `tags` table on this server**, so `c:ores` works and
+quarry prints no `WARNING:`. **A placed turtle inherits nothing**: fuel 0, no
+label, no modem, empty inventory. **Facing does not matter** — `calibrate()`
+derives a heading by moving one block and diffing GPS.
+
+## Blocks the user must place before a run
+
+- **A chest or barrel against the bottom block of a trunk.** That is the depot;
+  the turtles find it, and one chest serves all three. Coal in it. A second
+  container on another side becomes the dump chest and keeps the spoil out of
+  the fuel. **Since Phase 5 this is optional**: a turtle that reaches its trunk
+  floor still carrying chests cuts the alcoves, places them, and banks its own
+  coal into the first. A hand-placed depot still takes priority.
+- **Optional: a disk drive with a floppy** beside the trunk floor — the shared
+  lava map, and the only channel by which one turtle can hand code to another.
+- **Do not hand-dig down.** Each turtle cuts its own trunk and that shaft is
+  the way in.
+- **Launch all three within a few blocks of each other**, ideally the same
+  chunk. The claim comes from the launch block, so turtles launched far apart
+  get different claims and mine different regions.
+
+## Waiting on the user
+
+- **A depot.** See Next action — this is the blocker.
+- **The `passed over:` line from a real run** — this pack's real ore ids.
+- **192 coal or charcoal**, a stack per turtle. The only thing `deploy` is
+  short of.
+- **Break turtle 2 and pick it up** before the next deploy: it stands in the
+  deployment spot with a seeded DRY config, and `deploy` needs that block
+  clear. A broken turtle may come back with the modem attached as an upgrade
+  rather than as a loose item, in which case the kit audit reads 2 modems and
+  says `SHORT 1`. Believe the audit.
+
+## Conventions that govern the code
+
+One self-contained file, no `require`, delivered as a single `wget` from
+paste.rs. Opens `local DRY = true`; `quarry.conf` may lower it and may never
+raise it. Persist state every meaningful step. `pcall` every peripheral call —
+and remember it prepends its own success flag. Test under `lua5.3` before
+delivering; `test_quarry.lua` is the stubbed world to extend, not replace.
+**When you fix a bug, add a test and verify it FAILS against the unfixed
+code** — nine tests have been confirmed non-vacuous that way and it is worth
+the extra minute. Diagnostics go *in* the program so one in-game run answers
+the question instead of three. Print a liveness line before any long work.
+CC:Tweaked is Lua 5.2. The peripheral dump in
+`~/.claude/skills/cc-tweaked-pack/references/` outranks the wiki, but read its
+headers — it was taken from a computer; if a method is not in it, ask for a
+re-survey rather than guessing. **Mod behaviour is read out of the mod's own
+jar and config when they are on disk** (`unzip`, `javap -c`, `config/*.toml`) —
+that is how the Lootr answer was settled. No CC:Tweaked jar is in this sandbox,
+so CC mod-side behaviour comes from tweaked.cc or from the user.
+
+## Standing rules from the user
+
+- **Work must survive their budget running out.** Write deliverables and
+  handoff updates to disk as you go, never only in chat. Rewrite this file
+  whole at the end of every phase.
+- **Test under lua5.3 here before anything reaches their server.** They run the
+  code and you never see the game, so a bug that ships costs a round trip.
+- **Ask before reverting or deleting anything.** This directory is not a git
+  repository, so there is no undo.
+- **How the sessions actually go:** the user pastes a paste.rs id of an in-game
+  log and little else. Fetch it, read it as the primary evidence, and put the
+  diagnostic INTO the program so the next single run answers the question. Five
+  deploy runs were spent on a chain of separate bugs, each hidden behind the
+  last. Do not theorise past the evidence — when a log cannot distinguish two
+  causes, add the line that will, and say so.
+
+## Open questions
+
+None on the design, and none blocking. What is left is verification: the depot
+cycle and two turtles running at once.

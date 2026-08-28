@@ -1,0 +1,2498 @@
+-- quarry : three turtles read a chunk-snapped 3x3 claim with mod-5 branches
+-- wget https://paste.rs/XXXXX quarry
+-- usage:  quarry <1|2|3> [--check|recall|deploy]
+--
+-- Phase 1: claim maths, branch/spine iterators, --check.
+-- Phase 2: one turtle, one branch -- trunk descent, spine travel, vein chase,
+--          save every block, resume from quarry.state.
+
+local DRY = true
+
+-- Lua 5.2 (Cobalt) in CC:Tweaked -- no // and no bitwise operators anywhere.
+
+local CONF  = "quarry.conf"
+local STATE = "quarry.state"
+
+-- config -------------------------------------------------------------------
+-- Scalars, then bare block names under [section] headers. Deliberately not
+-- Lua, so a typo prints a line number instead of killing the miner.
+
+local NUM = {
+  topY         = 60,    -- highest level mined; surface builds live above it
+  bottomY      = -59,   -- safety floor. bedrock scatters -63..-60
+  turtles      = 3,
+  veinMax      = 64,    -- hard cap on blocks per vein chase
+  veinDepth    = 12,    -- how far a vein chase may wander off the branch
+  fuelMargin   = 64,    -- spare fuel kept on top of the walk home
+  tripBlocks   = 96,    -- blocks carried before the inventory forces a depot run
+  fuelShare    = 128,   -- coal in the hold that sends a turtle home to bank it
+  fuelFloor    = 8,     -- coal held back in the depot chest for each OTHER turtle
+  lavaFloor    = 4000,  -- scoop a passing lava source when the tank is under this
+  saveSamples  = 200,   -- --check writes the state file this many times to time it
+}
+local STR = {
+  oreTags      = "c:ores",
+}
+local BOOL = {
+  deepestFirst = true,
+  lava         = true,   -- the scoop was proven in-game 2026-08-27, bucket came back
+  dry          = false,  -- set live at the user's instruction, 2026-08-27
+}
+
+local LISTS = {
+  -- additive to oreTags; c:ores already covers most of these, they are here so
+  -- the file shows you where to add what the pack calls things.
+  oreNames = {
+    "create:zinc_ore", "create:deepslate_zinc_ore",
+    "mekanism:osmium_ore", "mekanism:deepslate_osmium_ore",
+    "mekanism:tin_ore", "mekanism:deepslate_tin_ore",
+    "mekanism:lead_ore", "mekanism:deepslate_lead_ore",
+    "mekanism:uranium_ore", "mekanism:deepslate_uranium_ore",
+    "mekanism:fluorite_ore", "mekanism:deepslate_fluorite_ore",
+  },
+  -- set any entry here and ONLY these are mined, oreTags and oreNames ignored
+  only = {},
+  -- junk tier: dug and carried like anything else, dumped first when a slot
+  -- is needed. Not a skip list -- a turtle cannot decline what it digs.
+  blacklist = {
+    "minecraft:stone", "minecraft:cobblestone", "minecraft:deepslate",
+    "minecraft:cobbled_deepslate", "minecraft:tuff", "minecraft:granite",
+    "minecraft:diorite", "minecraft:andesite", "minecraft:dirt",
+    "minecraft:gravel", "minecraft:sand", "minecraft:sandstone",
+    "minecraft:calcite", "minecraft:smooth_basalt", "minecraft:clay",
+  },
+  fuel = {
+    "minecraft:coal", "minecraft:charcoal",
+    "minecraft:coal_block", "minecraft:lava_bucket",
+  },
+}
+
+local DEFAULT_CONF = [[
+# quarry.conf -- edit with: edit quarry.conf
+# Written on first run. Delete it to get these defaults back.
+# name = value for the numbers, bare block names under the [headers].
+
+topY         = 60      # highest level mined
+bottomY      = -59     # safety floor; the real bottom is found by failed dig
+deepestFirst = true    # mine the deepest level first and work up
+dry          = false   # true = plan the route and touch nothing. false = mine for real.
+turtles      = 3
+veinMax      = 64      # blocks per vein chase, hard cap
+veinDepth    = 12      # how far a chase may wander off the branch
+fuelMargin   = 64      # spare fuel kept on top of the walk home
+tripBlocks   = 96      # blocks carried before the inventory forces a depot run
+fuelShare    = 128     # coal in the hold that sends a turtle home to bank it for the others
+fuelFloor    = 8       # coal left in the chest for each OTHER turtle; under that, forage
+lava         = true    # the --check scoop was proven on this server: the bucket came back
+lavaFloor    = 4000    # scoop a source the branch passes when the tank is below this
+oreTags      = c:ores  # the 1.21.1 tag. forge:ores is gone, do not put it back
+
+# startX/startY/startZ override GPS, for when gps.locate will not answer. With
+# them set the heading cannot be measured, so startDir must be given too:
+# 0, 1, 2, 3 = facing +z, -x, -z, +x. Position is then dead-reckoned, and a
+# turtle that loses quarry.state cannot find itself again -- fixing GPS is
+# better if you can. A turtle needs an equipped wireless modem for GPS.
+# startDir = 0
+# startX = 0
+# startY = 64
+# startZ = 0
+
+[oreNames]
+# additive to oreTags. One block name per line.
+%ORENAMES%
+
+[only]
+# non-empty here means mine EXACTLY these and nothing else.
+
+[blacklist]
+# junk tier: carried, never chased, dumped first when a slot is needed.
+%BLACKLIST%
+
+[fuel]
+%FUEL%
+]]
+
+local cfg   = {}
+local lists = {}
+
+local function seedConf()
+  local function block(t)
+    local out = {}
+    for _, v in ipairs(t) do out[#out + 1] = v end
+    return table.concat(out, "\n")
+  end
+  local text = DEFAULT_CONF
+    :gsub("%%ORENAMES%%",  block(LISTS.oreNames))
+    :gsub("%%BLACKLIST%%", block(LISTS.blacklist))
+    :gsub("%%FUEL%%",      block(LISTS.fuel))
+  local f = fs.open(CONF, "w")
+  f.write(text)
+  f.close()
+end
+
+-- Returns cfg, lists, or nil plus a message naming the offending line.
+local function readConf()
+  local c, l, section = {}, {}, nil
+  for k, v in pairs(NUM)  do c[k] = v end
+  for k, v in pairs(STR)  do c[k] = v end
+  for k, v in pairs(BOOL) do c[k] = v end
+  for k, v in pairs(LISTS) do
+    l[k] = {}
+    for _, name in ipairs(v) do l[k][#l[k] + 1] = name end
+  end
+
+  if not fs.exists(CONF) then return c, l, "seeded" end
+
+  for k in pairs(l) do l[k] = {} end          -- the file replaces the defaults
+
+  local f = fs.open(CONF, "r")
+  local text = f.readAll()
+  f.close()
+
+  local n = 0
+  for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+    n = n + 1
+    line = line:gsub("#.*$", ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if line ~= "" then
+      local head = line:match("^%[(%w+)%]$")
+      if head then
+        if not l[head] then return nil, nil, ("%s:%d: unknown section [%s]"):format(CONF, n, head) end
+        section = head
+      else
+        local k, v = line:match("^([%w_]+)%s*=%s*(.+)$")
+        if k then
+          section = nil
+          if NUM[k] then
+            local num = tonumber(v)
+            if not num then return nil, nil, ("%s:%d: %s wants a number, got %q"):format(CONF, n, k, v) end
+            c[k] = num
+          elseif BOOL[k] ~= nil then       -- not `BOOL[k]`: a false default is still a key
+            if v ~= "true" and v ~= "false" then
+              return nil, nil, ("%s:%d: %s wants true or false, got %q"):format(CONF, n, k, v)
+            end
+            c[k] = (v == "true")
+          elseif STR[k] then
+            c[k] = v
+          elseif k == "startX" or k == "startY" or k == "startZ" then
+            local num = tonumber(v)
+            if not num then return nil, nil, ("%s:%d: %s wants a number, got %q"):format(CONF, n, k, v) end
+            c[k] = num
+          elseif k == "startDir" then
+            local num = tonumber(v)
+            if not num or num < 0 or num > 3 or num % 1 ~= 0 then
+              return nil, nil, ("%s:%d: startDir wants 0, 1, 2 or 3 (+z, -x, -z, +x), got %q")
+                :format(CONF, n, v)
+            end
+            c[k] = num
+          else
+            return nil, nil, ("%s:%d: unknown setting %q"):format(CONF, n, k)
+          end
+        elseif section then
+          if not line:match("^[%w_]+:[%w_/]+$") then
+            return nil, nil, ("%s:%d: %q is not a block name like minecraft:coal_ore"):format(CONF, n, line)
+          end
+          l[section][#l[section] + 1] = line
+        else
+          return nil, nil, ("%s:%d: %q is not name = value and no [section] is open"):format(CONF, n, line)
+        end
+      end
+    end
+  end
+  return c, l, "read"
+end
+
+-- state --------------------------------------------------------------------
+-- Carries the task, not coordinates: GPS answers where, this answers what.
+
+local st = {
+  index  = 1,
+  level  = nil,     -- y of the level being worked
+  branch = nil,     -- z of the branch owned right now
+  leg    = nil,     -- "west" | "east" | nil
+  along  = 0,       -- blocks travelled from the spine down that leg
+  task   = "boot",  -- boot | descend | spine | branch | vein | depot | forage | park
+  -- GPS exists here, so position is absolute and the state carries it: a
+  -- turtle killed mid-branch reads this, re-locates, and walks back.
+  x = nil, y = nil, z = nil,
+  dir = nil,        -- 0 +z, 1 -x, 2 -z, 3 +x
+  home = nil,       -- the block it was launched from; the depot is found in phase 3
+  dug = 0, chased = 0, floor = nil,
+  -- phase 3
+  depot   = nil,    -- { x, y, z, dump = dir, fuel = dir } -- found, never configured
+  done    = {},     -- ["y:z"] = true for a branch this turtle has finished
+  carried = 0,      -- blocks dug since the last dump; tripBlocks forces a trip
+  trips   = 0, hauled = 0, junked = 0, scooped = 0,
+  lava    = {},     -- sources seen this trip, merged into /disk/lava.txt when docked
+  lavaSeen = {},    -- dedupe for the above, so one source is not queued twice
+}
+
+local function save()
+  local f = fs.open(STATE .. ".tmp", "w")
+  f.write(textutils.serialise(st))
+  f.close()
+  if fs.exists(STATE) then fs.delete(STATE) end
+  fs.move(STATE .. ".tmp", STATE)
+end
+
+local function load()
+  if not fs.exists(STATE) then return false end
+  local f = fs.open(STATE, "r")
+  local t = textutils.unserialise(f.readAll())
+  f.close()
+  if type(t) == "table" then st = t return true end
+  return false
+end
+
+-- claim maths --------------------------------------------------------------
+-- Two anchors on purpose: the claim snaps to chunk borders so a player in the
+-- centre chunk keeps all nine loaded; the branch pattern anchors to the block
+-- the turtle started on.
+
+local function claimOf(x, z)
+  local cx, cz = math.floor(x / 16), math.floor(z / 16)
+  local c = {
+    cx = cx, cz = cz,
+    xMin = (cx - 1) * 16, xMax = (cx + 1) * 16 + 15,
+    zMin = (cz - 1) * 16, zMax = (cz + 1) * 16 + 15,
+  }
+  c.xLen  = c.xMax - c.xMin + 1
+  c.zLen  = c.zMax - c.zMin + 1
+  c.spine = c.xMin + math.floor(c.xLen / 2)   -- branches run xLen/2 each way
+  c.west  = c.spine - c.xMin                  -- blocks from spine to the west rim
+  c.east  = c.xMax - c.spine                  -- and to the east rim
+  return c
+end
+
+-- z of turtle i's third, and the trunk at its centre. The trunk sits on the
+-- spine line, so every block of it is a spine block: three trunks cost nothing.
+local function thirdOf(c, i, n)
+  local w = math.floor(c.zLen / n)
+  local lo = c.zMin + (i - 1) * w
+  local hi = (i == n) and c.zMax or (lo + w - 1)
+  return lo, hi, lo + math.floor((hi - lo) / 2)
+end
+
+-- The pattern: a branch is sunk wherever z == 2y (mod 5), measured from the
+-- claim's own corner and from absolute y. Reading the first branch on each
+-- level going up gives 1,3,5,2,4 -- 20% dug for 100% seen, and 20% is the
+-- floor for 1-wide.
+--
+-- Both terms come from the world, never from quarry.conf. That is deliberate:
+-- every turtle standing anywhere in the same 3x3 chunk region computes the
+-- identical pattern, so their branch mouths line up and "an air mouth is
+-- already taken" works. Keying it to the turtle's own start block did not,
+-- and keying it to a config value would break the moment one turtle's
+-- quarry.conf drifted from another's.
+local function isBranch(c, y, z)
+  return (z - c.zMin - 2 * y) % 5 == 0
+end
+
+local function branchZs(c, y)
+  local out = {}
+  for z = c.zMin, c.zMax do
+    if isBranch(c, y, z) then out[#out + 1] = z end
+  end
+  return out
+end
+
+-- Deepest first by default; stopping early then loses only the cheapest levels.
+local function levels(c2)
+  local out = {}
+  for y = c2.bottomY, c2.topY do out[#out + 1] = y end
+  if c2.deepestFirst then return out end
+  local rev = {}
+  for i = #out, 1, -1 do rev[#rev + 1] = out[i] end
+  return rev
+end
+
+-- A branch at (y,z) digs one cross-section cell and sees five: its own, y+-1
+-- in its column, and z+-1 at its own level. Anything the claim rim leaves
+-- outside that plus-shape is genuinely never looked at, so count it.
+local function unseenRim(c, lo, hi)
+  local seen, total = {}, 0
+  for y = lo, hi do
+    for _, z in ipairs(branchZs(c, y)) do
+      seen[y .. "," .. z] = true
+      seen[(y - 1) .. "," .. z] = true
+      seen[(y + 1) .. "," .. z] = true
+      seen[y .. "," .. (z - 1)] = true
+      seen[y .. "," .. (z + 1)] = true
+    end
+  end
+  local miss, edge = 0, 0
+  for y = lo, hi do
+    for z = c.zMin, c.zMax do
+      total = total + 1
+      if not seen[y .. "," .. z] then
+        miss = miss + 1
+        if z == c.zMin or z == c.zMax or y == lo or y == hi then edge = edge + 1 end
+      end
+    end
+  end
+  return miss, total, edge
+end
+
+-- What the whole claim costs. Movement is the only thing that burns fuel, so
+-- the estimate is a move count: mining walks every dug block out and back,
+-- then every full inventory pays a return down the trunk to the floor depot.
+local function survey(c, conf)
+  local ys = levels(conf)
+  local r = {
+    levels = #ys, branches = 0, dug = 0, moves = 0,
+    minB = math.huge, maxB = 0,
+    volume = c.xLen * c.zLen * (conf.topY - conf.bottomY + 1),
+  }
+  local n = conf.turtles
+  local w = math.floor(c.zLen / n)
+  for _, y in ipairs(ys) do
+    local nb = #branchZs(c, y)
+    r.branches = r.branches + nb
+    if nb < r.minB then r.minB = nb end
+    if nb > r.maxB then r.maxB = nb end
+
+    -- the spine spans z; each branch adds the rest of its row
+    local dug = c.zLen + nb * (c.xLen - 1)
+    r.dug = r.dug + dug
+
+    local depth = y - conf.bottomY                        -- depot is at the floor
+    local branchMoves = nb * 2 * (c.west + c.east)        -- out and back, each leg
+    local spineMoves  = n * 2 * w                         -- each turtle sweeps its third
+    local trunkMoves  = n * 2 * depth                     -- up to the level and back
+    local trips       = math.ceil(dug / conf.tripBlocks)
+    local tripMoves   = trips * 2 * (depth + math.floor((c.west + c.east) / 4) + math.floor(w / 4))
+    r.moves = r.moves + branchMoves + spineMoves + trunkMoves + tripMoves
+  end
+  r.pct = r.dug / r.volume * 100
+  return r
+end
+
+-- --check ------------------------------------------------------------------
+
+local out = {}
+local function say(...)
+  local line = table.concat({ ... }, " ")
+  out[#out + 1] = line
+  print(line)
+end
+local function sayf(fmt, ...) say(fmt:format(...)) end
+
+local function upload()
+  if not http then say("no http, report not uploaded") return end
+  local ok, h = pcall(http.post, "https://paste.rs/", table.concat(out, "\n"))
+  if ok and h then
+    print("report -> " .. h.readAll())
+    h.close()
+  else
+    print("upload failed")
+  end
+end
+
+local function locate(conf)
+  if conf.startX and conf.startY and conf.startZ then
+    return conf.startX, conf.startY, conf.startZ, "quarry.conf"
+  end
+  if gps then
+    local ok, x, y, z = pcall(gps.locate, 2)
+    if ok and x then return math.floor(x), math.floor(y), math.floor(z), "gps" end
+  end
+  return nil, nil, nil, "no fix"
+end
+
+-- A turtle reaches gps.locate only through an equipped WIRELESS modem. The
+-- pickaxe is not a peripheral, so it reads as nil here; a modem reads as
+-- "modem". This is the ground truth behind a NO FIX, so print it either way.
+local function equippedSides()
+  local out = {}
+  for _, side in ipairs({ "left", "right" }) do
+    local ok, t = pcall(peripheral.getType, side)
+    out[side] = (ok and t) or nil
+  end
+  return out
+end
+
+local function hasModem()
+  local e = equippedSides()
+  return (e.left == "modem") or (e.right == "modem")
+end
+
+local function findItem(name)
+  for s = 1, 16 do
+    local ok, d = pcall(turtle.getItemDetail, s)
+    if ok and d and d.name == name then return s end
+  end
+end
+
+-- Issue #530 had lava buckets deleted by placeDown in 1.16.1. Prove it works
+-- on this server before a slot is spent carrying one for the rest of the job.
+local function checkLava()
+  local empty = findItem("minecraft:bucket")
+  local full  = findItem("minecraft:lava_bucket")
+  if full then
+    sayf("lava   : a full lava_bucket is in slot %d -- refuel it first, then re-check", full)
+    return
+  end
+  if not empty then
+    say("lava   : no empty bucket in inventory, scoop test skipped")
+    return
+  end
+  local side
+  for _, probe in ipairs({ { "front", turtle.inspect }, { "down", turtle.inspectDown }, { "up", turtle.inspectUp } }) do
+    -- pcall prepends its own success flag, so inspect's two returns land third
+    local ok, found, data = pcall(probe[2])
+    if ok and found and data and tostring(data.name):find("lava") then side = probe[1] break end
+  end
+  if not side then
+    say("lava   : bucket ready, but no lava adjacent -- park over a source and re-run --check")
+    return
+  end
+  if DRY then
+    sayf("lava   : DRY -- would scoop the %s source with slot %d and check the fuel rose", side, empty)
+    return
+  end
+  local before = turtle.getFuelLevel()
+  turtle.select(empty)
+  local place = side == "down" and turtle.placeDown or (side == "up" and turtle.placeUp or turtle.place)
+  local lived, put = pcall(place)
+  local ok = lived and put ~= false
+  local got = findItem("minecraft:lava_bucket")
+  if got then pcall(turtle.select, got) pcall(turtle.refuel) end
+  local after = turtle.getFuelLevel()
+  turtle.select(1)
+  local back = findItem("minecraft:bucket")
+  sayf("lava   : scoop %s, fuel %s -> %s, bucket %s",
+    ok and "ok" or "FAILED", tostring(before), tostring(after),
+    back and "returned" or "GONE -- do not carry one, issue #530 is live here")
+end
+
+-- kit audit ----------------------------------------------------------------
+-- What the whole mine needs, and what is actually in this turtle's inventory.
+-- Item ids are matched by pattern rather than by exact name on purpose: the
+-- exact ids for a Mining Turtle and a floppy in this pack are not in the
+-- peripheral dump, so anything unrecognised is printed verbatim instead of
+-- being silently ignored. One run and we know the real names.
+
+local KIT = {
+  { key = "turtle",   want = 2, label = "mining turtle",
+    match = function(n) return n:find("turtle") end,
+    why = "turtles 2 and 3, placed at their own trunks" },
+  { key = "chest",    want = 2, label = "chest",
+    match = function(n) return n:find("chest") or n:find("barrel") end,
+    why = "the depot: one for ore, one you keep stocked with coal" },
+  { key = "drive",    want = 1, label = "disk drive",
+    match = function(n) return n:find("disk_drive") end,
+    why = "the shared lava map, and the only way to hand code to a turtle" },
+  { key = "floppy",   want = 1, label = "floppy disk",
+    match = function(n) return n:find("disk") and not n:find("disk_drive") end,
+    why = "goes in the drive" },
+  { key = "modem",    want = 3, label = "wireless modem",
+    match = function(n) return n:find("wireless_modem") or n:find("ender_modem") end,
+    why = "GPS. A turtle with no modem cannot locate itself, so it cannot resume" },
+  { key = "bucket",   want = 3, label = "empty bucket",
+    match = function(n) return n == "minecraft:bucket" end,
+    why = "one per turtle. Lava scooping is confirmed working on this server" },
+  { key = "fuel",     want = 192, label = "coal or charcoal",
+    match = function(n) return n:find("coal") or n:find("charcoal") end,
+    why = "a stack per turtle to start. The whole claim wants about 3,300" },
+}
+
+local function auditKit()
+  local have, unknown = {}, {}
+  for _, k in ipairs(KIT) do have[k.key] = 0 end
+  -- a modem already equipped on this turtle is one it does not need as an item
+  if hasModem() then have.modem = have.modem + 1 end
+  for sl = 1, 16 do
+    local ok, d = pcall(turtle.getItemDetail, sl)
+    if ok and d then
+      local hit
+      for _, k in ipairs(KIT) do
+        if k.match(d.name) then have[k.key] = have[k.key] + d.count hit = true break end
+      end
+      if not hit then unknown[#unknown + 1] = ("%s x%d"):format(d.name, d.count) end
+    end
+  end
+
+  local short = {}
+  say("kit    : what the mine needs, against what is in this turtle")
+  for _, k in ipairs(KIT) do
+    local n = have[k.key]
+    sayf("         %-16s %3d of %3d  %s", k.label, n, k.want,
+      n >= k.want and "ok" or ("SHORT " .. (k.want - n) .. " -- " .. k.why))
+    if n < k.want then short[#short + 1] = ("%d %s"):format(k.want - n, k.label) end
+  end
+  if #unknown > 0 then
+    sayf("         not recognised: %s", table.concat(unknown, ", "))
+    say("         (tell me those names -- they are how the audit learns this pack)")
+  end
+  if #short == 0 then
+    say("         nothing missing. Everything the mine needs is aboard.")
+  else
+    sayf("         MISSING: %s", table.concat(short, ", "))
+  end
+  return #short == 0
+end
+
+local function timeSave(n)
+  local t0 = os.epoch and os.epoch("utc") or (os.clock() * 1000)
+  for _ = 1, n do save() end
+  local t1 = os.epoch and os.epoch("utc") or (os.clock() * 1000)
+  return (t1 - t0) / n, t1 - t0
+end
+
+local function check(conf, l, source, index)
+  local x, y, z, how = locate(conf)
+  sayf("quarry --check   turtle %d of %d   %s", index, conf.turtles, DRY and "DRY" or "LIVE")
+  sayf("config : %s (%s)", CONF, source)
+
+  local e = equippedSides()
+  sayf("equipped: left=%s  right=%s", tostring(e.left or "tool or empty"),
+    tostring(e.right or "tool or empty"))
+
+  if not x then
+    say("position: NO FIX -- gps.locate returned nothing and quarry.conf sets no startX/Y/Z")
+    if not hasModem() then
+      say("         CAUSE: no wireless modem is equipped. GPS needs one. Put a")
+      say("         wireless modem in a slot, select it, and run: equip right")
+    else
+      say("         A modem is equipped, so this is range or a missing GPS host.")
+    end
+    say("         startX/startY/startZ is a fallback, not a fix: a turtle told its")
+    say("         position once cannot re-locate after a freeze, so resume degrades.")
+    say("Claim maths needs a position. The kit audit does not, so it follows.")
+    auditKit()
+    return
+  end
+  sayf("position: %d,%d,%d (%s)", x, y, z, how)
+  if how == "quarry.conf" then
+    say("         WARNING: that came from quarry.conf, not GPS. Calibration finds")
+    say("         the heading by moving one block and watching the position change,")
+    say("         and a config coordinate never changes, so a run needs startDir")
+    say("         set as well -- 0, 1, 2 or 3 for +z, -x, -z, +x.")
+    if conf.startDir then
+      sayf("         startDir = %d, so a run will start. Position is dead-reckoned",
+        conf.startDir)
+      say("         from here: if this turtle loses quarry.state it cannot find")
+      say("         itself again. Fixing GPS is still the better answer.")
+    else
+      say("         startDir is NOT set, so a run will refuse to start.")
+    end
+  end
+
+  local c = claimOf(x, z)
+
+  sayf("claim  : chunks %d..%d by %d..%d", c.cx - 1, c.cx + 1, c.cz - 1, c.cz + 1)
+  sayf("corners: x %d..%d, z %d..%d  (%dx%d)", c.xMin, c.xMax, c.zMin, c.zMax, c.xLen, c.zLen)
+  sayf("spine  : x=%d, branches run %d west and %d east", c.spine, c.west, c.east)
+  for i = 1, conf.turtles do
+    local lo, hi, trunk = thirdOf(c, i, conf.turtles)
+    sayf("turtle %d: z %d..%d, trunk at x=%d z=%d%s", i, lo, hi, c.spine, trunk,
+      i == index and "   <- this one" or "")
+  end
+  say("trunks sit on the spine line, so they cost no extra digging")
+
+  sayf("levels : y %d..%d, %d levels, %s first",
+    conf.bottomY, conf.topY, conf.topY - conf.bottomY + 1,
+    conf.deepestFirst and "deepest" or "highest")
+  say("the real floor is found by a failed dig on bedrock; bottomY is only the safety stop")
+
+  -- The pattern read back off the maths rather than asserted, and deliberately
+  -- sampled at a fixed y=0..9 rather than at bottomY: that makes the line a
+  -- stable fingerprint you can compare between two turtles' reports. If all
+  -- three print the same claim corners and the same string here, they agree.
+  local seq = {}
+  for yy = 0, 9 do
+    for zz = c.zMin, c.zMin + 4 do
+      if isBranch(c, yy, zz) then seq[#seq + 1] = zz - c.zMin + 1 break end
+    end
+  end
+  sayf("pattern: z == 2y (mod 5) off the claim corner, first branch = %s  (at y=0..9)",
+    table.concat(seq, ","))
+
+  local r = survey(c, conf)
+  sayf("branches: %d total, %d-%d per level", r.branches, r.minB, r.maxB)
+  sayf("dug    : %d of %d blocks (%.1f%%)", r.dug, r.volume, r.pct)
+
+  local miss, total, edge = unseenRim(c, conf.bottomY, conf.topY)
+  sayf("unseen : %d of %d cross-section cells (%.2f%%), %d of them on the claim face",
+    miss, total, miss / total * 100, edge)
+  if miss > edge then
+    sayf("         WARNING: %d unseen cells are in the INTERIOR. The stagger is not", miss - edge)
+    say("         tiling. Do not run this until that is nought.")
+  elseif miss > 0 then
+    say("         The interior is covered exactly. What is missed is the outermost")
+    say("         z column, and the top and bottom levels, where the branch that")
+    say("         would have seen them lies outside the claim. A neighbouring claim")
+    say("         reads the z rim; nothing reads above topY, by design.")
+  end
+
+  -- the tank is whatever THIS turtle reports, not the plan's assumed 20,000:
+  -- an advanced turtle holds far more, and printing "of 20000" beside a level
+  -- of 51,183 reads like a bug in the turtle rather than a bug in this line.
+  local lim = 20000
+  if turtle and turtle.getFuelLimit then
+    local okl, v = pcall(turtle.getFuelLimit)
+    if okl and type(v) == "number" then lim = v end
+  end
+  sayf("fuel   : about %d moves for the whole claim, %d coal, %.1f per turtle tank",
+    r.moves, math.ceil(r.moves / 80), r.moves / lim)
+  local have = turtle and turtle.getFuelLevel() or 0
+  sayf("         this turtle holds %s of %d", tostring(have), lim)
+
+  local ms, tot = timeSave(conf.saveSamples)
+  sayf("state  : %s, %.2f ms per save, %d ms for %d writes (a move is 400 ms)",
+    STATE, ms, tot, conf.saveSamples)
+  if ms > 40 then say("         WARNING: that is over a tenth of a move, saving every block will cost you") end
+
+  checkLava()
+  auditKit()
+
+  local only = #l.only > 0
+  sayf("ore    : %s", only
+    and ("only these " .. #l.only .. " blocks")
+    or  (conf.oreTags .. " plus " .. #l.oreNames .. " named blocks"))
+  sayf("junk   : %d blacklisted blocks, dumped first when a slot is needed", #l.blacklist)
+  sayf("fuels  : %s", table.concat(l.fuel, ", "))
+  say("build  : phases 1-5 -- mining, depot cycle, three turtles, deploy.")
+end
+
+-- movement -----------------------------------------------------------------
+-- Phase 2. Position is ABSOLUTE: GPS answers where the turtle is, so
+-- tunnel.lua's relative-offset bookkeeping is dropped entirely. st.x/y/z is
+-- the block it stands on, st.dir the way it faces, and every move saves both.
+
+local DIRS = { [0] = { 0, 1 }, [1] = { -1, 0 }, [2] = { 0, -1 }, [3] = { 1, 0 } } -- S W N E
+
+-- Never dig one of these: a broken turtle drops its whole inventory on the
+-- floor, and a broken chest is the user's storage. Not configurable [plan 8].
+-- "lootr" catches the whole Lootr namespace -- lootr:lootr_chest and friends
+-- replace generated loot containers (mineshaft chest minecarts included), and
+-- a turtle can neither break them nor take from them: the break event is
+-- cancelled for a non-sneaking player, and every face exposes zero slots. So
+-- they are an obstruction to route around and a coordinate to hand the user.
+local DENY = { "turtle", "computer", "disk_drive", "chest", "barrel", "shulker", "lootr" }
+
+-- Phase 3 lives below the branch code but is needed inside it. Declared here,
+-- assigned there.
+local makeRoom, dock, watchLava, nextBranch, branchCost, forage, probeDepot, doneKey
+local carryingContainer
+local giveWay
+
+local halt     = nil    -- why the run stopped, the moment it must stop
+local obstacle = nil    -- a deny-list block in the way: ends a leg, not the run
+local jammed   = false  -- another turtle held the way past every retry [plan 8]
+local claim    = nil    -- this run's claim, so the routing code can find a mouth
+local left     = {}     -- deny-list blocks refused, name -> { n, at } for report
+local rejected = {}     -- blocks passed over whose name says "ore" -- pack ids
+local tagless  = false  -- true if inspect gave no tags table, so c:ores is blind
+
+local function fuelLevel()
+  local f = turtle.getFuelLevel()
+  return f == "unlimited" and math.huge or f
+end
+
+local function protected(name)
+  name = tostring(name)
+  for _, p in ipairs(DENY) do if name:find(p, 1, true) then return true end end
+  return false
+end
+
+local function room()
+  for s = 1, 16 do if turtle.getItemCount(s) == 0 then return true end end
+  return false
+end
+
+local function isFuelItem(l, name)
+  for _, n in ipairs(l.fuel) do if n == name then return true end end
+  return false
+end
+
+-- A bucket is kit, not fuel, even though lava_bucket is on the fuel list.
+local function isCoalish(l, name)
+  return isFuelItem(l, name) and not tostring(name):find("bucket", 1, true)
+end
+
+-- How much of the hold is coal. This is the number that decides whether a find
+-- is worth a trip home, so it counts items and not slots.
+local function fuelAboard(l)
+  local n = 0
+  for s = 1, 16 do
+    local ok, d = pcall(turtle.getItemDetail, s)
+    if ok and d and isCoalish(l, d.name) then n = n + d.count end
+  end
+  return n
+end
+
+-- Burn only what the config calls fuel. turtle.refuel() would happily eat a
+-- wooden plank, or the chest the depot needs.
+-- ponytail: 1000 is a flat floor, not a computed one -- the ride down is about
+-- 400 moves and doubling that is cheaper than threading the claim through here.
+local DEPLOY_TANK = 1000
+
+local function topUp(l)
+  -- Deployment is not finished while the depot is still in the hold, and the
+  -- coal is then the mine's starting stock, not this turtle's tank [plan 13].
+  -- Burning it here strands turtles 2 and 3 at an empty fuel chest. It is only
+  -- held back while the tank can already pay for the ride down.
+  local bank = carryingContainer() and fuelLevel() >= DEPLOY_TANK
+  for s = 1, 16 do
+    local ok, d = pcall(turtle.getItemDetail, s)
+    if ok and d and isFuelItem(l, d.name) then
+      if bank and isCoalish(l, d.name) then
+        sayf("fuel   : keeping %d %s for the depot, tank is %d", d.count, d.name, fuelLevel())
+      else
+        turtle.select(s)
+        pcall(turtle.refuel)
+      end
+    end
+  end
+  turtle.select(1)
+end
+
+-- The way is clear, or halt says why it will never be. Three guards, none of
+-- them optional: never dig into a full inventory (the drop is destroyed and
+-- issue #1046 closed that as expected behaviour), never dig the deny list,
+-- and keep digging while gravel keeps falling in.
+local function clear(dig, detect, inspect)
+  -- An empty tank makes turtle.forward() return false exactly as a wall does,
+  -- with no error either way. Every move goes through here, so one guard is
+  -- what stops a fuel-out reading as "blocked" and the run signing off as
+  -- complete with halt unset. calibrate() has the same check for the same reason.
+  if fuelLevel() < 1 then
+    halt = "out of fuel mid-route -- the tank is empty. Feed me coal and re-run."
+    return false
+  end
+  for _ = 1, 16 do
+    if not detect() then return true end
+    -- pcall prepends its own success flag, so inspect's two returns land third
+    local iok, found, data = pcall(inspect)
+    if iok and found and data and protected(data.name) then
+      local name, where = tostring(data.name), ("%d,%d,%d"):format(st.x, st.y, st.z)
+      local e = left[name] or { n = 0, at = where }
+      e.n, left[name] = e.n + 1, e
+      obstacle = name
+      halt = ("refusing to dig %s beside %s"):format(name, where)
+      return false
+    end
+    if not room() then
+      -- the junk tier is the overflow valve: dump a blacklisted stack and carry
+      -- on. Only if there is no junk aboard is a full turtle really stuck.
+      if not makeRoom(lists) then
+        halt = "inventory full -- digging now would destroy the drop"
+        return false
+      end
+    end
+    if not dig() then return false end            -- bedrock, or claim protection
+    st.dug = (st.dug or 0) + 1
+    st.carried = (st.carried or 0) + 1
+    if detect() then os.sleep(0.4) end            -- gravel fell in; let the column settle
+  end
+  return false
+end
+
+local function step()
+  for _ = 1, 8 do
+    if not giveWay() then return false end
+    if not clear(turtle.dig, turtle.detect, turtle.inspect) then return false end
+    if turtle.forward() then
+      local d = DIRS[st.dir]
+      st.x, st.z = st.x + d[1], st.z + d[2]
+      save()
+      return true
+    end
+    turtle.attack()
+  end
+  return false
+end
+
+local function stepUp()
+  for _ = 1, 8 do
+    if not clear(turtle.digUp, turtle.detectUp, turtle.inspectUp) then return false end
+    if turtle.up() then st.y = st.y + 1 save() return true end
+    turtle.attackUp()
+  end
+  return false
+end
+
+local function stepDown()
+  for _ = 1, 8 do
+    if not clear(turtle.digDown, turtle.detectDown, turtle.inspectDown) then return false end
+    if turtle.down() then st.y = st.y - 1 save() return true end
+    turtle.attackDown()
+  end
+  return false
+end
+
+local function turnTo(d)
+  d = d % 4
+  while st.dir ~= d do
+    if (st.dir + 1) % 4 == d then
+      turtle.turnRight()
+      st.dir = d
+    else
+      turtle.turnLeft()
+      st.dir = (st.dir + 3) % 4
+    end
+    save()
+  end
+end
+
+-- Right of way [plan 8]. A turtle in the way cannot be dug, so a 1-wide
+-- corridor is a deadlock until one of them leaves it: both blocked, both
+-- waiting. The launch index breaks the tie. Nobody can read the other
+-- turtle's index -- there is no protocol and the plan wants none -- so the
+-- asymmetry has to come from our own, which is exactly what the launch
+-- argument is for: index 1 retries soonest and effectively holds the
+-- corridor, 2 and 3 wait longer and are the ones that end up moving.
+local YIELD_TRIES = 6
+
+local function turtleAhead()
+  if not turtle.detect() then return false end
+  local ok, hit, d = pcall(turtle.inspect)
+  -- the and-chain used to be compared against nil, so a failed pcall came out
+  -- false ~= nil = true and an inspect error read as another turtle
+  if not ok or not hit or not d then return false end
+  return tostring(d.name):find("turtle", 1, true) ~= nil
+end
+
+-- true when the way is ours, false when another turtle held it past every
+-- retry. Waits only -- it never moves, because the leg counter and the route
+-- both track position and a surprise sidestep would desync them. Moving out
+-- of the way is goTo's job, below, where the route is recomputed anyway.
+function giveWay()
+  if not turtleAhead() then return true end
+  local idx = st.index or 1
+  for try = 1, YIELD_TRIES do
+    sayf("giveway: turtle %d waiting, another one is in the way (%d of %d)",
+      idx, try, YIELD_TRIES)
+    os.sleep(idx * 1.5)
+    if not turtleAhead() then return true end
+  end
+  jammed = true
+  return false
+end
+
+-- Pull off the corridor so the other turtle can pass. A branch mouth every 5
+-- blocks along the spine is already a passing bay [plan 8]; anywhere else,
+-- one block backwards is the best that a 1-wide tunnel offers.
+local function stepAside()
+  jammed = false
+  local c = claim
+  if c and st.y == (st.level or st.y) and st.x == c.spine and isBranch(c, st.y, st.z) then
+    turnTo(1)                      -- west into the mouth: a row that gets mined anyway
+    if step() then return true end
+  end
+  local d = DIRS[st.dir]
+  if turtle.back() then
+    st.x, st.z = st.x - d[1], st.z - d[2]
+    save()
+    return true
+  end
+  return false
+end
+
+-- y first, then x, then z. Descending in place before travelling is what keeps
+-- the walk to the trunk below topY, where the user's surface builds are not.
+-- A jam on the way is not a failure while there is still somewhere to pull
+-- aside to: step out of the corridor and let the loop route around it.
+local function goTo(tx, ty, tz)
+  local aside = 0
+  local function blocked()
+    if not jammed or aside >= 3 then return true end
+    aside = aside + 1
+    return not stepAside()
+  end
+  local function goX()
+    while st.x ~= tx do
+      turnTo(st.x < tx and 3 or 1)
+      if not step() then return false end
+    end
+    return true
+  end
+  local function goZ()
+    while st.z ~= tz do
+      turnTo(st.z < tz and 0 or 2)
+      if not step() then return false end
+    end
+    return true
+  end
+  while st.y > ty do if not stepDown() then return false end end
+  while st.y < ty do if not stepUp()   then return false end end
+  while st.x ~= tx or st.z ~= tz do
+    -- The spine is the corridor and the branches hang off it. Leaving a spine
+    -- block sideways walks straight into whatever stands beside it -- which,
+    -- at the trunk floor, is the depot chest. Travel z along the spine first
+    -- and turn into the branch; anywhere else x is the corridor.
+    local first, second = goX, goZ
+    if claim and st.x == claim.spine then first, second = goZ, goX end
+    if not (first() and second()) and blocked() then return false end
+  end
+  return true
+end
+
+-- GPS gives position and never facing, so derive the facing once by moving a
+-- block and comparing fixes. Two moves, once per boot.
+local function calibrate(conf)
+  local x0, y0, z0, how = locate(conf)
+  if not x0 then return false, "no GPS fix" end
+
+  -- startX/Y/Z pins locate() to a constant, so the second reading below is the
+  -- same as the first however far the turtle actually moved, dx and dz are both
+  -- nought, and no direction matches. Catch it here rather than after the move:
+  -- "calibration moved 0,0" describes the symptom and hides the cause, and it
+  -- cost a live run on 2026-08-28. --check warns about this too, but a run
+  -- started with `quarry 1` never sees --check.
+  -- With the position pinned, the heading has to be told rather than measured.
+  -- Everything after this point dead-reckons anyway -- locate() is only called
+  -- at boot, resume and deploy -- so a stated heading is enough to mine on.
+  -- What it costs is recovery: a turtle that loses its saved state cannot find
+  -- itself again, so fixing GPS is still the better answer.
+  if how == "quarry.conf" then
+    if not conf.startDir then
+      return false, "quarry.conf sets startX/startY/startZ, which pins my position "
+        .. "to a constant -- I cannot find my heading by moving if my coordinates "
+        .. "never change. Either fix GPS and delete those three lines, or add "
+        .. "startDir = 0, 1, 2 or 3 for the way I am facing (+z, -x, -z, +x)."
+    end
+    st.dir = conf.startDir
+    save()
+    sayf("heading: %s from quarry.conf startDir, not measured -- GPS is not answering",
+      ({ [0] = "+z", [1] = "-x", [2] = "-z", [3] = "+x" })[st.dir])
+    return true
+  end
+
+  -- turtle.forward() returns false on an empty tank exactly as it does against
+  -- a wall, with no error either way. Without this check the loop below reads
+  -- an empty tank as "blocked", turns a full circle looking for a way out, then
+  -- blames the walls. Say what is actually wrong.
+  if fuelLevel() < 1 then
+    return false, "out of fuel -- I cannot move one block to find my heading. Feed me coal."
+  end
+
+  local moved = false
+  for _ = 1, 4 do
+    if turtle.forward() then moved = true break end
+    turtle.turnRight()
+  end
+  if not moved then
+    if not clear(turtle.dig, turtle.detect, turtle.inspect) then
+      return false, halt or "boxed in on all four sides"
+    end
+    if not turtle.forward() then return false, "cannot move one block to find my heading" end
+  end
+  local x1, _, z1 = locate(conf)
+  if not x1 then return false, "lost the GPS fix mid-calibration" end
+  local backOk = turtle.back()
+  st.x, st.y, st.z = backOk and x0 or x1, y0, backOk and z0 or z1
+  local dx, dz = x1 - x0, z1 - z0
+  for d, v in pairs(DIRS) do
+    if v[1] == dx and v[2] == dz then st.dir = d save() return true end
+  end
+  return false, ("calibration moved %d,%d, which is not one block"):format(dx, dz)
+end
+
+-- ore ----------------------------------------------------------------------
+-- c:ores plus the configured names. No name:find("ore") fallback [plan 6] --
+-- that is what makes a turtle chase things you did not mean. Blocks rejected
+-- whose name does contain "ore" are logged instead, and printed at the end:
+-- that is how the config learns what this pack calls things.
+
+local function isOre(data, l, conf)
+  if not data or not data.name then return false end
+  if #l.only > 0 then
+    for _, n in ipairs(l.only) do if n == data.name then return true end end
+    return false
+  end
+  for _, n in ipairs(l.oreNames) do if n == data.name then return true end end
+  if data.tags then
+    if data.tags[conf.oreTags] then return true end
+  else
+    tagless = true
+  end
+  return false
+end
+
+local function noteRejected(data)
+  if data and data.name and tostring(data.name):find("ore") then
+    rejected[data.name] = (rejected[data.name] or 0) + 1
+  end
+end
+
+-- Depth-first through a vein, capped by veinMax blocks and veinDepth steps off
+-- the branch. Absolute position means there is no unwind to get wrong: after
+-- each child the turtle simply walks back to the cell it came from.
+local function chase(depth, l, conf)
+  if halt or depth <= 0 or st.chased >= conf.veinMax then return end
+  local px, py, pz = st.x, st.y, st.z
+  local d0 = st.dir
+
+  local function into(move)
+    if halt or st.chased >= conf.veinMax then return end
+    if not move() then return end
+    st.chased = st.chased + 1
+    save()
+    chase(depth - 1, l, conf)
+    if not halt then goTo(px, py, pz) end
+  end
+
+  local function look(inspect, move)
+    if halt then return end
+    local ok, found, data = pcall(inspect)
+    if ok and found and data then
+      if isOre(data, l, conf) then into(move) else noteRejected(data) end
+    end
+  end
+
+  look(turtle.inspectUp, stepUp)
+  look(turtle.inspectDown, stepDown)
+  -- goTo turns to face the direction it travels, so after a chase into a side
+  -- branch st.dir is whatever the walk home needed, not what this cell started
+  -- on. A relative turnTo(st.dir + 1) then rotates from the wrong base and the
+  -- sweep re-checks one face while never looking at another. Anchor it to d0.
+  for i = 0, 3 do
+    turnTo(d0 + i)
+    look(turtle.inspect, step)
+    if halt then return end
+  end
+end
+
+-- the mine -----------------------------------------------------------------
+
+-- Home is the depot once one has been found, and the launch block until then:
+-- the reserve has to cover the walk to wherever the fuel actually is.
+local function toHome()
+  local h = st.depot or st.home
+  return math.abs(st.x - h.x) + math.abs(st.y - h.y) + math.abs(st.z - h.z)
+end
+
+-- Stop while there is still fuel to stop safely.
+local function reserveOk(conf)
+  return fuelLevel() >= toHome() + conf.fuelMargin + 4
+end
+
+-- Coal in the hold is fuel first and cargo second. Burn the least that reaches
+-- the target -- never the stack, or a rich find ends up in one turtle's tank
+-- instead of in the chest the other two draw from. Every place that judges the
+-- tank low calls this first, so a turtle never stops sitting on its own fuel.
+local function burnFrom(l, target)
+  local burnt = 0
+  for s = 1, 16 do
+    if fuelLevel() >= target then break end
+    local ok, d = pcall(turtle.getItemDetail, s)
+    if ok and d and isCoalish(l, d.name) then
+      local n = math.min(d.count, math.ceil((target - fuelLevel()) / 80))
+      turtle.select(s)
+      local okr, did = pcall(turtle.refuel, n)
+      if okr and did then burnt = burnt + n end
+    end
+  end
+  turtle.select(1)
+  if burnt > 0 then sayf("fuel   : burnt %d coal from the hold, tank %d", burnt, fuelLevel()) end
+  return burnt
+end
+
+-- Down the trunk. Above topY there is nothing to mine, so those blocks are
+-- travel and not work: no vein chase, no branch, nothing counted as mining.
+-- The real floor is a failed dig on bedrock; bottomY is only the safety stop.
+local function descend(target)
+  while st.y > target do
+    if not stepDown() then
+      if halt then return false end
+      local ok, found, data = pcall(turtle.inspectDown)
+      if ok and found and data and tostring(data.name):find("bedrock") then
+        st.floor = st.y
+        save()
+        return true, "bedrock"
+      end
+      halt = ("cannot descend past y=%d"):format(st.y)
+      return false
+    end
+  end
+  return true
+end
+
+-- The nearest unmined branch row to the trunk, inside this turtle's third.
+-- Phase 4 adds "an air mouth is already taken"; Phase 2 is one turtle alone.
+local function pickBranch(c, level, lo, hi, from)
+  for d = 0, math.max(from - lo, hi - from) do
+    for _, z in ipairs({ from - d, from + d }) do
+      if z >= lo and z <= hi and isBranch(c, level, z) then return z end
+    end
+  end
+end
+
+-- "An air mouth is already taken" [plan 4]: the claim protocol, and there is
+-- none -- one inspect at the mouth, no rednet, no disk, no hub. Called only
+-- on a fresh claim: a turtle resuming its own half-mined branch would read its
+-- own work as somebody else's and skip it forever. A natural cave at the mouth
+-- costs one skipped branch, which is the same price the plan already accepts
+-- for two turtles claiming the same row.
+local function mouthTaken()
+  for _, d in ipairs({ 1, 3 }) do
+    turnTo(d)
+    if not turtle.detect() then return true end
+  end
+  return false
+end
+
+-- One leg of a branch: out to the claim rim, chasing veins, then back to the
+-- spine. st.leg and st.along are the resume point, saved on every block.
+-- A block that must not be dug ends this leg, not the whole run: the way back
+-- down the leg is already air, so walk to the spine and carry on. Lootr
+-- containers are the common case and there are usually several of them.
+local function endLeg()
+  if not obstacle then return false end
+  sayf("blocked: %s at %d out -- leaving it and ending this leg", obstacle, st.along)
+  halt, obstacle = nil, nil
+  return true
+end
+
+local function mineLeg(c, conf, l, leg)
+  local dir = (leg == "west") and 1 or 3
+  local len = (leg == "west") and c.west or c.east
+  st.leg, st.task = leg, "branch"
+  save()
+  while st.along < len do
+    if not reserveOk(conf) then burnFrom(l, toHome() + conf.fuelMargin + 4) end
+    if not reserveOk(conf) then
+      -- with a depot to walk to, low fuel is a trip home, not a stop; without
+      -- one, stopping here is the only safe answer [plan 7, never strand]
+      if st.depot then
+        st.needDock = true
+        save()
+        return false
+      end
+      halt = ("fuel reserve: %d left, %d to walk home"):format(fuelLevel(), toHome())
+      return false
+    end
+    -- Full, carrying a trip's worth, or sitting on a fuel find the other two
+    -- turtles could be burning: stop here and let the loop dock. The leg
+    -- position is already saved, so the walk back resumes exactly here.
+    if not room() or (st.carried or 0) >= conf.tripBlocks
+       or fuelAboard(l) >= conf.fuelShare then
+      st.needDock = true
+      save()
+      return false
+    end
+    turnTo(dir)
+    if not step() then
+      -- a jam is not an obstacle: give this branch up, dock, and re-pick.
+      -- A wasted trip beats a stuck turtle [plan 8].
+      if jammed then
+        jammed = false
+        st.needDock, st.branch = true, nil
+        save()
+        sayf("giveway: the way is still held -- going back to the depot to re-pick")
+        return false
+      end
+      if not endLeg() then return false end
+      break
+    end
+    st.along = st.along + 1
+    save()
+    watchLava(conf, l)
+    -- veinMax caps ONE chase. st.chased is the counter chase() tests, so it
+    -- resets here; st.veined keeps the run total the report prints.
+    st.chased = 0
+    chase(conf.veinDepth, l, conf)
+    st.veined = (st.veined or 0) + st.chased
+    if halt then
+      if not endLeg() then return false end
+      break
+    end
+  end
+  if not goTo(c.spine, st.level, st.branch) then return false end
+  st.along = 0
+  save()
+  return true
+end
+
+-- depot --------------------------------------------------------------------
+-- Phase 3. The depot is found, never configured. Standing on the trunk floor
+-- the turtle looks at all four sides for a container, then takes one item out
+-- of each and puts it straight back to learn which one holds fuel. Both
+-- coordinates go in the state file, so the probe happens once per claim and a
+-- killed turtle picks up where it left off.
+
+local LAVAMAP   = "/disk/lava.txt"
+local CONTAINER = { "chest", "barrel", "shulker" }
+
+local function isContainer(name)
+  name = tostring(name)
+  if name:find("lootr", 1, true) then return false end   -- loot, not storage
+  for _, p in ipairs(CONTAINER) do if name:find(p, 1, true) then return true end end
+  return false
+end
+
+local function freeSlot()
+  for s = 1, 16 do if turtle.getItemCount(s) == 0 then return s end end
+end
+
+local function carrying()
+  local n = 0
+  for s = 1, 16 do if turtle.getItemCount(s) > 0 then n = n + 1 end end
+  return n
+end
+
+-- Dump the junk tier to make one slot, so a full turtle mid-vein can finish
+-- the block it is standing on instead of walking away from it [plan 6, 8].
+-- The junk lands on the tunnel floor; it is junk, and it despawns.
+function makeRoom(l)
+  for s = 1, 16 do
+    local ok, d = pcall(turtle.getItemDetail, s)
+    if ok and d then
+      for _, n in ipairs(l.blacklist) do
+        if d.name == n then
+          turtle.select(s)
+          local dropped = select(2, pcall(turtle.drop))
+          turtle.select(1)
+          if dropped then
+            st.junked = (st.junked or 0) + d.count
+            save()
+            return true
+          end
+        end
+      end
+    end
+  end
+  return false
+end
+
+-- Which way is the depot: look at all four sides for a container. Called
+-- standing on the trunk floor, once, and the answer is saved.
+function probeDepot(l)
+  local spots = {}
+  for d = 0, 3 do
+    turnTo(d)
+    local ok, hit, data = pcall(turtle.inspect)
+    if ok and hit and data and isContainer(data.name) then spots[#spots + 1] = d end
+  end
+  if #spots == 0 then return false end
+
+  local dump, fuelDir = nil, nil
+  for _, d in ipairs(spots) do
+    turnTo(d)
+    local slot = freeSlot()
+    local role = "dump"
+    if slot then
+      turtle.select(slot)
+      local ok, got = pcall(turtle.suck, 1)
+      if ok and got then
+        local okd, item = pcall(turtle.getItemDetail, slot)
+        if okd and item and isCoalish(l, item.name) then role = "fuel" end
+        pcall(turtle.drop)          -- straight back where it came from
+      else
+        role = "empty"              -- nothing in it yet; it can be the dump chest
+      end
+      turtle.select(1)
+    end
+    if role == "fuel" then fuelDir = fuelDir or d
+    else dump = dump or d end
+  end
+  -- one chest only: it is both. Two or more: the one with coal in it feeds.
+  st.depot = { x = st.x, y = st.y, z = st.z, dump = dump or fuelDir, fuel = fuelDir or dump }
+  save()
+  return true
+end
+
+-- Phase 5, the other half [plan 13]: if the turtle carried the depot down with
+-- it, it builds the depot rather than hoping the user placed one. Called once,
+-- standing on the trunk floor, before probeDepot -- which then learns the two
+-- chests the ordinary way, by taking an item out of each.
+function carryingContainer()
+  for s = 1, 16 do
+    local ok, d = pcall(turtle.getItemDetail, s)
+    if ok and d and isContainer(d.name) then return true end
+  end
+  return false
+end
+
+local function buildDepot(l)
+  local placed = 0
+  for d = 0, 3 do
+    if placed >= 2 then break end
+    turnTo(d)
+    -- The trunk floor is solid rock on every side unless somebody dug it, so
+    -- the alcove has to be cut before a chest can go in it. clear() keeps the
+    -- deny list and the never-dig-into-a-full-hold rule [plan 8].
+    if turtle.detect() then clear(turtle.dig, turtle.detect, turtle.inspect) end
+    if not turtle.detect() then
+      local slot
+      for sl = 1, 16 do
+        local ok, item = pcall(turtle.getItemDetail, sl)
+        if ok and item and isContainer(item.name) then slot = sl break end
+      end
+      if not slot then break end
+      turtle.select(slot)
+      -- pcall prepends its own flag and a crash puts an error STRING second,
+      -- which is not false -- so read both and test place's own answer
+      local lived, put = pcall(turtle.place)
+      if lived and put ~= false then
+        placed = placed + 1
+        sayf("depot  : placed a container on side %d", d)
+        -- The first one becomes the fuel chest: everything burnable this turtle
+        -- still carries goes in, and from here on it rations out of it like the
+        -- other two do [plan 7]. An empty second chest reads as the dump.
+        if placed == 1 then
+          local banked = 0
+          for sl = 1, 16 do
+            local ok, item = pcall(turtle.getItemDetail, sl)
+            if ok and item and isFuelItem(l, item.name) then
+              turtle.select(sl)
+              if select(2, pcall(turtle.drop)) ~= false then banked = banked + item.count end
+            end
+          end
+          if banked > 0 then sayf("depot  : banked %d fuel into it for all three", banked) end
+        end
+      end
+      turtle.select(1)
+    end
+  end
+  return placed
+end
+
+local function dumpLoad(l)
+  local dir = st.depot and st.depot.dump
+  if not dir then return false, "no container beside the trunk floor" end
+  turnTo(dir)
+  for s = 1, 16 do
+    local ok, d = pcall(turtle.getItemDetail, s)
+    if ok and d and not isFuelItem(l, d.name) and d.name ~= "minecraft:bucket" then
+      turtle.select(s)
+      local dropped = select(2, pcall(turtle.drop))
+      if not dropped then
+        turtle.select(1)
+        return false, "the depot chest is full"
+      end
+      st.hauled = (st.hauled or 0) + d.count
+    end
+  end
+  turtle.select(1)
+  st.carried = 0
+  save()
+  return true
+end
+
+-- Ration the chest: at most a third per visit and never the last few, so the
+-- first turtle to dock cannot starve the other two [plan 7]. A turtle cannot
+-- read a chest it is not wired to, so the count is learned by taking: pull the
+-- lot, keep the share, put the rest straight back. Burn on pickup, carry none.
+local function restock(conf, l, want)
+  local dir = st.depot and st.depot.fuel
+  if not dir then return 0, 0 end
+  turnTo(dir)
+  local before = fuelLevel()
+  local aboard = fuelAboard(l)   -- the find; whatever is not burnt is banked
+
+  for _ = 1, 16 do
+    local slot = freeSlot()
+    if not slot then break end
+    turtle.select(slot)
+    local ok, got = pcall(turtle.suck)
+    if not (ok and got) then break end
+  end
+
+  local total = 0
+  for s = 1, 16 do
+    local ok, d = pcall(turtle.getItemDetail, s)
+    if ok and d and isCoalish(l, d.name) then total = total + d.count end
+  end
+
+  -- The old rule took a third of whatever the chest happened to hold, which
+  -- made the shares unequal: on 300 coal three dockers take 100, then 66, then
+  -- 44, because each takes a third of what the last one left, and 90 sit there
+  -- for good. Take what this trip actually needs instead, down to a floor held
+  -- back for the other turtles. Above the floor every turtle gets the same
+  -- `want`; at it nobody takes anything and they forage, which is the designed
+  -- dry-depot path. The floor scales with conf.turtles -- the old literal 3
+  -- reserved for three turtles however many were actually running.
+  local others = math.max(0, math.floor(conf.turtles or 3) - 1)
+  local held   = others * math.max(0, conf.fuelFloor or 0)
+  local share  = math.max(0, total - held)
+  local keep   = math.min(share, math.max(want, 0))
+  -- Everything that came aboard goes back except the share that gets burnt --
+  -- including the load just dumped, because with one chest at the depot the
+  -- fuel and the spoil live in the same box and the suck cannot tell them
+  -- apart. Buckets are kit and never leave.
+  local burnt = 0
+  for s = 1, 16 do
+    local ok, d = pcall(turtle.getItemDetail, s)
+    if ok and d and not tostring(d.name):find("bucket", 1, true) then
+      turtle.select(s)
+      if isCoalish(l, d.name) and burnt < keep then
+        local n = math.min(d.count, keep - burnt)
+        pcall(turtle.refuel, n)
+        burnt = burnt + n
+      end
+      if turtle.getItemCount(s) > 0 then pcall(turtle.drop) end
+    end
+  end
+  turtle.select(1)
+  st.shared = (st.shared or 0) + math.max(0, aboard - burnt)
+  save()
+  return fuelLevel() - before, total
+end
+
+-- the lava map -------------------------------------------------------------
+-- A disk drive with a floppy at the depot mounts /disk on every turtle that
+-- docks, so the map needs no protocol: append while docked, read while docked.
+-- One source per line, "x,y,z". No drive, no map, and nothing else changes.
+
+local function mapRead()
+  local out = {}
+  if not fs.exists(LAVAMAP) then return out end
+  local f = fs.open(LAVAMAP, "r")
+  local text = f.readAll()
+  f.close()
+  for line in tostring(text):gmatch("[^\n]+") do
+    local x, y, z = line:match("^(-?%d+),(-?%d+),(-?%d+)")
+    if x then out[#out + 1] = { x = tonumber(x), y = tonumber(y), z = tonumber(z) } end
+  end
+  return out
+end
+
+local function mapWrite(list)
+  local lines = {}
+  for _, p in ipairs(list) do lines[#lines + 1] = ("%d,%d,%d"):format(p.x, p.y, p.z) end
+  local f = fs.open(LAVAMAP, "w")
+  f.write(table.concat(lines, "\n") .. "\n")
+  f.close()
+end
+
+-- Merge what this trip saw into the shared map. Called only while docked.
+local function mapMerge()
+  if not fs.exists("/disk") then return 0 end
+  local have, seen, added = mapRead(), {}, 0
+  for _, p in ipairs(have) do seen[("%d,%d,%d"):format(p.x, p.y, p.z)] = true end
+  for _, p in ipairs(st.lava or {}) do
+    local k = ("%d,%d,%d"):format(p.x, p.y, p.z)
+    if not seen[k] then
+      seen[k] = true
+      have[#have + 1] = p
+      added = added + 1
+    end
+  end
+  if added > 0 then mapWrite(have) end
+  -- the sources are on /disk now, which is what the dedupe was protecting;
+  -- lavaSeen used to keep every key it had ever seen and save() serialises the
+  -- whole state table on every dug block
+  st.lava, st.lavaSeen = {}, {}
+  save()
+  return added
+end
+
+local function mapDrop(x, y, z)
+  if not fs.exists("/disk") then return end
+  local out = {}
+  for _, p in ipairs(mapRead()) do
+    if not (p.x == x and p.y == y and p.z == z) then out[#out + 1] = p end
+  end
+  mapWrite(out)
+end
+
+-- lava ---------------------------------------------------------------------
+-- Sources only: flowing lava cannot be bucketed. A source is level 0 in the
+-- block state. Turtles are lavaproof, so none of this is about safety -- it is
+-- 1,000 fuel a bucket against coal's 80.
+
+local function isSource(data)
+  if not data or not tostring(data.name):find("lava", 1, true) then return false end
+  if not data.state then return false end          -- no state table: do not guess
+  return data.state.level == 0
+end
+
+local function scoop(conf, side)
+  if not conf.lava then return false end
+  local slot = findItem("minecraft:bucket")
+  if not slot then return false end
+  turtle.select(slot)
+  local place = (side == "down" and turtle.placeDown)
+             or (side == "up" and turtle.placeUp)
+             or turtle.place
+  local ok = select(2, pcall(place))
+  local got = findItem("minecraft:lava_bucket")
+  if got then
+    turtle.select(got)
+    pcall(turtle.refuel)
+    st.scooped = (st.scooped or 0) + 1
+  end
+  turtle.select(1)
+  save()
+  return ok and got ~= nil
+end
+
+-- Every block of the branch passes this. Record a source's position for the
+-- map; scoop it only when the tank is low enough to be worth a bucket trip.
+function watchLava(conf, l)
+  local probes = {
+    { turtle.inspectDown, "down", 0, -1, 0 },
+    { turtle.inspect,     "front", DIRS[st.dir or 0][1], 0, DIRS[st.dir or 0][2] },
+  }
+  for _, p in ipairs(probes) do
+    local ok, hit, data = pcall(p[1])
+    if ok and hit and isSource(data) then
+      local x, y, z = st.x + p[3], st.y + p[4], st.z + p[5]
+      local k = ("%d,%d,%d"):format(x, y, z)
+      -- take it if the tank wants it; only what is left standing goes on the
+      -- map, or the next dock would put a source back that no longer exists
+      local took = conf.lava and fuelLevel() < conf.lavaFloor and scoop(conf, p[2])
+      if took then
+        mapDrop(x, y, z)
+      else
+        st.lava, st.lavaSeen = st.lava or {}, st.lavaSeen or {}
+        if not st.lavaSeen[k] then
+          st.lavaSeen[k] = true
+          st.lava[#st.lava + 1] = { x = x, y = y, z = z }
+          save()
+        end
+      end
+    end
+  end
+end
+
+-- the work loop ------------------------------------------------------------
+
+local function levelsFrom(conf)
+  local ys = {}
+  for _, y in ipairs(levels(conf)) do
+    if not st.floor or y >= st.floor then ys[#ys + 1] = y end
+  end
+  return ys
+end
+
+function doneKey(y, z) return ("%d:%d"):format(y, z) end
+
+-- The next branch this turtle owns: unfinished rows on the current level
+-- first, nearest to the trunk, then the next level in schedule order. Phase 4
+-- replaces the state list with "an air mouth is already taken" [plan 4].
+function nextBranch(conf, c, lo, hi, trunkZ)
+  st.done = st.done or {}
+  local ys, from = levelsFrom(conf), nil
+  for i, y in ipairs(ys) do if y == st.level then from = i break end end
+  for i = from or 1, #ys do
+    local y = ys[i]
+    for d = 0, math.max(from and (trunkZ - lo) or 0, hi - lo) do
+      for _, z in ipairs({ trunkZ - d, trunkZ + d }) do
+        if z >= lo and z <= hi and isBranch(c, y, z) and not st.done[doneKey(y, z)] then
+          return y, z
+        end
+      end
+    end
+  end
+end
+
+-- What one more branch costs from where the turtle stands, plus the walk back
+-- to the depot afterwards. This is what the fuel top-up aims at.
+function branchCost(c, conf, y, z)
+  local dp = st.depot or st.home
+  local toMouth = math.abs(st.x - c.spine) + math.abs(st.y - y) + math.abs(st.z - z)
+  local legs    = 2 * (c.west + c.east)
+  local back    = math.abs(c.spine - dp.x) + math.abs(y - dp.y) + math.abs(z - dp.z)
+  return toMouth + legs + back + conf.fuelMargin
+end
+
+-- Foraging, only when the depot is dry [plan 7]: nearest mapped lava source
+-- first, then a top-level branch (coal lives y=0..192 and those levels are on
+-- the schedule anyway), then park.
+function forage(conf, l, c)
+  if conf.lava and findItem("minecraft:bucket") then
+    local best, bd
+    for _, p in ipairs(mapRead()) do
+      local d = math.abs(p.x - st.x) + math.abs(p.y - st.y) + math.abs(p.z - st.z)
+      if d * 2 + conf.fuelMargin < fuelLevel() and (not bd or d < bd) then best, bd = p, d end
+    end
+    if best then
+      sayf("forage : mapped lava source at %d,%d,%d, %d blocks off", best.x, best.y, best.z, bd)
+      st.task = "forage" save()
+      if goTo(best.x, best.y + 1, best.z) then
+        local ok, hit, data = pcall(turtle.inspectDown)
+        if ok and hit and isSource(data) and scoop(conf, "down") then
+          mapDrop(best.x, best.y, best.z)
+          return true
+        end
+      end
+      mapDrop(best.x, best.y, best.z)   -- gone or unreachable: stop trying it
+    end
+  end
+  local top = conf.topY
+  if st.level ~= top then
+    sayf("forage : depot is dry -- taking a branch at y=%d instead, where the coal is", top)
+    st.level, st.branch, st.leg, st.along = top, nil, nil, 0
+    save()
+    return true
+  end
+  return false
+end
+
+-- One depot visit: dump the load, write what the trip saw into the shared map,
+-- take a rationed top-up, and forage if the chest had nothing to give.
+function dock(c, conf, l, want)
+  local dp = st.depot
+  st.task = "depot"
+  save()
+  sayf("depot  : docking with %d slots used, %d fuel", carrying(), fuelLevel())
+  if not goTo(dp.x, dp.y, dp.z) then return false end
+
+  local okd, why = dumpLoad(l)
+  if not okd then halt = why return false end
+
+  local added = mapMerge()
+  if added > 0 then sayf("lavamap: %d new source%s on /disk", added, added == 1 and "" or "s") end
+
+  -- aim at four branches' worth, which the plan's 20,000 tank swallows whole
+  local target = want * 4
+  local need   = math.max(0, math.ceil((target - fuelLevel()) / 80))
+  local got, avail = restock(conf, l, need)
+  sayf("depot  : dumped; chest held %d fuel items, took %d fuel, tank %d",
+    avail, got, fuelLevel())
+
+  st.needDock = nil
+  st.trips = (st.trips or 0) + 1
+  save()
+
+  if fuelLevel() < want then
+    if not forage(conf, l, c) then
+      halt = ("depot is dry and there is nothing to forage: %d fuel, %d needed")
+        :format(fuelLevel(), want)
+      return false
+    end
+  end
+  return true
+end
+
+local function report(c, conf)
+  sayf("dug    : %d blocks, %d of them chasing veins", st.dug or 0, st.veined or 0)
+  sayf("depot  : %d trips, %d items hauled, %d junk dumped in the tunnel",
+    st.trips or 0, st.hauled or 0, st.junked or 0)
+  if (st.shared or 0) > 0 then
+    sayf("fuel   : %d coal banked in the depot chest for the other turtles",
+      st.shared)
+  end
+  local nb = 0
+  for _ in pairs(st.done or {}) do nb = nb + 1 end
+  sayf("done   : %d branch%s finished in this third", nb, nb == 1 and "" or "es")
+  if (st.scooped or 0) > 0 then sayf("lava   : %d source%s scooped", st.scooped, st.scooped == 1 and "" or "s") end
+  sayf("at     : %d,%d,%d facing %s, fuel %d", st.x, st.y, st.z,
+    ({ [0] = "+z", [1] = "-x", [2] = "-z", [3] = "+x" })[st.dir or 0], fuelLevel())
+  if st.floor then sayf("floor  : bedrock stopped the trunk at y=%d", st.floor) end
+  local names = {}
+  for name, n in pairs(rejected) do names[#names + 1] = ("%s x%d"):format(name, n) end
+  if #names > 0 then
+    sayf("passed over: %s", table.concat(names, ", "))
+    say("         (those are ore-ish blocks this config does not mine. Add the")
+    say("         ones you want under [oreNames] in quarry.conf.)")
+  end
+  local kept = {}
+  for name, e in pairs(left) do kept[#kept + 1] = ("%s x%d (beside %s)"):format(name, e.n, e.at) end
+  if #kept > 0 then
+    sayf("left alone: %s", table.concat(kept, ", "))
+    say("         (Lootr containers cannot be broken or emptied by a turtle at")
+    say("          all -- the loot is per-player. Go and open them yourself.)")
+  end
+  if tagless then
+    say("WARNING: inspect returned no tags table, so oreTags is doing nothing here.")
+    say("         Only the [oreNames] list is finding ore. Tell me and I will fix it.")
+  end
+  if halt then sayf("STOPPED: %s", halt) else say("work complete") end
+end
+
+-- Phases 2 and 3: descend, cross to the trunk, sink it, then branch after
+-- branch with a depot trip whenever the load or the tank calls for one.
+-- One depot serves all three [plan 5] and it stands at one trunk floor, so
+-- two turtles out of three find nothing under their own. Rather than spend a
+-- spine walk on every boot, the sweep waits until a turtle actually needs the
+-- depot -- and then happens once, because the answer is saved either way.
+-- Bedrock scatters over four blocks so the trunk floors are rarely the same
+-- y: probe up the column too, which is cheaper than asking the user to level
+-- three floors by hand.
+local function findSharedDepot(c, conf, l, index, trunkZ)
+  for i = 1, conf.turtles do
+    if i ~= index then
+      local _, _, tz = thirdOf(c, i, conf.turtles)
+      sayf("depot  : looking under turtle %d's trunk at z=%d", i, tz)
+      -- bedrock scatters over four blocks in BOTH directions: a turtle whose
+      -- own floor stopped higher than its neighbour's is ABOVE the depot, and
+      -- an upward-only sweep passes over it and sets noDepot for good.
+      local y0 = st.level
+      for _, off in ipairs({ 0, 1, 2, 3, -1, -2, -3 }) do
+        if goTo(c.spine, y0 + off, tz) and probeDepot(l) then
+          local dp = st.depot
+          sayf("depot  : shared depot at %d,%d,%d (dump side %d, fuel side %d)",
+            dp.x, dp.y, dp.z, dp.dump, dp.fuel)
+          return true
+        end
+      end
+    end
+  end
+  st.noDepot = true          -- asked and answered: do not walk the spine again
+  save()
+  say("depot  : no container under any trunk floor")
+  goTo(c.spine, st.level, trunkZ)   -- back to its own trunk to stop tidily
+  return false
+end
+
+-- Recall [plan 4]. Normal returns are independent -- tying them to the group
+-- would idle two turtles every time one filled -- but collecting the mine is
+-- collective: you type it on each turtle. It is also the only way to reach a
+-- turtle that is already working, so the sequence is Ctrl+T, then
+-- "quarry <n> recall". The branch it was on stays in quarry.state, so the
+-- same turtle re-run without the argument picks the mine straight back up.
+local function runRecall(conf, l, index)
+  if not st.home then
+    error("nothing to recall from: quarry.state has no claim for this turtle", 0)
+  end
+  local c = claimOf(st.home.x, st.home.z)
+  claim = c
+  local _, _, trunkZ = thirdOf(c, index, conf.turtles)
+  local h = st.home
+
+  if DRY then
+    sayf("DRY recall %d: %d,%d,%d -> the trunk at x=%d z=%d, up to y=%d, then home %d,%d,%d",
+      index, st.x or h.x, st.y or h.y, st.z or h.z, c.spine, trunkZ, h.y, h.x, h.y, h.z)
+    say("set dry = false in quarry.conf to actually walk it")
+    return
+  end
+
+  local x, y, z = locate(conf)
+  if not x then error("no position fix: equip a wireless modem (see --check)", 0) end
+  st.x, st.y, st.z = x, y, z
+  st.task = "recall"
+  save()
+  local okc, why = calibrate(conf)
+  if not okc then error("cannot work out which way I am facing: " .. tostring(why), 0) end
+
+  local trip = math.abs(st.x - c.spine) + math.abs(st.z - trunkZ)
+             + math.abs(h.y - st.y) + math.abs(h.x - c.spine) + math.abs(h.z - trunkZ)
+  if fuelLevel() < trip + conf.fuelMargin then burnFrom(l, trip + conf.fuelMargin) end
+  sayf("recall : %d,%d,%d -> %d,%d,%d, about %d moves, fuel %d",
+    st.x, st.y, st.z, h.x, h.y, h.z, trip, fuelLevel())
+  if fuelLevel() < trip then
+    sayf("recall : SHORT -- %d fuel for a %d-move walk. It will get as far as it can.",
+      fuelLevel(), trip)
+  end
+
+  -- Along the branch to the trunk column first, and only then up. goTo climbs
+  -- before it travels, so going up anywhere else cuts a fresh shaft through
+  -- a hundred blocks of rock instead of using the one already there.
+  if not goTo(c.spine, st.y, trunkZ) then say("recall : stopped short of the trunk") return end
+  if not goTo(c.spine, h.y, trunkZ)  then say("recall : stopped inside the trunk")  return end
+  if not goTo(h.x, h.y, h.z)         then say("recall : stopped short of home")     return end
+  save()
+  say("recall : parked. quarry.state still holds the branch -- re-run without")
+  say("         the argument and it carries on where it stopped.")
+end
+
+local function runMine(conf, l, index)
+  local x, y, z = locate(conf)
+  if not x then
+    error("no position fix: equip a wireless modem (see --check), or set startX/Y/Z", 0)
+  end
+  st.index = index
+  st.x, st.y, st.z = x, y, z
+  st.dug, st.chased, st.veined = st.dug or 0, 0, 0
+  -- A saved home from a previous claim would hijack this one, so a turtle that
+  -- wakes up outside its old claim has plainly been carried to a new spot:
+  -- forget the old anchor and the branch that went with it.
+  if st.home then
+    local hc = claimOf(st.home.x, st.home.z)
+    if x < hc.xMin or x > hc.xMax or z < hc.zMin or z > hc.zMax then
+      say("moved: this is not the claim in quarry.state, starting a new one")
+      st.home, st.level, st.branch, st.leg, st.along = nil, nil, nil, nil, 0
+      st.depot, st.noDepot = nil, nil
+    end
+  end
+  st.home = st.home or { x = x, y = y, z = z }
+  save()
+
+  -- The claim comes from the block the turtle was LAUNCHED on, never from
+  -- where it happens to be standing now. A turtle resuming from 24 blocks
+  -- down a branch is often in a different chunk than it started in, and
+  -- claimOf() on that position hands it a whole different claim to mine.
+  local c = claimOf(st.home.x, st.home.z)
+  claim = c
+  local lo, hi, trunkZ = thirdOf(c, index, conf.turtles)
+  sayf("quarry %d  at %d,%d,%d  claim x %d..%d z %d..%d (anchored at %d,%d)",
+    index, x, y, z, c.xMin, c.xMax, c.zMin, c.zMax, st.home.x, st.home.z)
+  sayf("third  : z %d..%d, trunk at x=%d z=%d", lo, hi, c.spine, trunkZ)
+
+  topUp(l)
+  local okc, why = calibrate(conf)
+  if not okc then error("cannot work out which way I am facing: " .. tostring(why), 0) end
+  sayf("heading: %d, fuel %d", st.dir, fuelLevel())
+
+  -- Refuse the trip it cannot pay for, while still at the surface where the
+  -- user can reach it. The reserve inside the branch is what stops it later;
+  -- this is what stops it stranding itself 119 blocks down before it starts.
+  local travelY = math.min(st.y, conf.topY)
+  local target  = st.level or (conf.deepestFirst and conf.bottomY or conf.topY)
+  local trip = (st.y - travelY) + math.abs(c.spine - st.x) + math.abs(trunkZ - st.z)
+             + math.max(travelY - target, 0)
+  local need = 2 * trip + conf.fuelMargin
+  if fuelLevel() < need then
+    halt = ("not enough fuel: %d in the tank, %d to reach the branch and walk back")
+      :format(fuelLevel(), need)
+    report(c, conf)
+    return
+  end
+
+  -- 1. straight down to travel height, so the walk to the trunk happens below
+  --    topY where the surface builds are not.
+  if st.y > travelY then
+    sayf("descend: %d blocks to y=%d before crossing (above topY is travel, not mining)",
+      st.y - travelY, travelY)
+    st.task = "descend" save()
+    if not goTo(st.x, travelY, st.z) then report(c, conf) return end
+  end
+
+  -- 2. across to the trunk column, 3. down the trunk to the working level.
+  -- A turtle resuming at its level is already down here; sending it back to
+  -- the trunk first would only walk the branch twice.
+  if not (st.level and st.y == st.level) then
+    st.task = "spine" save()
+    sayf("cross  : to the trunk at %d,%d", c.spine, trunkZ)
+    if not goTo(c.spine, st.y, trunkZ) then report(c, conf) return end
+
+    st.task = "descend" save()
+    sayf("trunk  : down to y=%d", target)
+    local okd, stopped = descend(target)
+    if not okd then report(c, conf) return end
+    if stopped == "bedrock" then sayf("bedrock: floor is y=%d, working there instead", st.y) end
+    st.level = st.y
+    save()
+  end
+
+  -- 4. the depot. Found, never configured: standing on the trunk floor the
+  -- turtle looks around itself once and remembers what it saw.
+  if not st.depot then
+    -- Carrying chests means deployment is not finished: this turtle is here to
+    -- build the depot, not to look for one. Placing first means probeDepot
+    -- finds them on the same pass.
+    if not probeDepot(l) then
+      local built = buildDepot(l)
+      if built > 0 then
+        sayf("depot  : built the depot here, %d container%s", built, built == 1 and "" or "s")
+      end
+    end
+    if st.depot or probeDepot(l) then
+      local dp = st.depot
+      sayf("depot  : container beside the trunk floor at %d,%d,%d (dump side %d, fuel side %d)",
+        dp.x, dp.y, dp.z, dp.dump, dp.fuel)
+    else
+      say("depot  : nothing under my own trunk -- it will look under the others")
+      say("         the first time it actually needs one [plan 5]")
+    end
+  end
+
+  -- 5. the work loop. One branch at a time: pick, walk out, mine both legs,
+  -- dock when the load or the tank says so, and carry on until the third is
+  -- finished or something stops it [plan 11].
+  while true do
+    if not st.branch then
+      local by, bz = nextBranch(conf, c, lo, hi, trunkZ)
+      if not by then
+        say("claim  : every branch in this third is mined -- stopping and idling [plan 12]")
+        break
+      end
+      if by ~= st.level then sayf("level  : moving to y=%d", by) end
+      st.level, st.branch, st.leg, st.along = by, bz, nil, 0
+      save()
+    end
+
+    -- the dock flag is a fact about the load, not durable state: a turtle that
+    -- resumes with an empty hold has no trip to make, whatever the file says
+    if st.needDock and room() and (st.carried or 0) < conf.tripBlocks
+       and fuelAboard(l) < conf.fuelShare then
+      st.needDock = nil
+    end
+
+    local want = branchCost(c, conf, st.level, st.branch)
+    if fuelLevel() < want then burnFrom(l, want) end
+    if st.needDock or fuelLevel() < want then
+      if not st.depot and not st.noDepot then findSharedDepot(c, conf, l, index, trunkZ) end
+      if st.depot then
+        if not dock(c, conf, l, want) then break end
+        -- foraging can drop the branch it was heading for and pick a level
+        -- somewhere else entirely, so start the pass again rather than walk to
+        -- a branch that is no longer the plan
+        if not st.branch then goto nextpass end
+      elseif fuelLevel() < want then
+        halt = ("out of fuel: %d in the tank, %d for the next branch, and no depot found")
+          :format(fuelLevel(), want)
+        break
+      else
+        -- Three things set st.needDock and only one of them is a full hold.
+        -- Saying "inventory is full" for all three sent the user to look at an
+        -- inventory that had six free slots in it.
+        local why
+        if not room() then
+          why = ("inventory is full: all 16 slots hold something")
+        elseif (st.carried or 0) >= conf.tripBlocks then
+          why = ("carrying %d blocks and tripBlocks is %d, so it is time to empty out")
+            :format(st.carried or 0, conf.tripBlocks)
+        elseif fuelAboard(l) >= conf.fuelShare then
+          why = ("carrying %d fuel and fuelShare is %d, which the other turtles could burn")
+            :format(fuelAboard(l), conf.fuelShare)
+        else
+          why = "a depot run was queued"
+        end
+        halt = why .. ", and there is no depot to empty it into"
+        break
+      end
+    end
+
+    -- walk to the work: the branch mouth, or the point in the leg it left off
+    if st.leg and (st.along or 0) > 0 then
+      local bx = c.spine + ((st.leg == "west") and -st.along or st.along)
+      sayf("resume : %s leg of y=%d z=%d, %d out", st.leg, st.level, st.branch, st.along)
+      if not goTo(bx, st.level, st.branch) then
+        if st.needDock then goto nextpass end
+        break
+      end
+    else
+      sayf("branch : y=%d z=%d, %d west and %d east of the spine",
+        st.level, st.branch, c.west, c.east)
+      if not goTo(c.spine, st.level, st.branch) then
+        if st.needDock then goto nextpass end
+        break
+      end
+      st.leg, st.along = nil, 0
+      if mouthTaken() then
+        sayf("taken  : y=%d z=%d is already cut -- another turtle has it", st.level, st.branch)
+        st.done = st.done or {}
+        st.done[doneKey(st.level, st.branch)] = true
+        st.branch, st.leg, st.along = nil, nil, 0
+        save()
+        goto nextpass
+      end
+    end
+
+    local legs = (st.leg == "east") and { "east" } or { "west", "east" }
+    local stopped = false
+    for _, leg in ipairs(legs) do
+      if st.leg ~= leg then st.along = 0 end
+      if not mineLeg(c, conf, l, leg) then stopped = true break end
+    end
+
+    if stopped then
+      -- a dock request goes round the loop again; anything else is a real stop
+      if halt then break end
+      if not st.needDock then
+        halt = "a leg stopped without a reason -- routing failed"
+        break
+      end
+    else
+      st.done = st.done or {}
+      st.done[doneKey(st.level, st.branch)] = true
+      st.branch, st.leg, st.along = nil, nil, 0
+      save()
+    end
+    ::nextpass::
+  end
+
+  -- Park, but do NOT clear the leg position on a stop: that is the resume
+  -- point, and a stopped turtle is resumed far more often than a finished one.
+  st.task = "park"
+  if not halt then st.leg, st.along = nil, 0 end
+  save()
+  report(c, conf)
+end
+
+-- The DRY route: every waypoint and what each costs, and no actuator touched.
+local function dryRun(conf, l, index)
+  local x, y, z, how = locate(conf)
+  if not x then
+    say("DRY: no position fix. Run --check first; you are probably missing a modem.")
+    return
+  end
+  -- same anchor rule as the live run: a saved home wins over where it stands
+  local c = claimOf(st.home and st.home.x or x, st.home and st.home.z or z)
+  local lo, hi, trunkZ = thirdOf(c, index, conf.turtles)
+  local travelY = math.min(y, conf.topY)
+  local level = conf.deepestFirst and conf.bottomY or conf.topY
+  local bz = pickBranch(c, level, lo, hi, trunkZ) or trunkZ
+  local drop  = y - travelY
+  local cross = math.abs(c.spine - x) + math.abs(trunkZ - z)
+  local trunk = travelY - level
+  local spine = math.abs(bz - trunkZ)
+  local branch = 2 * (c.west + c.east)
+  local total = drop + cross + trunk + spine + branch
+
+  sayf("quarry %d  DRY  at %d,%d,%d (%s)", index, x, y, z, how)
+  sayf("claim  : x %d..%d, z %d..%d, spine x=%d", c.xMin, c.xMax, c.zMin, c.zMax, c.spine)
+  sayf("third  : z %d..%d, trunk at x=%d z=%d", lo, hi, c.spine, trunkZ)
+  sayf("route  : down %d to y=%d, across %d to the trunk, down %d to y=%d,",
+    drop, travelY, cross, trunk, level)
+  sayf("         along the spine %d to z=%d, then %d west and %d east",
+    spine, bz, c.west, c.east)
+  sayf("moves  : about %d for the first branch, plus vein chases (capped at %d each)",
+    total, conf.veinMax)
+  sayf("then   : branch after branch until the third is done, docking every %d blocks",
+    conf.tripBlocks)
+  say("depot  : found on arrival -- a container beside the trunk floor, either side.")
+  say("         No chest there means it mines one load and stops.")
+  sayf("fuel   : have %d, this branch wants about %d plus a %d reserve",
+    fuelLevel(), total, conf.fuelMargin)
+  if fuelLevel() < total + conf.fuelMargin then
+    say("         SHORT. Put coal in a slot; it is burned on pickup, never carried.")
+  end
+  sayf("guards : deny list %s; never digs into a full inventory", table.concat(DENY, ", "))
+  say("         (a full turtle dumps blacklisted junk to make room before it stops)")
+  say("set dry = false in quarry.conf (or DRY = false at the top of this file) to run it")
+end
+
+-- deployment [plan 13] -----------------------------------------------------
+-- Settled in-game 2026-08-27 by probe.lua, which overturned two assumptions
+-- section 13 was written on:
+--
+--   * A turtle is NOT a peripheral to another turtle. turnOn, isOn and getID
+--     are unavailable, so plan 13 step 4 ("call turnOn on turtle 2") cannot be
+--     done at all. It does not need to be -- a placed turtle boots on its own
+--     and runs /disk/startup.lua unprompted, in about 23 seconds.
+--   * Facing does not matter. calibrate() derives a heading by moving one
+--     block and diffing GPS, so a deployed turtle orients itself.
+--
+-- The rig is the one the probe proved: the drive one block up, the new turtle
+-- on the ground directly below it, both in front of the deploying turtle.
+-- Deployment happens at the SURFACE, on the launch block, not at the claim
+-- floor: the drive has to sit directly above the placed turtle, and a trunk
+-- floor has no spare side once the two depot chests are down. runMine anchors
+-- its claim wherever it wakes, and the launch block is in the centre chunk, so
+-- all three agree on the same claim anyway.
+
+local BOOT = [==[
+-- written by quarry deploy. Runs on a freshly placed turtle: no label, no
+-- fuel, no modem, and an inventory its deployer is still filling.
+local N = %d
+os.setComputerLabel("quarry" .. N)
+
+-- Nobody is watching this screen. Every stage is written to the floppy as well,
+-- so the deployer standing behind can read back what actually happened rather
+-- than inferring it from a turtle that did not move.
+local LOG = "/disk/deploy" .. N .. ".log"
+if fs.exists(LOG) then fs.delete(LOG) end
+local function note(msg)
+  print("quarry" .. N .. ": " .. msg)
+  local h = fs.open(LOG, "a")
+  if h then h.writeLine(msg) h.close() end
+end
+
+note("booted, waiting for my kit")
+
+if fs.exists("quarry") then fs.delete("quarry") end
+fs.copy("/disk/quarry", "quarry")
+
+-- The config has to follow the program. Without it this turtle seeds a fresh
+-- quarry.conf off the shipped defaults -- which since 2026-08-27 mine for real
+-- -- so it goes live on settings its deployer never chose: veinMax, tripBlocks,
+-- the ore names and the fuel sections all revert. Same anti-drift rule as the
+-- program itself: take the deployer's file, do not re-derive one.
+if fs.exists("/disk/quarry.conf") then
+  if fs.exists("quarry.conf") then fs.delete("quarry.conf") end
+  fs.copy("/disk/quarry.conf", "quarry.conf")
+  note("took the deployer's quarry.conf")
+else
+  note("WARNING: no quarry.conf on the floppy -- seeding one from the defaults;")
+  note("         it MINES, but on default settings, not the deployer's")
+end
+
+local function slotLike(pat)
+  for s = 1, 16 do
+    local d = turtle.getItemDetail(s)
+    if d and d.name:find(pat) then return s, d end
+  end
+end
+
+-- The deployer drops the kit in AFTER placing this turtle, so the boot beats
+-- the coal. Wait for it rather than racing it. 60 x 1s, then give up and say so.
+local modemSlot
+for _ = 1, 60 do
+  modemSlot = slotLike("modem")
+  if modemSlot and slotLike("coal") then break end
+  os.sleep(1)
+end
+if not modemSlot then
+  note("no modem arrived in 60s -- cannot GPS, stopping")
+  return
+end
+if not slotLike("coal") then
+  note("modem came but no coal did -- equipping anyway, will stop on fuel 0")
+end
+
+-- Equip the modem on whichever side is not holding the pickaxe. Guessing wrong
+-- disarms the turtle: equip swaps, so the pickaxe would land in the inventory
+-- and this turtle could not dig. Do it, look at what came off, and undo it if
+-- that was the pickaxe.
+turtle.select(modemSlot)
+local okR = turtle.equipRight()
+local came = turtle.getItemDetail()
+if came and came.name:find("pickaxe") then
+  turtle.equipRight()             -- pickaxe back on the right, modem back in hand
+  local okL = turtle.equipLeft()  -- modem goes left instead
+  note("equipRight " .. tostring(okR) .. ", pickaxe came off, equipLeft " .. tostring(okL))
+else
+  note("equipRight " .. tostring(okR) .. ", nothing came off")
+end
+
+-- Do not trust the swap. Ask the peripheral API which side actually holds a
+-- modem: on a turtle, left and right report the EQUIPPED upgrade, so this is a
+-- direct answer rather than an inference from what came off in the hand.
+local modemSide
+for _, sd in ipairs({ "left", "right" }) do
+  local okp, t = pcall(peripheral.getType, sd)
+  if okp and t and tostring(t):find("modem") then modemSide = sd end
+end
+if modemSide then
+  note("modem confirmed equipped on " .. modemSide)
+else
+  note("STOPPED: no modem on either side after equipping. Without one there is")
+  note("no GPS, so I cannot find myself. Equip it by hand and reboot me.")
+  for _, sd in ipairs({ "left", "right" }) do
+    local okp, t = pcall(peripheral.getType, sd)
+    note("  " .. sd .. " holds " .. tostring((okp and t) or "nothing"))
+  end
+  return
+end
+
+-- Burn everything it was handed. It carries no fuel items to the depot; the
+-- depot is what it rations from after that [plan 7].
+for s = 1, 16 do
+  local d = turtle.getItemDetail(s)
+  if d and (d.name:find("coal") or d.name:find("charcoal")) then
+    turtle.select(s)
+    turtle.refuel()
+  end
+end
+turtle.select(1)
+
+-- Install a local startup so this turtle comes back on its own after a reboot,
+-- a chunk reload, or a server restart. The floppy is one block above the spot
+-- it launches from and it does not carry the drive with it, so the disk cannot
+-- be what restarts it. quarry resumes from its own state file.
+local fuel = turtle.getFuelLevel()
+if fuel ~= "unlimited" and fuel < 1 then
+  note("STOPPED: fuel is 0. No coal reached me, and quarry can only spin on an")
+  note("empty tank. Put coal in me and reboot.")
+  return
+end
+
+local h = fs.open("/startup", "w")
+if h then
+  h.writeLine("shell.run('quarry', '" .. N .. "')")
+  h.close()
+  note("installed /startup so I come back after a reboot")
+end
+
+note("fuel " .. tostring(turtle.getFuelLevel()) .. ", starting quarry " .. N)
+shell.run("quarry", tostring(N))
+]==]
+
+local function slotLike(pat)
+  for s = 1, 16 do
+    local ok, d = pcall(turtle.getItemDetail, s)
+    if ok and d and d.name:find(pat) then return s, d.name, d.count end
+  end
+end
+
+-- Hand one item to the turtle in front. A turtle is an inventory, so a plain
+-- drop lands in its slots -- which is the only channel there is, now that the
+-- peripheral route is known to be closed.
+local function handOver(pat, count, what)
+  local s = slotLike(pat)
+  if not s then sayf("deploy : no %s to hand over", what) return false end
+  turtle.select(s)
+  -- pcall prepends its own success flag, so turtle.drop's answer is the SECOND
+  -- value. Reading the first as the drop result made every failed drop look
+  -- like a success, which is how a turtle got left standing with no modem.
+  local lived, dropped = pcall(turtle.drop, count)
+  if not lived then
+    sayf("deploy : could not hand over the %s: %s", what, tostring(dropped))
+    return false
+  end
+  if dropped == false then
+    sayf("deploy : the %s would NOT go across -- is the turtle really in front?", what)
+    return false
+  end
+  sayf("deploy : handed over the %s", what)
+  return true
+end
+
+-- One turtle: place it, feed it, wait for it to walk off. Returns false and a
+-- reason, never throws, because a half-deployed mine still wants its report.
+local function deployOne(conf, l, index)
+  sayf("deploy : turtle %d", index)
+
+  local tSlot, tName = slotLike("turtle")
+  if not tSlot then return false, "no turtle item left in the hold" end
+
+  -- The spot has to be clear at both heights, and this is the surface, so
+  -- anything in the way is the user's build. Say so rather than digging it.
+  if turtle.detect() then return false, "something is in front of me; move me somewhere clear" end
+
+  turtle.select(tSlot)
+  -- pcall prepends its own success flag, so place's answer is the SECOND value.
+  -- Reading the first made a refused placement look placed, and the modem and
+  -- coal then went on the floor in front of nothing.
+  local lived, placed = pcall(turtle.place)
+  if not lived or placed == false then
+    return false, "the turtle item would not place: " .. tostring(placed)
+  end
+  sayf("deploy : placed %s in front", tName)
+
+  -- Turn it on. The probe read a nil peripheral.wrap and we took that to mean a
+  -- placed turtle self-boots; two live deploys say otherwise -- it sat there
+  -- with no label, which is a turtle that never ran anything. Known-good
+  -- replicator code calls turnOn on the side it placed into, so try that. It
+  -- costs nothing if the turtle was already running.
+  -- CC-Tweaked issue #660: a turtle's peripheral discovery goes stale, and
+  -- "causing any kind of update will make turtle see peripheral again --
+  -- turning turtle". The block in front was air a moment ago, so a bare
+  -- getType honestly reports nothing. Turn to force the refresh; right then
+  -- left is a no-op for the heading tracked in st.dir, so nothing else shifts.
+  local ptype
+  for _ = 1, 6 do
+    ptype = select(2, pcall(peripheral.getType, "front"))
+    if ptype then break end
+    pcall(turtle.turnRight)
+    pcall(turtle.turnLeft)
+    os.sleep(0.5)
+  end
+  if ptype then
+    sayf("deploy : peripheral on front = %s", tostring(ptype))
+    local lived, res = pcall(peripheral.call, "front", "turnOn")
+    if lived then
+      sayf("deploy : turnOn sent to turtle %d", index)
+    else
+      sayf("deploy : turnOn failed (%s) -- relying on self-boot", tostring(res))
+    end
+  else
+    sayf("deploy : turtle %d is not visible as a peripheral, relying on self-boot", index)
+  end
+
+  -- Boot is unprompted and takes about 23s. Feed it while it waits.
+  -- The modem is not optional: without one the new turtle cannot reach GPS,
+  -- cannot calibrate, and will stand there until someone notices. If it does
+  -- not go across, say so here rather than waiting 90s to infer it.
+  if not handOver("modem", 1, "wireless modem") then
+    return false, "the modem did not reach it -- it cannot GPS, so it will never move"
+  end
+  handOver("coal", 64, "coal")
+  handOver("bucket", 1, "bucket")
+
+  -- It leaves under its own power once quarry N calibrates. An empty block in
+  -- front is the only signal available -- there is no peripheral to ask. The
+  -- new turtle also writes its progress to the floppy, so read that back when
+  -- it is in reach: it turns a screen nobody is looking at into output here.
+  local logf, said = ("/disk/deploy%d.log"):format(index), 0
+  sayf("deploy : waiting for turtle %d to boot and walk off (about 25s)", index)
+  for i = 1, 90 do
+    if not turtle.detect() then
+      sayf("deploy : turtle %d left after %ds, its mine is its own now", index, i)
+      return true
+    end
+    if fs.exists(logf) then
+      local h = fs.open(logf, "r")
+      if h then
+        local lines = {}
+        for line in h.readLine do lines[#lines + 1] = line end
+        h.close()
+        for n = said + 1, #lines do sayf("  turtle %d: %s", index, lines[n]) end
+        if #lines > said then said = #lines end
+      end
+    elseif i % 10 == 0 then
+      sayf("deploy : %ds, turtle %d still standing there", i, index)
+    end
+    os.sleep(1)
+  end
+  -- It has the drive, the program and the config; what it has not done is run
+  -- the disk startup. That is the one step nothing here can force -- a turtle
+  -- is not a peripheral to another turtle, so there is no turnOn to call.
+  sayf("deploy : turtle %d did not boot into its startup. On ITS screen (Ctrl+T):", index)
+  say("           reboot          -- re-runs the disk startup, usually enough")
+  say("           disk/startup    -- runs it by hand if reboot will not")
+  sayf("         Either one makes it label itself quarry%d and leave.", index)
+  return false, ("turtle %d has not moved after 90s -- reboot it on its own screen"):format(index)
+end
+
+-- Build the boot rig once, then run every remaining turtle through it. The
+-- drive stays where it is: it is also the lava map's home [plan 7], and
+-- breaking it to carry it down would cost the floppy inside it.
+local function runDeploy(conf, l, index)
+  if index ~= 1 then
+    error("deploy is turtle 1's job -- it is the one holding the kit", 0)
+  end
+
+  say("deploy : auditing the kit before anything is placed")
+  if not auditKit() then
+    say("deploy : STOPPED. Nothing has been placed. Fill the gaps above and re-run.")
+    return
+  end
+
+  local driveSlot = slotLike("disk_drive")
+  local floppySlot = slotLike("disk[^_]") or slotLike("disk$")
+  if not driveSlot then error("no disk drive in the hold", 0) end
+  if not floppySlot then error("no floppy in the hold", 0) end
+
+  -- stepUp/stepDown keep the position in st, so deploy needs a fix before it
+  -- moves -- and turtle 1 needs one to mine anyway. This also anchors the
+  -- claim on the launch block, which is where every turtle here agrees.
+  local x, y, z = locate(conf)
+  if not x then
+    error("no position fix: equip a wireless modem (see --check), or set startX/Y/Z", 0)
+  end
+  st.x, st.y, st.z = x, y, z
+  st.home = st.home or { x = x, y = y, z = z }
+  st.task = "deploy"
+  save()
+
+  if DRY then
+    sayf("DRY deploy: would place the drive one up and in front, put the floppy in it,")
+    sayf("           write /disk/startup.lua and copy this program to /disk/quarry,")
+    sayf("           then for turtles 2..%d: place, hand over a modem, 64 coal and a", conf.turtles)
+    sayf("           bucket, and wait for it to walk off under quarry <n>.")
+    say("           Nothing is placed and no file is written. dry = false to run it.")
+    return
+  end
+
+  -- 1. the drive, one block up, so it ends up directly above the new turtle.
+  if not stepUp() then error("cannot move up to place the drive", 0) end
+  if turtle.detect() then
+    pcall(stepDown)
+    error("something is in front of me one block up; move me somewhere clear", 0)
+  end
+  turtle.select(driveSlot)
+  local okd = select(2, pcall(turtle.place))
+  if okd == false then
+    pcall(stepDown)
+    error("the disk drive would not place", 0)
+  end
+  say("deploy : disk drive placed")
+
+  turtle.select(floppySlot)
+  if select(2, pcall(turtle.drop)) == false then
+    error("the floppy would not go into the drive", 0)
+  end
+  say("deploy : floppy in the drive")
+
+  -- 2. the payload. The program copies ITSELF, so a deployed turtle always
+  --    runs the same build as the one that placed it -- no second wget, and no
+  --    way for the two to drift apart.
+  if not fs.exists("/disk") then
+    error("the drive did not mount as /disk -- is the floppy in it?", 0)
+  end
+  local me = shell and shell.getRunningProgram and shell.getRunningProgram()
+  if not me or not fs.exists(me) then
+    error("cannot find my own file to copy onto the floppy", 0)
+  end
+  if fs.exists("/disk/quarry") then fs.delete("/disk/quarry") end
+  fs.copy(me, "/disk/quarry")
+  sayf("deploy : copied %s to /disk/quarry", me)
+
+  -- and the config with it. A deployed turtle that seeds its own gets
+  -- dry = true and never moves, which reads exactly like a hung deployment.
+  if fs.exists(CONF) then
+    if fs.exists("/disk/quarry.conf") then fs.delete("/disk/quarry.conf") end
+    fs.copy(CONF, "/disk/quarry.conf")
+    sayf("deploy : copied %s to /disk/quarry.conf (dry = %s)", CONF, tostring(conf.dry))
+    if conf.dry ~= false then
+      say("         NOTE: dry is still true, so the turtles will plan and not move.")
+    end
+  else
+    error("no " .. CONF .. " to hand on -- run --check once to seed it", 0)
+  end
+
+  if not stepDown() then error("cannot move back down after loading the floppy", 0) end
+
+  -- 3. one turtle at a time through the same spot. Each leaves before the next
+  --    is placed, which is why one drive serves all of them.
+  local done, failed = 0, {}
+  for n = 2, conf.turtles do
+    -- Written under BOTH names. Which one a disk's auto-startup picks up is
+    -- the mod's business, not ours, and getting it wrong costs an in-game trip;
+    -- writing both costs nothing and cannot pick the wrong one.
+    local wrote = 0
+    for _, name in ipairs({ "/disk/startup.lua", "/disk/startup" }) do
+      local h = fs.open(name, "w")
+      if h then
+        h.write(BOOT:format(n))
+        h.close()
+        wrote = wrote + 1
+      end
+    end
+    if wrote == 0 then error("cannot write the boot script to /disk", 0) end
+    sayf("deploy : wrote the boot script for turtle %d (%d names)", n, wrote)
+
+    local okn, why = deployOne(conf, l, n)
+    if okn then done = done + 1 else
+      failed[#failed + 1] = ("turtle %d: %s"):format(n, tostring(why))
+      sayf("deploy : turtle %d did not deploy -- %s", n, tostring(why))
+    end
+  end
+
+  sayf("deploy : %d of %d deployed", done, conf.turtles - 1)
+  for _, f in ipairs(failed) do sayf("         %s", f) end
+  say("deploy : the drive and floppy stay here; they are the lava map's home.")
+  say("         Now run `quarry 1` to start mining. Put the depot chests at")
+  say("         the trunk floor, or hand them to me and I will place them.")
+end
+
+-- main ---------------------------------------------------------------------
+
+if not turtle then error("run this on a turtle, not a computer", 0) end
+
+print("quarry starting")          -- liveness: silence after this line is a hang
+
+local args = { ... }
+local index, mode = nil, nil
+for _, a in ipairs(args) do
+  if a == "--check" then mode = "check"
+  elseif a == "recall" then mode = "recall"
+  elseif a == "deploy" then mode = "deploy"
+  elseif tonumber(a) then index = tonumber(a)
+  else error("usage: quarry <1|2|3> [--check|recall|deploy]", 0) end
+end
+
+local seeded = not fs.exists(CONF)
+if seeded then seedConf() end
+
+local conf, l, source = readConf()
+if not conf then error(source, 0) end
+cfg, lists = conf, l          -- the junk valve inside clear() reads the lists
+if seeded then source = "written just now, edit it and re-run" end
+
+index = index or 1
+if index < 1 or index > conf.turtles then
+  error(("turtle index %d is outside 1..%d"):format(index, conf.turtles), 0)
+end
+load()
+st.index = index
+
+-- DRY ships true and quarry.conf can only lower it. Keeping the switch in the
+-- config means it survives re-downloading the program, which the program's own
+-- constant does not.
+if conf.dry == false then DRY = false end
+
+if mode == "check" then
+  check(conf, l, source, index)
+  upload()
+  return
+end
+
+if mode == "deploy" then
+  local ok, err = pcall(runDeploy, conf, l, index)
+  if not ok then sayf("CRASHED: %s", tostring(err)) end
+  upload()
+  return
+end
+
+if mode == "recall" then
+  local ok, err = pcall(runRecall, conf, l, index)
+  if not ok then sayf("CRASHED: %s", tostring(err)) end
+  upload()
+  return
+end
+
+if DRY then
+  dryRun(conf, l, index)
+else
+  local ok, err = pcall(runMine, conf, l, index)
+  if not ok then sayf("CRASHED: %s", tostring(err)) end
+end
+upload()

@@ -1,0 +1,17 @@
+quarry 2  at 10,80,5  claim x -16..31 z -16..31 (anchored at 10,5)
+third  : z 0..15, trunk at x=8 z=7
+heading: 2, fuel 5118
+descend: 20 blocks to y=60 before crossing (above topY is travel, not mining)
+cross  : to the trunk at 8,7
+trunk  : down to y=-59
+depot  : nothing under my own trunk -- it will look under the others
+         the first time it actually needs one [plan 5]
+branch : y=-59 z=6, 24 west and 23 east of the spine
+depot  : looking under turtle 1's trunk at z=-9
+depot  : looking under turtle 3's trunk at z=23
+depot  : no container under any trunk floor
+dug    : 177 blocks, 0 of them chasing veins
+depot  : 0 trips, 0 items hauled, 0 junk dumped in the tunnel
+done   : 0 branches finished in this third
+at     : 8,-59,7 facing -z, fuel 4899
+STOPPED: inventory is full and there is no depot to empty it into

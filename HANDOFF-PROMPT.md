@@ -30,6 +30,14 @@ flags a dock when there is a depot to bank it into -- so expect the run to say
 "placed a container beside the trunk at y=-58 instead". That is the fallback
 working, not a fault.
 
+Storage is one substring word list now -- chest, barrel, shulker, crate,
+item_vault -- and it answers all four questions the program asks about storage:
+what can be a depot, what is never dug, what stays in the hold as kit, and what
+the kit audit counts. Sophisticated Storage already matched on barrel and
+chest; Create's item_vault did not. Drawers and bins are deliberately off the
+list: they lock to one item type, so a mixed dump fails on the second stack.
+The depot is ONE box and the kit audit now asks for one, not two.
+
 The run before it, 45bPE, is why the depot goes under the floor: it built its
 depot from the chests turtle 1 was carrying, put them on sides 0 and 1 of the
 trunk floor, and then stopped on them, because every side of that block is a
@@ -79,7 +87,7 @@ in this sandbox -- checked -- so CC mod-side behaviour has to come from the
 wiki at tweaked.cc or from the user.
 
 Run `lua5.3 test_quarry.lua`, `lua5.3 test_probe.lua` and `lua5.3
-test_update.lua` before and after any change; all of them must pass, 62 checks
+test_update.lua` before and after any change; all of them must pass, 63 checks
 in test_quarry. When you fix a bug, add a test and
 verify it FAILS against the unfixed code -- sixteen tests have been confirmed
 non-vacuous that way and it is worth the extra minute every time.
@@ -94,9 +102,9 @@ literal 20000, the fuel floor, the calibration guard, and startDir. Tests 56-60
 and the rewritten 33 are that night's: the kit staying out of the depot, the
 depot going under the trunk floor, the NO FIX crash naming its own cause,
 quarry.state standing in as a position source where GPS cannot reach, and the
-wired-modem case. Tests 62 and 63 are late that night: the bedrock fallback
-for the depot niche, and spare coal no longer stopping a run with no depot to
-bank it in. A NO FIX now uploads gps.locate's own debug output -- if a
+wired-modem case. Tests 62, 63 and 64 are late that night: the bedrock fallback
+for the depot niche, spare coal no longer stopping a run with no depot to bank
+it in, and the one STORAGE word list. A NO FIX now uploads gps.locate's own debug output -- if a
 GPS question comes up, read those `gps    :` lines before theorising, and if
 they are absent from a log, the run predates them.
 

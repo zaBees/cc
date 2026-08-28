@@ -181,6 +181,34 @@ that log. `test_quarry.lua` is 62 checks now, tests 62 and 63.
 - The found-depot line is `depot  : container at x,y,z`, not `at the trunk
   floor`: it may now be a level above it.
 
+## Storage is one word list now, not four
+
+Added 2026-08-28 late night at the user's request, for Sophisticated Storage.
+
+`STORAGE = { "chest", "barrel", "shulker", "crate", "item_vault" }`, matched as
+a **substring of the block id**, and it answers four questions that used to
+carry four copies of the words: what can be a depot (`isContainer`), what is
+never dug (`protected`), what stays in the hold rather than being dumped as
+spoil (`isKit`), and what the kit audit counts.
+
+- **Sophisticated Storage already worked** — `sophisticatedstorage:barrel`,
+  `:iron_barrel`, `:limited_barrel_1`, `:chest` and the rest all contain
+  `barrel` or `chest`. So do Iron Chests, Expanded Storage and Quark. What was
+  genuinely missing was Create's `item_vault`, and `crate`.
+- **Drawers and bins are deliberately NOT on the list.** A Storage Drawer, a
+  Functional Storage drawer and a Mekanism bin each lock to one item type, so a
+  mixed dump into one fails on the second stack and the run halts with `the
+  depot chest is full`. They are storage; they are not depots.
+- **The kit audit wants ONE storage block, not two.** `buildDepot` has placed
+  exactly one since the depot moved under the floor — fuel and spoil share it,
+  which is the case the ration was already written for — but the audit still
+  asked for two and reported a shortfall for a correctly equipped turtle.
+  Label is now `storage block`.
+- Test 64, confirmed to fail against the three-word list.
+
+**Prefer a Sophisticated Storage barrel for the depot.** A full depot halts the
+run with `the depot chest is full`, and one box now serves all three turtles.
+
 ## GPS was down on 2026-08-28 evening and is up again
 
 The user fixed the constellation that night. Run `45bPE` opened with
@@ -232,7 +260,7 @@ from a run that finds ore, which is how the config learns this pack's ore ids.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-28 late night.** The bedrock depot fallback and the spare-coal stop, on top of the depot-under-the-floor build. 119,158 bytes, fletcher32 `3223320507`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-28 late night.** The bedrock depot fallback, the spare-coal stop, and the one shared STORAGE word list. 120,037 bytes, fletcher32 `773510248`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry` and itself. |
 
@@ -330,7 +358,7 @@ the machine, it prints the file's fletcher32 to compare against
 | --- | --- |
 | `MASTERMINE-PLAN.md` | The design, every decision and its reasoning. Read second. Trimmed 2026-08-28: §11 is now a status table, and the rules it used to carry are in this file's Settled and Corrections lists. |
 | `quarry.lua` | **The deliverable.** ~2,430 lines, Phases 1–5. Opens `local DRY = true`; the config lowers it. |
-| `test_quarry.lua` | Five suites against stubbed CC worlds, 62 checks. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–63 the late-night ones. `lua5.3 test_quarry.lua` |
+| `test_quarry.lua` | Five suites against stubbed CC worlds, 63 checks. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones. `lua5.3 test_quarry.lua` |
 | `update.lua` | The in-game updater: `update` replaces `quarry` and itself from GitHub. Downloaded once by hand. |
 | `test_update.lua` | Stubbed `http`/`fs` around the updater: the failed download, the HTML 404, the cache-buster, the checksum. `lua5.3 test_update.lua` |
 | `probe.lua` | The Phase 5 probe. `probe` is a dry run, `probe go` is the real one. |
@@ -401,6 +429,14 @@ Plan section numbers in brackets.
   direction alongside 0..3; a hand-placed container on a side is still honoured,
   and is still in the way. `buildDepot` places exactly one, which is the
   single-box case the ration was already written for.
+- **One STORAGE word list decides what storage is**, matched as a substring of
+  the block id: `chest`, `barrel`, `shulker`, `crate`, `item_vault`. Enumerating
+  every tier of every storage mod is a losing game; matching the word is not.
+  Drawers and bins stay off it on purpose — they lock to one item type, so a
+  mixed dump fails on the second stack. Do not re-split this into per-question
+  copies; there were four.
+- **The depot is ONE box.** Fuel and spoil share it, which is what the ration
+  was written for. The kit audit asks for one.
 - **The deployment kit never goes into the depot.** `dumpLoad` and `restock`
   skip anything matching turtle, computer, disk, modem, chest, barrel, shulker
   or bucket. Before this, `quarry 1` carrying turtles 2 and 3 posted them into

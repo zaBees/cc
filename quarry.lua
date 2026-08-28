@@ -562,6 +562,29 @@ local function checkLava()
     back and "returned" or "GONE -- do not carry one, issue #530 is live here")
 end
 
+-- What counts as a storage block, matched as a substring of the block id. A
+-- modpack renames these a dozen ways -- sophisticatedstorage:barrel,
+-- :iron_barrel, :limited_barrel_1, ironchest:diamond_chest,
+-- expandedstorage:*_chest, quark:*_chest -- and enumerating every tier of every
+-- mod is a losing game, so this matches on the word instead. One list feeds
+-- four questions: what can be a depot, what is never dug, what stays in the
+-- hold as kit, and what the kit audit counts.
+--
+-- Only inventories that accept ANY item belong here. A Storage Drawer, a
+-- Functional Storage drawer and a Mekanism bin each lock to one item type, so a
+-- mixed dump into one fails on the second stack and the run halts with "the
+-- depot chest is full" -- which is why "drawer" and "bin" are deliberately not
+-- on this list.
+-- ponytail: substring words, not a config list. Add a [containers] section to
+-- quarry.conf if a pack ever ships storage none of these words name.
+local STORAGE = { "chest", "barrel", "shulker", "crate", "item_vault" }
+
+local function hasWord(list, name)
+  name = tostring(name)
+  for _, p in ipairs(list) do if name:find(p, 1, true) then return true end end
+  return false
+end
+
 -- kit audit ----------------------------------------------------------------
 -- What the whole mine needs, and what is actually in this turtle's inventory.
 -- Item ids are matched by pattern rather than by exact name on purpose: the
@@ -573,9 +596,9 @@ local KIT = {
   { key = "turtle",   want = 2, label = "mining turtle",
     match = function(n) return n:find("turtle") end,
     why = "turtles 2 and 3, placed at their own trunks" },
-  { key = "chest",    want = 2, label = "chest",
-    match = function(n) return n:find("chest") or n:find("barrel") end,
-    why = "the depot: one for ore, one you keep stocked with coal" },
+  { key = "chest",    want = 1, label = "storage block",
+    match = function(n) return hasWord(STORAGE, n) end,
+    why = "the depot: one box, for ore and for the coal the three of us share" },
   { key = "drive",    want = 1, label = "disk drive",
     match = function(n) return n:find("disk_drive") end,
     why = "the shared lava map, and the only way to hand code to a turtle" },
@@ -780,7 +803,7 @@ local DIRS = { [0] = { 0, 1 }, [1] = { -1, 0 }, [2] = { 0, -1 }, [3] = { 1, 0 } 
 -- a turtle can neither break them nor take from them: the break event is
 -- cancelled for a non-sneaking player, and every face exposes zero slots. So
 -- they are an obstruction to route around and a coordinate to hand the user.
-local DENY = { "turtle", "computer", "disk_drive", "chest", "barrel", "shulker", "lootr" }
+local DENY = { "turtle", "computer", "disk_drive", "lootr" }
 
 -- Phase 3 lives below the branch code but is needed inside it. Declared here,
 -- assigned there.
@@ -802,9 +825,7 @@ local function fuelLevel()
 end
 
 local function protected(name)
-  name = tostring(name)
-  for _, p in ipairs(DENY) do if name:find(p, 1, true) then return true end end
-  return false
+  return hasWord(DENY, name) or hasWord(STORAGE, name)
 end
 
 local function room()
@@ -1428,13 +1449,9 @@ end
 
 local LAVAMAP   = "/disk/lava.txt"
 local LAVA_KEEP = 64             -- sources held in the state file between docks
-local CONTAINER = { "chest", "barrel", "shulker" }
-
 local function isContainer(name)
-  name = tostring(name)
-  if name:find("lootr", 1, true) then return false end   -- loot, not storage
-  for _, p in ipairs(CONTAINER) do if name:find(p, 1, true) then return true end end
-  return false
+  if tostring(name):find("lootr", 1, true) then return false end  -- loot, not storage
+  return hasWord(STORAGE, name)
 end
 
 -- The depot lives UNDER the trunk floor, so "down" is a direction alongside
@@ -1451,11 +1468,9 @@ local function depotSuck(dir) return dir == "down" and turtle.suckDown or turtle
 -- and a dump that reads them as spoil posts the other two turtles into a barrel
 -- [in-game 2026-08-28: it did exactly that]. Buckets were already kit; this is
 -- the same rule with the rest of the kit named.
-local KIT_NAMES = { "turtle", "computer", "disk", "modem", "chest", "barrel", "shulker", "bucket" }
+local KIT_NAMES = { "turtle", "computer", "disk", "modem", "bucket" }
 local function isKit(name)
-  name = tostring(name)
-  for _, p in ipairs(KIT_NAMES) do if name:find(p, 1, true) then return true end end
-  return false
+  return hasWord(KIT_NAMES, name) or isContainer(name)
 end
 
 local function freeSlot()

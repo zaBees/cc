@@ -27,7 +27,7 @@ yourself.
 | --- | --- | --- |
 | Mining Turtle | 3 | one to run the program, two as *items in its inventory* for it to place later |
 | Coal or charcoal | 192 (3 stacks) | a stack per turtle. The whole claim wants about 3,300. |
-| Chest or barrel | 2 | the depot — one for ore, one you keep stocked with coal |
+| Storage block | 1 | the depot: one box, for ore and for the coal all three share. A chest, a vanilla barrel, a Sophisticated Storage barrel or chest of any tier, an Iron Chest, a shulker box or a Create item vault all count. Bigger is better — a Sophisticated barrel is the best of these, because a full depot stops the run. |
 | Disk Drive | 1 | the lava map, and the only way one turtle can hand code to another |
 | Floppy Disk | 1 | goes in the drive |
 | Wireless Modem | 3 | GPS. Turtle 1 is already wearing one, so 2 spares in the inventory. |
@@ -337,8 +337,9 @@ printed as `STOPPED:`:
   than digging into a full inventory, which destroys the drop. Empty it by hand
   and re-run.
 
-It also refuses, always, to dig a chest, barrel, turtle, computer or disk
-drive. If one is in its way it stops and names it rather than breaking it.
+It also refuses, always, to dig storage — a chest, a barrel of any mod, a
+shulker box, a Create item vault — or a turtle, computer or disk drive. If one
+is in its way it stops and names it rather than breaking it.
 
 You can kill it at any moment — log off, walk away, break the world. It saves
 its position and task on every single block, so `quarry 1` picks up where it
@@ -552,7 +553,7 @@ program — the other two ride in turtle 1's inventory as items.
 | `STOPPED: not enough fuel` | It refused the trip while still on the surface. `refuel all` and re-run. |
 | `STOPPED: fuel reserve` | It stopped mid-branch with just enough left to walk home. Refuel and re-run; it resumes the same branch. |
 | `STOPPED: inventory full` | Phase 2 has no depot. Empty it by hand and re-run. It stopped rather than destroying the drop. |
-| `STOPPED: refusing to dig …` | Something on the deny list — chest, barrel, turtle, computer, disk drive — was in its path. Move it or move the turtle. |
+| `STOPPED: refusing to dig …` | Something on the deny list — any storage block, turtle, computer, disk drive — was in its path. Move it or move the turtle. |
 | `moved: this is not the claim in quarry.state` | You carried it to a different chunk. It dropped the old claim and started a new one. That is intended. |
 | It prints the route and stops | `dry = true` in `quarry.conf`. Set it false to mine. |
 | `no http, report not uploaded` | HTTP is off for that computer. Read the numbers off the screen and tell me the ones you can. |

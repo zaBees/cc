@@ -330,7 +330,7 @@ reset({ inv = {
 } })
 ok, err, log = run("1", "--check")
 assert(ok, "short-kit --check crashed: " .. tostring(err))
-assert(log:find("MISSING: 1 mining turtle, 2 chest, 1 disk drive, 1 floppy disk, 2 wireless modem, 3 empty bucket, 128 coal"),
+assert(log:find("MISSING: 1 mining turtle, 1 storage block, 1 disk drive, 1 floppy disk, 2 wireless modem, 3 empty bucket, 128 coal"),
   "the shortfall list is wrong:\n" .. log)
 -- an item the audit does not know must be surfaced, never silently dropped
 assert(log:find("not recognised: minecraft:torch x64"),
@@ -1983,5 +1983,36 @@ assert(log:find("STOPPED: inventory is full"),
   "the run ended for the wrong reason:\n" .. log)
 assert((load("return " .. V.files["quarry.state"])()).dug > 150,
   "it barely mined before stopping:\n" .. log)
+
+-- 64. any storage block is a depot, not only a vanilla chest ---------------
+
+-- The word list is what tells this program what storage is, and a modpack
+-- renames storage a dozen ways. Sophisticated Storage's barrels and chests
+-- already fell out of "barrel" and "chest"; Create's item vault did not, so a
+-- vault under the trunk floor read as stone -- diggable, and no depot. One
+-- STORAGE list now answers all four questions: what can be a depot, what is
+-- never dug, what stays in the hold as kit, and what the kit audit counts.
+world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 2000,
+        blocks = { [k3(BX, BY - 1, BZ)] = "create:item_vault",
+                   [k3(BX, BY, -60)] = "sophisticatedstorage:iron_barrel" },
+        chests = { [k3(BX, BY - 1, BZ)] = { { name = "minecraft:coal", count = 30 } } } })
+ok, err, log = runWorld("1")
+assert(ok, "the modded-storage run crashed: " .. tostring(err))
+assert(log:find("depot  : container at .-%(dump down, fuel down%)"),
+  "a Create item vault under the trunk floor was not read as a depot:\n" .. log)
+assert(log:find("depot  : dumped;"), "it found the vault and never used it:\n" .. log)
+assert(blockAt(BX, BY, -60) == "sophisticatedstorage:iron_barrel",
+  "a Sophisticated Storage barrel in the way was dug up:\n" .. log)
+local inVault = 0
+for _, it in ipairs(V.chests[k3(BX, BY - 1, BZ)] or {}) do inVault = inVault + it.count end
+assert(inVault > 30, "nothing was ever dumped into the vault:\n" .. log)
+
+-- and a storage block in the hold is kit: it never goes into the depot as spoil
+for _, c in pairs(V.chests) do
+  for _, item in ipairs(c) do
+    assert(not item.name:find("item_vault"),
+      "it posted a storage block into the depot as spoil:\n" .. log)
+  end
+end
 
 print("all quarry phase 5 checks passed")

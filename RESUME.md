@@ -149,6 +149,7 @@ from a run that finds ore, which is how the config learns this pack's ore ids.
 | --- | --- | --- |
 | `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-28 evening.** Nine review findings, the fuel-floor ration, the tank-limit fix, the calibration guard, `startDir`. 100,496 bytes, fletcher32 `3090748686`, confirmed by running the checksum on turtle 1 itself. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
+| `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry` and itself. |
 
 See "Delivery goes through GitHub" below for the two `wget` lines. The setup
 artifact at
@@ -176,12 +177,34 @@ delete probe
 wget https://raw.githubusercontent.com/zaBees/cc/main/probe.lua probe
 ```
 
+**Get `update` onto each turtle once and the two-line ritual is over.** From
+then on a redelivery is `git push` here and `update` in-game:
+
+```
+delete update
+wget https://raw.githubusercontent.com/zaBees/cc/main/update.lua update
+```
+
+```
+update            -- every program: quarry and update itself
+update quarry     -- just that one
+```
+
+It writes to `<name>.new` and moves it into place, so a download that fails
+leaves the working copy alone; it refuses an empty body and an HTML 404 page;
+it appends `?t=<epoch>` to defeat the CDN cache described below; and it prints
+`quarry: N bytes, fletcher32 N`, the same number `attic/sumfile.lua` prints, so
+a delivery can be checked against the local file without transcribing anything.
+Configs are never touched. `test_update.lua` covers all of that under
+`lua5.3`.
+
 **The URL never changes.** That is the whole point of the switch: paste.rs ids
 were immutable, so every edit meant a fresh id written into three places and
 transcribed by eye, with `0`/`O` and `l`/`1` slips costing a round trip. A
 redelivery is now `git push`, and the user re-runs the same two lines.
 
-Still true, and unchanged by the move: **every download is TWO lines.** CC's
+Still true for a hand-typed download, and the reason `update` exists:
+**every download is TWO lines.** CC's
 `wget` refuses to overwrite an existing file -- it prints `File already exists`,
 downloads nothing, and reads like success. No force flag, and the CC shell has
 no `&&` or `;`.
@@ -222,7 +245,9 @@ the machine, it prints the file's fletcher32 to compare against
 | --- | --- |
 | `MASTERMINE-PLAN.md` | The design, every decision and its reasoning. Read second. Trimmed 2026-08-28: §11 is now a status table, and the rules it used to carry are in this file's Settled and Corrections lists. |
 | `quarry.lua` | **The deliverable.** ~2,430 lines, Phases 1–5. Opens `local DRY = true`; the config lowers it. |
-| `test_quarry.lua` | Five suites against stubbed CC worlds, 48 checks. Tests 40–48 are the 2026-08-28 review regressions. `lua5.3 test_quarry.lua` |
+| `test_quarry.lua` | Five suites against stubbed CC worlds, 58 checks. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–58 the night ones. `lua5.3 test_quarry.lua` |
+| `update.lua` | The in-game updater: `update` replaces `quarry` and itself from GitHub. Downloaded once by hand. |
+| `test_update.lua` | Stubbed `http`/`fs` around the updater: the failed download, the HTML 404, the cache-buster, the checksum. `lua5.3 test_update.lua` |
 | `probe.lua` | The Phase 5 probe. `probe` is a dry run, `probe go` is the real one. |
 | `test_probe.lua` | Stubbed world for the probe, live and DRY paths. `lua5.3 test_probe.lua` |
 | `SETUP.md` | What the user does in-game. The setup artifact is generated from it. |

@@ -68,7 +68,12 @@ local function mkenv()
     sleep = function() end,
   }
 
-  env.gps = W.gps and { locate = function() return W.at[1], W.at[2], W.at[3] end } or nil
+  -- the gps api is always THERE on a real turtle; what a missing modem or a
+  -- dead constellation costs is the answer, not the table
+  env.gps = { locate = function()
+    if not W.gps then return nil end
+    return W.at[1], W.at[2], W.at[3]
+  end }
 
   -- an equipped wireless modem is what gives a turtle gps.locate at all
   env.peripheral = {
@@ -384,6 +389,26 @@ ok, err, log = run("1")
 assert(ok, "bare run crashed: " .. tostring(err))
 assert(log:find("route  :"), "bare run printed no route:\n" .. log)
 assert(log:find("set dry = false"), "the dry run does not say how to go live:\n" .. log)
+
+-- 58. a run that cannot get a fix names WHICH of the three causes it is ----
+
+-- In-game 2026-08-28 the user reported "gps locate works" and the run still
+-- died on `no position fix: equip a wireless modem, or set startX/Y/Z`. The
+-- message listed every cause at once, so it could not be read as evidence for
+-- any of them. Each cause now excludes the others.
+reset({ equip = {}, gps = false })
+ok, err, log = run("1")
+assert(log:find("NO WIRELESS MODEM IS EQUIPPED"),
+  "a modem-less run did not say the modem was missing:\n" .. log .. tostring(err))
+assert(not log:find("no GPS host answered"),
+  "it blamed the constellation for a missing modem:\n" .. log)
+
+reset({ equip = { left = "modem" }, gps = false })
+ok, err, log = run("1")
+assert(log:find("a modem IS equipped"),
+  "a modem-equipped run was told to equip a modem:\n" .. log .. tostring(err))
+assert(log:find("no GPS host answered"),
+  "it did not name the constellation as the cause:\n" .. log)
 
 print("all quarry phase 1 checks passed")
 

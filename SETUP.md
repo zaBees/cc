@@ -135,6 +135,29 @@ wget https://raw.githubusercontent.com/zaBees/cc/main/quarry.lua quarry
 > builds go by. That is why delivery moved to GitHub on 2026-08-28: the old
 > paste.rs route needed a fresh five-character id per edit, transcribed by eye,
 > and a `0` read as an `O` cost a round trip.
+
+**Then get the updater, once, and you never type those lines again:**
+
+```
+delete update
+wget https://raw.githubusercontent.com/zaBees/cc/main/update.lua update
+```
+
+From then on, whenever a new build ships:
+
+```
+update
+```
+
+That pulls `quarry` and `update` itself, does the `delete` for you, and prints
+`quarry: N bytes, fletcher32 N` so the download can be checked against the
+copy on my side without anybody transcribing anything. `update quarry` does
+just the one. It never touches `quarry.conf` or `quarry.state`, and a download
+that fails leaves the working copy alone — the turtle always has a program.
+
+It also appends a timestamp to the URL, which matters: the `/main/` address is
+CDN-cached and has served a previous build for minutes after a push. Typed by
+hand you may get the old file and not know it; `update` cannot.
 >
 > The Phase 5 deployment probe is a separate, smaller program:
 >
@@ -545,8 +568,9 @@ program — the other two ride in turtle 1's inventory as items.
                                      |
               label set quarry1  ->  refuel all  ->  gps locate
                                      |
-        (turtle)  delete quarry
-        (turtle)  wget https://raw.githubusercontent.com/zaBees/cc/main/quarry.lua quarry
+        (turtle)  delete update
+        (turtle)  wget https://raw.githubusercontent.com/zaBees/cc/main/update.lua update
+        (turtle)  update                    <- gets quarry, and every build after
                                      |
                           (turtle)  quarry 1 --check
                                      |

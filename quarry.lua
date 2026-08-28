@@ -387,12 +387,18 @@ local function upload()
   end
 end
 
+-- gps.locate's own default is 2s, which is one round trip to four hosts and no
+-- slack. A rebuilt constellation at the edge of modem range answers late rather
+-- than not at all, and this is called about four times in a whole run, so the
+-- extra wait is free and a false NO FIX is not.
+local GPS_TIMEOUT = 5
+
 local function locate(conf)
   if conf.startX and conf.startY and conf.startZ then
     return conf.startX, conf.startY, conf.startZ, "quarry.conf"
   end
   if gps then
-    local ok, x, y, z = pcall(gps.locate, 2)
+    local ok, x, y, z = pcall(gps.locate, GPS_TIMEOUT)
     if ok and x then return math.floor(x), math.floor(y), math.floor(z), "gps" end
   end
   return nil, nil, nil, "no fix"
@@ -413,6 +419,27 @@ end
 local function hasModem()
   local e = equippedSides()
   return (e.left == "modem") or (e.right == "modem")
+end
+
+-- A NO FIX has two causes wanting two different answers, and the old crash line
+-- listed both at once: "equip a wireless modem, or set startX/Y/Z". In-game
+-- 2026-08-28 that read as a lie -- gps.locate answered when the user tried it
+-- by hand and the run still refused to start -- because the message never said
+-- which of the two it actually was. It says now, and each answer excludes the
+-- other, so the crash line is evidence rather than a list.
+local function noFix()
+  local e = equippedSides()
+  local sides = ("left=%s right=%s"):format(tostring(e.left or "none"),
+                                            tostring(e.right or "none"))
+  if not hasModem() then
+    return "no position fix: NO WIRELESS MODEM IS EQUIPPED (" .. sides .. "). GPS "
+      .. "needs the modem ON the turtle, not in a slot: select it and run "
+      .. "`equip right`, or run `quarry --check`, which reports both sides."
+  end
+  return "no position fix: a modem IS equipped (" .. sides .. ") and no GPS host "
+    .. "answered in " .. GPS_TIMEOUT .. "s. The hosts must be running, in loaded "
+    .. "chunks, and in range of HERE -- range falls off underground. Or set "
+    .. "startX/Y/Z in quarry.conf."
 end
 
 local function findItem(name)
@@ -1779,7 +1806,7 @@ local function runRecall(conf, l, index)
   end
 
   local x, y, z = locate(conf)
-  if not x then error("no position fix: equip a wireless modem (see --check)", 0) end
+  if not x then error(noFix(), 0) end
   st.x, st.y, st.z = x, y, z
   st.task = "recall"
   save()
@@ -1809,9 +1836,7 @@ end
 
 local function runMine(conf, l, index)
   local x, y, z = locate(conf)
-  if not x then
-    error("no position fix: equip a wireless modem (see --check), or set startX/Y/Z", 0)
-  end
+  if not x then error(noFix(), 0) end
   st.index = index
   st.x, st.y, st.z = x, y, z
   st.dug, st.chased, st.veined = st.dug or 0, 0, 0
@@ -2362,9 +2387,7 @@ local function runDeploy(conf, l, index)
   -- moves -- and turtle 1 needs one to mine anyway. This also anchors the
   -- claim on the launch block, which is where every turtle here agrees.
   local x, y, z = locate(conf)
-  if not x then
-    error("no position fix: equip a wireless modem (see --check), or set startX/Y/Z", 0)
-  end
+  if not x then error(noFix(), 0) end
   st.x, st.y, st.z = x, y, z
   st.home = st.home or { x = x, y = y, z = z }
   st.task = "deploy"

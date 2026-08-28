@@ -1,7 +1,7 @@
 # Handoff prompt
 
 Paste this into a fresh session to resume the turtle mining build.
-Rewritten whole 2026-08-28 evening.
+Rewritten whole 2026-08-28 evening, updated that night.
 
 ---
 
@@ -15,30 +15,37 @@ reports/history-2026-08.md, complete and unedited. Do not read that up front.
 Go there when you need the reasoning behind something RESUME.md states flatly,
 or when something settled starts misbehaving again.
 
-THE MINE IS BLOCKED ON TWO THINGS, IN THIS ORDER.
+WHAT IS BLOCKING A RUN, as of 2026-08-28 night.
 
-1. GPS IS DOWN. gps.locate returns nil on turtle 1 with a modem equipped,
-   confirmed by running a probe on the turtle itself on 2026-08-28 evening. It
-   worked that morning (--check reported "position: 8,79,4 (gps)"), so the
-   constellation stopped rather than never existing. RESUME.md's Settled list
-   used to say "GPS exists on this server" and no longer does.
+The user has to clear two chests in-game before the next run means anything.
+Run 45bPE reached the claim floor with GPS up, built its own depot from the
+chests turtle 1 was carrying, put them on sides 0 and 1 of the trunk floor, and
+then stopped on them: every side of that block is a working row, so the branch
+leg walked into one and the spine walked into the other, and a container is on
+the never-dig list. The same run dumped turtles 2 and 3, the drive, the floppy
+and the modems into a chest as spoil. Both are fixed here -- the depot goes
+UNDER the trunk floor now and isKit keeps the deployment kit in the hold -- but
+the two chests are still standing at 248,-59,711 with the kit inside them, and
+the fixed build still reads a container beside the floor as a depot. The user
+breaks both, takes everything back, re-downloads, and runs `quarry 1` with a
+barrel aboard.
 
-   The live quarry.conf on turtle 1 sets startX = 10, startY = 80, startZ = 5
-   and NO startDir, so a run refuses to start. Either the user fixes the
-   constellation and deletes those three lines, or adds startDir (0, 1, 2, 3 =
-   facing +z, -x, -z, +x). Fixing GPS is the better answer and RESUME.md's
-   "GPS is down" section says why: with a pinned position everything
-   dead-reckons, so a turtle that loses quarry.state cannot find itself again.
+The last thing they reported (log URkmo) was `CRASHED: no position fix` while
+saying "gps locate works". The crash line has been rewritten to name which of
+the two causes it is -- no modem equipped, versus a modem but no host answering
+-- so the next run's message is evidence, not a list. Ask for that message, or
+for `quarry --check`, before theorising.
 
-2. THE DEPOT. No container has ever been placed at the claim floor, so docking,
-   rationing, restocking and the three-turtle interplay are stub-tested only.
-   Either the user runs `quarry 1` and turtle 1 builds the depot from the
-   chests it carries, or they place a chest against a trunk's bottom block.
-   This is the one thing standing between here and a working mine.
+GPS itself is UP: run 45bPE opened with `quarry 1  at 243,73,734`, so the
+constellation the user rebuilt answers and startX/Y/Z are out of quarry.conf.
+It has failed once already, so do not assume it.
 
 Phases 1 to 5 are built and all five have run in-game. Turtle 1 deployed turtle
 2, which booted, equipped its modem, calibrated, descended to y=-59 and mined
-177 blocks. Phase 6 (monitor, full-clear mode) is deferred and not started.
+177 blocks; turtle 1 has since mined 251 of its own and docked. Phase 6
+(monitor, full-clear mode) is deferred and not started. Rationing has never
+actually handed out coal -- every dock so far found the tank full -- and two
+turtles have never run at once.
 
 The design is settled. Do not reopen anything in RESUME.md's "Settled" list and
 do not reintroduce anything in its "Corrections already made" list. If you think
@@ -61,8 +68,9 @@ disk (unzip, javap -c, config/*.toml). No CC:Tweaked jar or config is present
 in this sandbox -- checked -- so CC mod-side behaviour has to come from the
 wiki at tweaked.cc or from the user.
 
-Run `lua5.3 test_quarry.lua` and `lua5.3 test_probe.lua` before and after any
-change; all six suites must pass, 55 checks. When you fix a bug, add a test and
+Run `lua5.3 test_quarry.lua`, `lua5.3 test_probe.lua` and `lua5.3
+test_update.lua` before and after any change; all of them must pass, 58 checks
+in test_quarry. When you fix a bug, add a test and
 verify it FAILS against the unfixed code -- sixteen tests have been confirmed
 non-vacuous that way and it is worth the extra minute every time.
 
@@ -72,7 +80,9 @@ reports/code-review-quarry.md records what each one was; RESUME.md summarises
 them. Nothing from that review is outstanding -- do not go looking for the "six
 open findings" an older copy of this prompt mentions. Tests 49-55 are the
 2026-08-28 evening fixes: the tank limit read from the turtle instead of a
-literal 20000, the fuel floor, the calibration guard, and startDir.
+literal 20000, the fuel floor, the calibration guard, and startDir. Tests 56-58
+and the rewritten 33 are that night's: the kit staying out of the depot, the
+depot going under the trunk floor, and the NO FIX crash naming its own cause.
 
 DELIVERY IS GITHUB, changed 2026-08-28 at the user's instruction. This
 directory is the working tree of https://github.com/zaBees/cc (public). The
@@ -82,7 +92,9 @@ in-game download is two lines:
   wget https://raw.githubusercontent.com/zaBees/cc/main/quarry.lua quarry
 
 The URL never changes, so a redelivery is `git push` and the user re-runs those
-same two lines. VERIFY A PUSH AGAINST THE COMMIT-PINNED URL, not the branch
+same two lines -- or, once `update.lua` is on the turtle, just `update`, which
+does the delete, defeats the CDN cache with a `?t=` query and prints the file's
+fletcher32. Ship a fix by pushing and telling them to run `update`. VERIFY A PUSH AGAINST THE COMMIT-PINNED URL, not the branch
 one:
 
   curl -sS https://raw.githubusercontent.com/zaBees/cc/$(git rev-parse HEAD)/quarry.lua
@@ -90,7 +102,8 @@ one:
 The /main/ URL is CDN-cached and was still serving the previous build more than
 two minutes after a push, which looks exactly like a failed push. The same
 cache can hand the user a stale file if they re-download immediately; tell them
-to wait a moment and repeat the two lines.
+to wait a moment and repeat the two lines. `update` sidesteps that entirely by
+appending `?t=<epoch>`, which is part of the CDN cache key.
 
 Every download line handed to the user is TWO lines, `delete <name>` then the
 `wget`: CC's wget refuses to overwrite an existing file, prints "File already

@@ -21,40 +21,45 @@ here, or when something settled starts misbehaving again.
 
 ## Where the work stands
 
-Last updated **2026-08-28**, after clearing every finding from the code review
-of `quarry.lua` — nine in all — uploading the fixed build as `3PcMy`, and
-regenerating the setup artifact.
+Last updated **2026-08-28 night**, after the first run that reached the claim
+floor with GPS up and built its own depot (log `45bPE`). It mined 251 blocks,
+docked once, and then stopped on its own depot: the two chests it had placed
+beside the trunk floor were blocks the pattern later walked into and refused to
+dig. The depot now goes **under** the floor instead, and the deployment kit is
+no longer dumped into it.
 
 | Phase | State |
 | --- | --- |
 | 1 — claim maths, iterators, `--check`, kit audit | **Done. Ran in-game 2026-08-24.** |
 | 2 — one turtle, one branch | **Done. Ran in-game 2026-08-27** (turtle 2, 177 blocks). |
-| 3 — depot cycle, fuel, the work loop | **Partly run.** Travel, fuel and the work loop ran in-game; the depot cycle has never had a container to use. |
+| 3 — depot cycle, fuel, the work loop | **Partly run.** Travel, fuel, the work loop, building the depot, docking and dumping all ran in-game 2026-08-28. Rationing has still never handed out coal — the tank was full every time it docked. |
 | 4 — three turtles | **Partly run.** Turtle 2 worked its own third correctly. Two turtles have never run at once. |
 | 5 — deployment (`quarry 1 deploy`) | **Done. Ran in-game 2026-08-27** after four failed attempts; turtle 2 deployed, booted and mined. |
 | 6 — deferred (monitor, full-clear mode) | Not started |
 
-**The one thing never proven in-game is the depot cycle.** No container has ever
-been placed down there, so docking, rationing, restocking and the three-turtle
-interplay are stub-tested only.
+**What is still unproven in-game is rationing and the three-turtle interplay.**
+The turtle docked and dumped, but every dock found the tank already full, so no
+coal has ever been handed out, and two turtles have never run at once.
 
 ## Next action
 
-**Give it a depot.** That is the one thing standing between here and a
-working mine. Two ways:
+**Clear the two chests turtle 1 built, re-download, run `quarry 1` again.**
 
-1. **Run `quarry 1`.** Turtle 1 carries the two chests and builds the depot
-   itself when it reaches its own trunk floor, banking its coal into the first.
-   This is the intended path and it exercises Phase 5's depot-building.
-2. **Place a chest by hand** against the bottom block of a trunk, with coal in
-   it. A second container on another side becomes the dump chest.
-
-Then re-run turtle 2 and watch it dock: dump, ration, restock.
+1. **Go to 248,-59,711 and break both chests** — one at 247,-59,711 and one at
+   248,-59,712. **Turtles 2 and 3, the disk drive, the floppy and the modems
+   are inside one of them**, along with 194 coal and a run's worth of ore: the
+   old dump treated the whole deployment kit as spoil. Take everything back.
+   The chests must go, not just be emptied — the fixed build still reads a
+   container beside the floor as a depot, and it is still in the pattern's way.
+2. **Re-download** (`delete quarry`, then the `wget`), give turtle 1 a barrel
+   or two, and **run `quarry 1`**. It digs out the block under the trunk floor,
+   puts the container there and banks its coal into it.
+3. Then run turtle 2 and watch it dock: dump, ration, restock.
 
 ## What shipped 2026-08-28 evening
 
 All tested under `lua5.3`, every regression confirmed to fail against its own
-unfixed code. `test_quarry.lua` is now 55 checks.
+unfixed code. `test_quarry.lua` was 55 checks at that point and is 57 now.
 
 - **The fuel ration is a floor, not a fraction.** See the Settled list. New
   `fuelFloor` setting, default 8, seeded into `quarry.conf`. Tests 51, 52.
@@ -74,7 +79,31 @@ unfixed code. `test_quarry.lua` is now 55 checks.
   What it costs is recovery: a turtle that loses `quarry.state` cannot find
   itself again. Tests 54, 55.
 
-## GPS is down — decide this before the next run
+## What shipped 2026-08-28 night
+
+Both from run `45bPE`, both confirmed to fail against the build that produced
+that log.
+
+- **The depot goes under the trunk floor.** `probeDepot` looks down before it
+  looks around, `buildDepot` digs out the block below and places one container
+  there, and `"down"` is a direction everywhere `st.depot` is read —
+  `faceDepot`, `depotDrop`, `depotSuck`. A container beside the floor is still
+  found and used, because someone may have placed one; it is just never built
+  there any more. Test 33 rewritten, test 57 new.
+- **The deployment kit stays in the hold.** `isKit` covers turtle, computer,
+  disk, modem, chest, barrel, shulker and bucket; `dumpLoad` and `restock` both
+  skip it. Test 56.
+- The report line is now `depot  : container at the trunk floor x,y,z
+  (dump down, fuel down)` — `%s`, not `%d`, because the side can be `"down"`.
+
+## GPS was down on 2026-08-28 evening and is up again
+
+The user fixed the constellation that night. Run `45bPE` opened with
+`quarry 1  at 243,73,734` and mined a claim anchored there, so `gps.locate` is
+answering and `startX/Y/Z` are out of `quarry.conf`. What follows is kept
+because the constellation has now failed once and may again.
+
+
 
 `gps.locate` returns nil on turtle 1 with a modem equipped, so **no GPS host is
 answering**. It answered that morning, so something changed: hosts stopped,
@@ -244,8 +273,23 @@ Plan section numbers in brackets.
   same row. `mouthTaken()` runs **only on a fresh claim**, or a turtle resuming
   its own half-mined branch reads its own work as somebody else's.
 - **Depot at the claim floor** [5], **found by looking, not configured**. One
-  chest serves all three; a turtle with none under its own trunk walks the
+  container serves all three; a turtle with none under its own trunk walks the
   spine to the others, once, and writes `st.noDepot` if the answer is no.
+- **The depot goes UNDER the trunk floor, never beside it.** Changed
+  2026-08-28 night on in-game evidence (`45bPE`). All four sides of the floor
+  block are working rows -- the branch legs run east-west through them, the
+  spine runs north-south through them -- so a container on a side is a block
+  the pattern later walks into and refuses to dig, which ends that leg and then
+  stops the run. Turtle 1 built chests on sides 0 and 1 and lost the branch it
+  was standing on to one and the spine to the other. Below the floor is the one
+  neighbour nothing ever mines. `probeDepot` looks down first and `"down"` is a
+  direction alongside 0..3; a hand-placed container on a side is still honoured,
+  and is still in the way. `buildDepot` places exactly one, which is the
+  single-box case the ration was already written for.
+- **The deployment kit never goes into the depot.** `dumpLoad` and `restock`
+  skip anything matching turtle, computer, disk, modem, chest, barrel, shulker
+  or bucket. Before this, `quarry 1` carrying turtles 2 and 3 posted them into
+  the dump chest as spoil, which is what happened in `45bPE`.
 - **The depot queue is the waiting, not a queue** [5]. Mastermine's linked-list
   route was for a hub with a monitor and any number of turtles. Do not build it.
 - **Right of way by launch index** — lower wins, higher moves [8]. `giveWay`
@@ -281,14 +325,16 @@ Plan section numbers in brackets.
   blacklist. That is deliberate; tests must spell out the lists they need.
 - **Save state every block** [10]. Measured at 1.35 ms against a 400 ms move.
 - **GPS is NOT reliable on this server.** It worked on 2026-08-28 morning
-  (`--check` reported `position: 8,79,4 (gps)`) and was dead that evening:
+  (`--check` reported `position: 8,79,4 (gps)`), was dead that evening --
   `gps.locate` returned nil from turtle 1 with `left=modem` equipped, so no
-  host answered. A turtle still reaches GPS only through an equipped wireless
-  modem, but the constellation itself cannot be assumed up. See `startDir`.
+  host answered -- and was up again that night after the user rebuilt the
+  constellation (`45bPE`, `at 243,73,734`). A turtle still reaches GPS only
+  through an equipped wireless modem, and the constellation itself cannot be
+  assumed up. See `startDir`.
 - **Claim exhaustion: stop, report, idle** [12].
 - **Deployment happens at the surface launch block, not at the claim floor** —
   a deliberate deviation from plan §13. The drive must sit directly above the
-  placed turtle, and a trunk floor has no spare side once two chests are down.
+  placed turtle, and the trunk floor is a working row in every direction.
   It costs nothing: every turtle anchors its claim where it wakes, and they all
   wake in the centre chunk.
 - **The monitor is Phase 6.**
@@ -391,14 +437,18 @@ derives a heading by moving one block and diffing GPS.
 
 ## Blocks the user must place before a run
 
-- **A chest or barrel against the bottom block of a trunk.** That is the depot;
-  the turtles find it, and one chest serves all three. Coal in it. A second
-  container on another side becomes the dump chest and keeps the spoil out of
-  the fuel. **Since Phase 5 this is optional**: a turtle that reaches its trunk
-  floor still carrying chests cuts the alcoves, places them, and banks its own
-  coal into the first. A hand-placed depot still takes priority.
+- **A barrel UNDER the bottom block of a trunk.** That is the depot; the
+  turtles find it by looking down, and one container serves all three. Coal in
+  it. **Not beside the floor** — every side of it is a working row, and a
+  container there stops the run. A barrel rather than a chest because the
+  turtle stands on this one and a chest with a block above it will not open by
+  hand. **Since Phase 5 this is optional**: a turtle that reaches its trunk
+  floor still carrying a container digs the block out from under itself, places
+  it and banks its own coal into it. A hand-placed depot still takes priority.
 - **Optional: a disk drive with a floppy** beside the trunk floor — the shared
   lava map, and the only channel by which one turtle can hand code to another.
+  A drive on a side does eventually get mined out, which costs the map and
+  nothing else.
 - **Do not hand-dig down.** Each turtle cuts its own trunk and that shaft is
   the way in.
 - **Launch all three within a few blocks of each other**, ideally the same
@@ -407,7 +457,8 @@ derives a heading by moving one block and diffing GPS.
 
 ## Waiting on the user
 
-- **A depot.** See Next action — this is the blocker.
+- **Breaking the two chests turtle 1 built at 248,-59,711.** See Next action —
+  this is the blocker, and turtles 2 and 3 are inside one of them.
 - **The `passed over:` line from a real run** — this pack's real ore ids.
 - **192 coal or charcoal**, a stack per turtle. The only thing `deploy` is
   short of.

@@ -244,25 +244,33 @@ level, with a trip to the depot whenever the hold fills up.
 
 **What you place, once, before running it:**
 
-1. **A chest beside the trunk floor.** Go down the trunk the Phase 2 run cut,
-   to the bottom. Put a chest (or a barrel) against any of the four sides of
-   the bottom block of the shaft. That is the whole depot. The turtle finds it
-   by looking around itself — nothing goes in `quarry.conf`.
-2. **Coal in that chest.** The turtle takes at most a third of what is in there
-   per visit and never the last few, so three turtles share it without any
-   coordination.
-3. **Optional: a second chest** on another side, with the coal in it. Then one
-   chest takes the spoil and the other feeds the tank. With a single chest it
-   does both, which works but means the turtle shuffles the spoil in and out
-   each visit.
-4. **Optional: a disk drive with a floppy**, also beside the trunk floor. That
-   is the shared lava map: every source a turtle walks past gets written to
-   `/disk/lava.txt`, and any turtle can go and fetch one when the coal runs out.
+1. **A barrel under the trunk floor.** Go down the trunk the Phase 2 run cut,
+   to the bottom. Break the block *below* the bottom block of the shaft and put
+   a barrel there, so the turtle stands on it. That is the whole depot. The
+   turtle finds it by looking down — nothing goes in `quarry.conf`.
 
-The chest sits on a branch row — the trunk is on the spine, so its neighbours
-are always either spine or branch. The turtle will report
-`blocked: minecraft:chest` once, at the floor level, and mine the other leg.
-That is expected; nothing is lost but one leg.
+   **Under, not beside.** The four sides of the trunk floor are all working
+   rows: the branch legs run east–west through them and the spine runs
+   north–south through them. A container on any side is a block the turtle
+   later walks into and refuses to dig, which ends that leg and then stops the
+   run outright. Underneath is the one neighbour the pattern never touches.
+   A barrel rather than a chest because a chest with a block above it cannot be
+   opened by hand — and the turtle is standing on this one.
+2. **Coal in that barrel.** Every turtle takes what its trip needs and stops at
+   a floor held back for the others (`fuelFloor`, 8 each by default), so three
+   turtles share it without any coordination.
+3. **Or hand the container to the turtle.** Run `quarry 1` with a barrel or a
+   chest in its inventory and it digs out the block under the trunk floor,
+   places the container there itself and banks its own coal into it.
+4. **Optional: a disk drive with a floppy**, beside the trunk floor. That is
+   the shared lava map: every source a turtle walks past gets written to
+   `/disk/lava.txt`, and any turtle can go and fetch one when the coal runs out.
+   A drive on a side does get mined out eventually, which costs the map and
+   nothing else.
+
+One container does both jobs: the spoil goes in and the fuel comes out of the
+same box. That is the case the ration is written for — it sucks the lot, keeps
+its share of the coal and puts everything else straight back.
 
 **Lava is proven on this server, and it is on by default.** `quarry.conf` now
 ships `lava = true`: the `--check` scoop test was run in-game on 2026-08-27, the
@@ -273,8 +281,12 @@ turtle an empty bucket and that is all it needs.
 
 **What the new report lines mean:**
 
-- `depot  : container beside the trunk floor at x,y,z (dump side N, fuel side N)`
-  — it found the chest. No such line and it mines one load and stops.
+- `depot  : container at the trunk floor x,y,z (dump down, fuel down)`
+  — it found the barrel. `dump`/`fuel` read `down` for the one underneath, or a
+  side number 0–3 for a container someone placed beside the floor. No such line
+  at all and it mines one load and stops.
+- `depot  : placed a container under the trunk floor` — it built the depot from
+  a barrel or chest it was carrying.
 - `depot  : docking with N slots used` — a trip home.
 - `depot  : dumped; chest held N fuel items, took N fuel, tank N` — the ration.
 - `resume : west leg of y=.. z=.., N out` — back to the exact block it left.

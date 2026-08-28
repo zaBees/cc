@@ -1222,6 +1222,27 @@ local function isContainer(name)
   return false
 end
 
+-- The depot lives UNDER the trunk floor, so "down" is a direction alongside
+-- 0..3 everywhere st.depot is read. A hand-placed container beside the floor
+-- still works and still reads as 0..3; only what this program builds goes below.
+local function faceDepot(dir)
+  if dir ~= "down" then turnTo(dir) end
+end
+local function depotDrop(dir) return dir == "down" and turtle.dropDown or turtle.drop end
+local function depotSuck(dir) return dir == "down" and turtle.suckDown or turtle.suck end
+
+-- Deployment kit never goes into the depot. Turtle 1 carries turtles 2 and 3,
+-- their modems, drives, floppies and the depot container itself down with it,
+-- and a dump that reads them as spoil posts the other two turtles into a barrel
+-- [in-game 2026-08-28: it did exactly that]. Buckets were already kit; this is
+-- the same rule with the rest of the kit named.
+local KIT = { "turtle", "computer", "disk", "modem", "chest", "barrel", "shulker", "bucket" }
+local function isKit(name)
+  name = tostring(name)
+  for _, p in ipairs(KIT) do if name:find(p, 1, true) then return true end end
+  return false
+end
+
 local function freeSlot()
   for s = 1, 16 do if turtle.getItemCount(s) == 0 then return s end end
 end
@@ -1260,6 +1281,10 @@ end
 -- standing on the trunk floor, once, and the answer is saved.
 function probeDepot(l)
   local spots = {}
+  -- below first: that is where this program builds, and a container there is
+  -- the only one the mining pattern can never walk into.
+  local okd, hitd, dd = pcall(turtle.inspectDown)
+  if okd and hitd and dd and isContainer(dd.name) then spots[#spots + 1] = "down" end
   for d = 0, 3 do
     turnTo(d)
     local ok, hit, data = pcall(turtle.inspect)
@@ -1269,16 +1294,16 @@ function probeDepot(l)
 
   local dump, fuelDir = nil, nil
   for _, d in ipairs(spots) do
-    turnTo(d)
+    faceDepot(d)
     local slot = freeSlot()
     local role = "dump"
     if slot then
       turtle.select(slot)
-      local ok, got = pcall(turtle.suck, 1)
+      local ok, got = pcall(depotSuck(d), 1)
       if ok and got then
-        local okd, item = pcall(turtle.getItemDetail, slot)
-        if okd and item and isCoalish(l, item.name) then role = "fuel" end
-        pcall(turtle.drop)          -- straight back where it came from
+        local oki, item = pcall(turtle.getItemDetail, slot)
+        if oki and item and isCoalish(l, item.name) then role = "fuel" end
+        pcall(depotDrop(d))         -- straight back where it came from
       else
         role = "empty"              -- nothing in it yet; it can be the dump chest
       end
@@ -1306,58 +1331,58 @@ function carryingContainer()
 end
 
 local function buildDepot(l)
-  local placed = 0
-  for d = 0, 3 do
-    if placed >= 2 then break end
-    turnTo(d)
-    -- The trunk floor is solid rock on every side unless somebody dug it, so
-    -- the alcove has to be cut before a chest can go in it. clear() keeps the
-    -- deny list and the never-dig-into-a-full-hold rule [plan 8].
-    if turtle.detect() then clear(turtle.dig, turtle.detect, turtle.inspect) end
-    if not turtle.detect() then
-      local slot
-      for sl = 1, 16 do
-        local ok, item = pcall(turtle.getItemDetail, sl)
-        if ok and item and isContainer(item.name) then slot = sl break end
-      end
-      if not slot then break end
-      turtle.select(slot)
-      -- pcall prepends its own flag and a crash puts an error STRING second,
-      -- which is not false -- so read both and test place's own answer
-      local lived, put = pcall(turtle.place)
-      if lived and put ~= false then
-        placed = placed + 1
-        sayf("depot  : placed a container on side %d", d)
-        -- The first one becomes the fuel chest: everything burnable this turtle
-        -- still carries goes in, and from here on it rations out of it like the
-        -- other two do [plan 7]. An empty second chest reads as the dump.
-        if placed == 1 then
-          local banked = 0
-          for sl = 1, 16 do
-            local ok, item = pcall(turtle.getItemDetail, sl)
-            if ok and item and isFuelItem(l, item.name) then
-              turtle.select(sl)
-              if select(2, pcall(turtle.drop)) ~= false then banked = banked + item.count end
-            end
-          end
-          if banked > 0 then sayf("depot  : banked %d fuel into it for all three", banked) end
-        end
-      end
-      turtle.select(1)
+  -- One container, under the trunk floor. Every side of the floor is in the way
+  -- of something: the branch legs run east-west along it, the spine runs
+  -- north-south through it, so a container beside the floor is a block the
+  -- pattern walks into later and refuses to dig -- which ends that leg and then
+  -- stops the run [in-game 2026-08-28: turtle 1 built chests on sides 0 and 1,
+  -- lost the branch it was standing on to one and the spine to the other].
+  -- Below the floor is the one neighbour nothing ever mines. Fuel and spoil
+  -- share the single box, which is the case restock is already written for.
+  local slot
+  for sl = 1, 16 do
+    local ok, item = pcall(turtle.getItemDetail, sl)
+    if ok and item and isContainer(item.name) then slot = sl break end
+  end
+  if not slot then return 0 end
+  if turtle.detectDown()
+     and not clear(turtle.digDown, turtle.detectDown, turtle.inspectDown) then
+    say("depot  : the floor under the trunk will not open -- no depot built")
+    return 0
+  end
+  turtle.select(slot)
+  local lived, put = pcall(turtle.placeDown)
+  turtle.select(1)
+  if not (lived and put ~= false) then
+    say("depot  : could not place a container under the trunk floor")
+    return 0
+  end
+  say("depot  : placed a container under the trunk floor")
+  -- Everything burnable this turtle still carries goes in, and from here on it
+  -- rations out of it like the other two do [plan 7].
+  local banked = 0
+  for sl = 1, 16 do
+    local ok, item = pcall(turtle.getItemDetail, sl)
+    if ok and item and isFuelItem(l, item.name) then
+      turtle.select(sl)
+      if select(2, pcall(turtle.dropDown)) ~= false then banked = banked + item.count end
     end
   end
-  return placed
+  turtle.select(1)
+  if banked > 0 then sayf("depot  : banked %d fuel into it for all three", banked) end
+  return 1
 end
 
 local function dumpLoad(l)
   local dir = st.depot and st.depot.dump
-  if not dir then return false, "no container beside the trunk floor" end
-  turnTo(dir)
+  if not dir then return false, "no container at the trunk floor" end
+  faceDepot(dir)
+  local drop = depotDrop(dir)
   for s = 1, 16 do
     local ok, d = pcall(turtle.getItemDetail, s)
-    if ok and d and not isFuelItem(l, d.name) and d.name ~= "minecraft:bucket" then
+    if ok and d and not isFuelItem(l, d.name) and not isKit(d.name) then
       turtle.select(s)
-      local dropped = select(2, pcall(turtle.drop))
+      local dropped = select(2, pcall(drop))
       if not dropped then
         turtle.select(1)
         return false, "the depot chest is full"
@@ -1378,7 +1403,8 @@ end
 local function restock(conf, l, want)
   local dir = st.depot and st.depot.fuel
   if not dir then return 0, 0 end
-  turnTo(dir)
+  faceDepot(dir)
+  local suck, drop = depotSuck(dir), depotDrop(dir)
   local before = fuelLevel()
   local aboard = fuelAboard(l)   -- the find; whatever is not burnt is banked
 
@@ -1386,7 +1412,7 @@ local function restock(conf, l, want)
     local slot = freeSlot()
     if not slot then break end
     turtle.select(slot)
-    local ok, got = pcall(turtle.suck)
+    local ok, got = pcall(suck)
     if not (ok and got) then break end
   end
 
@@ -1411,18 +1437,19 @@ local function restock(conf, l, want)
   -- Everything that came aboard goes back except the share that gets burnt --
   -- including the load just dumped, because with one chest at the depot the
   -- fuel and the spoil live in the same box and the suck cannot tell them
-  -- apart. Buckets are kit and never leave.
+  -- apart. Kit -- buckets, the spare container, turtles 2 and 3 and their
+  -- modems, drives and floppies -- never leaves.
   local burnt = 0
   for s = 1, 16 do
     local ok, d = pcall(turtle.getItemDetail, s)
-    if ok and d and not tostring(d.name):find("bucket", 1, true) then
+    if ok and d and not isKit(d.name) then
       turtle.select(s)
       if isCoalish(l, d.name) and burnt < keep then
         local n = math.min(d.count, keep - burnt)
         pcall(turtle.refuel, n)
         burnt = burnt + n
       end
-      if turtle.getItemCount(s) > 0 then pcall(turtle.drop) end
+      if turtle.getItemCount(s) > 0 then pcall(drop) end
     end
   end
   turtle.select(1)
@@ -1873,8 +1900,8 @@ local function runMine(conf, l, index)
     end
     if st.depot or probeDepot(l) then
       local dp = st.depot
-      sayf("depot  : container beside the trunk floor at %d,%d,%d (dump side %d, fuel side %d)",
-        dp.x, dp.y, dp.z, dp.dump, dp.fuel)
+      sayf("depot  : container at the trunk floor %d,%d,%d (dump %s, fuel %s)",
+        dp.x, dp.y, dp.z, tostring(dp.dump), tostring(dp.fuel))
     else
       say("depot  : nothing under my own trunk -- it will look under the others")
       say("         the first time it actually needs one [plan 5]")
@@ -2026,8 +2053,8 @@ local function dryRun(conf, l, index)
     total, conf.veinMax)
   sayf("then   : branch after branch until the third is done, docking every %d blocks",
     conf.tripBlocks)
-  say("depot  : found on arrival -- a container beside the trunk floor, either side.")
-  say("         No chest there means it mines one load and stops.")
+  say("depot  : found on arrival -- a container under the trunk floor, or beside it.")
+  say("         No container there means it mines one load and stops.")
   sayf("fuel   : have %d, this branch wants about %d plus a %d reserve",
     fuelLevel(), total, conf.fuelMargin)
   if fuelLevel() < total + conf.fuelMargin then
@@ -2053,7 +2080,8 @@ end
 -- on the ground directly below it, both in front of the deploying turtle.
 -- Deployment happens at the SURFACE, on the launch block, not at the claim
 -- floor: the drive has to sit directly above the placed turtle, and a trunk
--- floor has no spare side once the two depot chests are down. runMine anchors
+-- floor is a working row in both directions, so nothing is placed beside it.
+-- runMine anchors
 -- its claim wherever it wakes, and the launch block is in the centre chunk, so
 -- all three agree on the same claim anyway.
 
@@ -2429,8 +2457,9 @@ local function runDeploy(conf, l, index)
   sayf("deploy : %d of %d deployed", done, conf.turtles - 1)
   for _, f in ipairs(failed) do sayf("         %s", f) end
   say("deploy : the drive and floppy stay here; they are the lava map's home.")
-  say("         Now run `quarry 1` to start mining. Put the depot chests at")
-  say("         the trunk floor, or hand them to me and I will place them.")
+  say("         Now run `quarry 1` to start mining. Give me a barrel or a chest")
+  say("         and I will put it under the trunk floor myself, or put one there")
+  say("         by hand -- UNDER the floor block, never beside it.")
 end
 
 -- main ---------------------------------------------------------------------

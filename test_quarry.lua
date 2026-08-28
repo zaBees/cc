@@ -551,25 +551,24 @@ local function mkworldenv()
   -- chests: a container is a named block with an item list beside it. drop and
   -- suck are the only way a turtle talks to one, which is the whole reason the
   -- fuel ration has to be learned by taking rather than read off the chest.
-  local function chestAhead()
-    local x, y, z = ahead()
+  local function chestAt(x, y, z)
     return V.chests[k3(x, y, z)]
   end
 
-  local function dropInto(n)
+  -- the target is passed in, because the depot is under the turtle now and
+  -- drop/suck have to reach both the block ahead and the block below
+  local function dropInto(n, x, y, z)
     -- refuse only drops into a turtle: the drive still takes its floppy, so
     -- the test isolates the handover channel and nothing upstream of it
     if V.dropFails then
-      local fx, fy, fz = ahead()
-      local n = blockAt(fx, fy, fz)
-      if n and n:find("turtle") then return false end
+      local nm = blockAt(x, y, z)
+      if nm and nm:find("turtle") then return false end
     end
     local it = V.inv[V.sel]
     if not it then return false end
     local take = math.min(n or it.count, it.count)
-    local c = chestAhead()
-    local ax, ay, az = ahead()
-    local aheadName = blockAt(ax, ay, az)
+    local c = chestAt(x, y, z)
+    local aheadName = blockAt(x, y, z)
     if c then
       if #c >= 27 then return false end                 -- the chest is full
       c[#c + 1] = { name = it.name, count = take }
@@ -584,8 +583,8 @@ local function mkworldenv()
     return true
   end
 
-  local function suckFrom(n)
-    local c = chestAhead()
+  local function suckFrom(n, x, y, z)
+    local c = chestAt(x, y, z)
     if not c or #c == 0 then return false end
     local want, first = n or 64, c[1]
     local take = math.min(want, first.count)
@@ -607,6 +606,28 @@ local function mkworldenv()
     setAir(x, y, z)
     V.inv[V.sel] = { name = "minecraft:lava_bucket", count = 1 }
     return true
+  end
+
+  -- a bucket placed against a lava source picks it up; anything else placeable
+  -- becomes a block, and a container becomes an empty inventory
+  local function placeAt(x, y, z)
+    local it = V.inv[V.sel]
+    if it and (it.name:find("disk_drive") or it.name:find("turtle")
+               or it.name:find("chest") or it.name:find("barrel")) then
+      if blockAt(x, y, z) then return false end
+      V.blocks[k3(x, y, z)] = it.name
+      if it.name:find("disk_drive") then V.disk = true
+      elseif it.name:find("chest") or it.name:find("barrel") then
+        V.chests[k3(x, y, z)] = {}         -- a placed chest starts empty
+      else
+        V.placedTurtle, V.sleeps = { x = x, y = y, z = z }, 0
+        V.periphStale = true      -- issue #660: freshly placed reads as air
+      end
+      it.count = it.count - 1
+      if it.count == 0 then V.inv[V.sel] = nil end
+      return true
+    end
+    return scoopAt(x, y, z)
   end
 
   local function move(nx, ny, nz)
@@ -673,32 +694,19 @@ local function mkworldenv()
     attack       = function() return false end,
     attackUp     = function() return false end,
     attackDown   = function() return false end,
-    -- a bucket placed against a lava source picks it up, and the source is gone
     place        = function()
       if V.placeErrors then error("place blew up") end
-      local it = V.inv[V.sel]
-      if it and (it.name:find("disk_drive") or it.name:find("turtle")
-                 or it.name:find("chest") or it.name:find("barrel")) then
-        local x, y, z = ahead()
-        if blockAt(x, y, z) then return false end
-        V.blocks[k3(x, y, z)] = it.name
-        if it.name:find("disk_drive") then V.disk = true
-        elseif it.name:find("chest") or it.name:find("barrel") then
-          V.chests[k3(x, y, z)] = {}         -- a placed chest starts empty
-        else
-          V.placedTurtle, V.sleeps = { x = x, y = y, z = z }, 0
-          V.periphStale = true      -- issue #660: freshly placed reads as air
-        end
-        it.count = it.count - 1
-        if it.count == 0 then V.inv[V.sel] = nil end
-        return true
-      end
-      return scoopAt(ahead())
+      return placeAt(ahead())
     end,
     placeUp      = function() return scoopAt(V.pos.x, V.pos.y + 1, V.pos.z) end,
-    placeDown    = function() return scoopAt(V.pos.x, V.pos.y - 1, V.pos.z) end,
-    drop         = function(n) return dropInto(n) end,
-    suck         = function(n) return suckFrom(n) end,
+    placeDown    = function()
+      if V.placeErrors then error("place blew up") end
+      return placeAt(V.pos.x, V.pos.y - 1, V.pos.z)
+    end,
+    drop         = function(n) return dropInto(n, ahead()) end,
+    suck         = function(n) return suckFrom(n, ahead()) end,
+    dropDown     = function(n) return dropInto(n, V.pos.x, V.pos.y - 1, V.pos.z) end,
+    suckDown     = function(n) return suckFrom(n, V.pos.x, V.pos.y - 1, V.pos.z) end,
   }
   return env
 end
@@ -926,7 +934,7 @@ world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 2000,
         chests = coalChest(30) })
 ok, err, log = runWorld("1")
 assert(ok, "depot run crashed: " .. tostring(err))
-assert(log:find("depot  : container beside the trunk floor"),
+assert(log:find("depot  : container at the trunk floor"),
   "it did not find the chest beside the trunk:\n" .. log)
 assert(log:find("depot  : docking"), "it never docked:\n" .. log)
 assert(log:find("depot  : dumped; chest held %d+ fuel items, took [1-9]%d* fuel"),
@@ -1315,20 +1323,31 @@ world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 20000,
                 [2] = { name = "minecraft:coal",  count = 64 } } })
 ok, err, log = runWorld("1")
 assert(ok, "the depot-building run crashed: " .. tostring(err))
-assert(log:find("depot  : placed a container on side"),
+assert(log:find("depot  : placed a container under the trunk floor"),
   "it never placed a chest it was carrying:\n" .. log)
 assert(log:find("depot  : built the depot here"), "it did not report building one:\n" .. log)
 assert(log:find("depot  : banked %d+ fuel into it"),
   "it kept the coal instead of banking it for all three:\n" .. log)
-assert(log:find("depot  : container beside the trunk floor"),
+assert(log:find("depot  : container at the trunk floor"),
   "it built a depot and then did not find it:\n" .. log)
 
--- and it really is in the world, at the trunk floor, with the coal in it
+-- and it really is in the world, UNDER the trunk floor, with the coal in it.
+-- Under, not beside: the branch legs run east-west through the floor block's
+-- sides and the spine runs north-south through them, so a container on any side
+-- is a block the pattern later walks into and refuses to dig, which ends that
+-- leg and then stops the run. Below the floor is the one neighbour it never
+-- touches, so exactly one container goes in, and it goes there.
 local built = 0
 for key, name in pairs(V.blocks) do
   if name and (name:find("chest") or name:find("barrel")) then built = built + 1 end
 end
-assert(built == 2, "it placed " .. built .. " containers, not 2")
+assert(built == 1, "it placed " .. built .. " containers, not 1")
+assert(V.blocks[k3(BX, BY - 1, BZ)], "the container is not under the trunk floor:\n" .. log)
+for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+  local n = V.blocks[k3(BX + d[1], BY, BZ + d[2])]
+  assert(not (n and (n:find("chest") or n:find("barrel"))),
+    "it put a container beside the trunk floor, in the pattern's way:\n" .. log)
+end
 local banked = 0
 for _, c in pairs(V.chests) do
   for _, item in ipairs(c) do
@@ -1610,5 +1629,49 @@ assert(not prog:find("seed a DRY one and not move"),
   "BOOT still promises a dry turtle it does not deliver")
 assert(prog:find("seeding one from the defaults"),
   "BOOT does not say what a missing config actually does")
+
+-- 56. the deployment kit never goes into the depot -------------------------
+
+-- In-game 2026-08-28: turtle 1 ran `quarry 1` carrying turtles 2 and 3, their
+-- modems, the drive and the floppy, docked, and dumpLoad posted the lot into
+-- the depot as spoil -- it dumps everything that is not fuel, and only the
+-- bucket was named as kit. The other two turtles ended up in a chest.
+world({ conf = "tripBlocks = 20\n" .. SECTIONS, fuel = 20000, inv = kit() })
+ok, err, log = runWorld("1")
+assert(ok, "the kit-carrying run crashed: " .. tostring(err))
+assert(log:find("depot  : docking"), "it never docked, so nothing was dumped:\n" .. log)
+for _, c in pairs(V.chests) do
+  for _, item in ipairs(c) do
+    assert(not (item.name:find("turtle") or item.name:find("modem")
+                or item.name:find("disk")),
+      "it posted " .. item.name .. " into the depot:\n" .. log)
+  end
+end
+local aboard56 = {}
+for s = 1, 16 do
+  local it = V.inv[s]
+  if it then aboard56[it.name] = (aboard56[it.name] or 0) + it.count end
+end
+assert(aboard56["computercraft:turtle_advanced"] == 2,
+  "the two turtles are not in the hold any more:\n" .. log)
+assert(aboard56["computercraft:disk_drive"] == 1, "the drive left the hold:\n" .. log)
+assert(aboard56["computercraft:disk"] == 1, "the floppy left the hold:\n" .. log)
+
+-- 57. a container UNDER the trunk floor is the depot, and a barrel counts ---
+
+-- The user asked for barrels because a chest with a block over it cannot be
+-- opened by hand. isContainer already matched "barrel"; what was missing was
+-- looking down at all, which probeDepot now does before it looks around.
+world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 2000,
+        blocks = { [k3(BX, BY - 1, BZ)] = "minecraft:barrel" },
+        chests = { [k3(BX, BY - 1, BZ)] = { { name = "minecraft:coal", count = 30 } } } })
+ok, err, log = runWorld("1")
+assert(ok, "the barrel-depot run crashed: " .. tostring(err))
+assert(log:find("depot  : container at the trunk floor .-%(dump down, fuel down%)"),
+  "it did not find the barrel under the trunk floor:\n" .. log)
+assert(log:find("depot  : dumped;"), "it found the barrel and never used it:\n" .. log)
+local inBarrel = 0
+for _, it in ipairs(V.chests[k3(BX, BY - 1, BZ)] or {}) do inBarrel = inBarrel + it.count end
+assert(inBarrel > 30, "nothing was ever dumped into the barrel:\n" .. log)
 
 print("all quarry phase 5 checks passed")

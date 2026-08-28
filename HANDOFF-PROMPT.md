@@ -1,7 +1,7 @@
 # Handoff prompt
 
 Paste this into a fresh session to resume the turtle mining build.
-Rewritten whole 2026-08-28 evening, updated that night.
+Rewritten whole 2026-08-28 evening, updated that night and again late that night.
 
 ---
 
@@ -15,20 +15,28 @@ reports/history-2026-08.md, complete and unedited. Do not read that up front.
 Go there when you need the reasoning behind something RESUME.md states flatly,
 or when something settled starts misbehaving again.
 
-WHAT IS BLOCKING A RUN, as of 2026-08-28 night.
+WHERE THE RUN STANDS, as of 2026-08-28 late night.
 
-The user has to clear two chests in-game before the next run means anything.
-Run 45bPE reached the claim floor with GPS up, built its own depot from the
-chests turtle 1 was carrying, put them on sides 0 and 1 of the trunk floor, and
-then stopped on them: every side of that block is a working row, so the branch
-leg walked into one and the spine walked into the other, and a container is on
-the never-dig list. The same run dumped turtles 2 and 3, the drive, the floppy
-and the modems into a chest as spoil. Both are fixed here -- the depot goes
-UNDER the trunk floor now and isKit keeps the deployment kit in the hold -- but
-the two chests are still standing at 248,-59,711 with the kit inside them, and
-the fixed build still reads a container beside the floor as a depot. The user
-breaks both, takes everything back, re-downloads, and runs `quarry 1` with a
-barrel aboard.
+Nothing is blocking a run: `update`, then `quarry 1` from the same launch
+block as Rpv9m (243,73,734) with a barrel aboard.
+
+Run Rpv9m was the first with the depot-under-the-floor build and it could not
+build a depot at all: the block under the trunk floor is BEDROCK. Bedrock
+scatters up through y=-60 and the floor stands at y=-59, so on most trunks that
+block will not open. With no depot anywhere the run mined 39 blocks and then
+stopped over 192 coal it could have burned itself. Both are fixed here --
+buildDepot falls back to an x-side niche one level up, and spare coal only
+flags a dock when there is a depot to bank it into -- so expect the run to say
+"placed a container beside the trunk at y=-58 instead". That is the fallback
+working, not a fault.
+
+The run before it, 45bPE, is why the depot goes under the floor: it built its
+depot from the chests turtle 1 was carrying, put them on sides 0 and 1 of the
+trunk floor, and then stopped on them, because every side of that block is a
+working row and a container is on the never-dig list. It also posted turtles 2
+and 3, the drive, the floppy and the modems into a chest as spoil; isKit keeps
+them in the hold now. Those two chests have been broken and their contents
+recovered.
 
 A crash they reported (URkmo, then td7FE) was `CRASHED: no position fix` while
 they said "gps locate works". Both were true: the turtle was parked at the
@@ -71,7 +79,7 @@ in this sandbox -- checked -- so CC mod-side behaviour has to come from the
 wiki at tweaked.cc or from the user.
 
 Run `lua5.3 test_quarry.lua`, `lua5.3 test_probe.lua` and `lua5.3
-test_update.lua` before and after any change; all of them must pass, 60 checks
+test_update.lua` before and after any change; all of them must pass, 62 checks
 in test_quarry. When you fix a bug, add a test and
 verify it FAILS against the unfixed code -- sixteen tests have been confirmed
 non-vacuous that way and it is worth the extra minute every time.
@@ -86,7 +94,9 @@ literal 20000, the fuel floor, the calibration guard, and startDir. Tests 56-60
 and the rewritten 33 are that night's: the kit staying out of the depot, the
 depot going under the trunk floor, the NO FIX crash naming its own cause,
 quarry.state standing in as a position source where GPS cannot reach, and the
-wired-modem case. A NO FIX now uploads gps.locate's own debug output -- if a
+wired-modem case. Tests 62 and 63 are late that night: the bedrock fallback
+for the depot niche, and spare coal no longer stopping a run with no depot to
+bank it in. A NO FIX now uploads gps.locate's own debug output -- if a
 GPS question comes up, read those `gps    :` lines before theorising, and if
 they are absent from a log, the run predates them.
 

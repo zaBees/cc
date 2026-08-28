@@ -1053,7 +1053,7 @@ world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 2000,
         chests = coalChest(30) })
 ok, err, log = runWorld("1")
 assert(ok, "depot run crashed: " .. tostring(err))
-assert(log:find("depot  : container at the trunk floor"),
+assert(log:find("depot  : container at %d"),
   "it did not find the chest beside the trunk:\n" .. log)
 assert(log:find("depot  : docking"), "it never docked:\n" .. log)
 assert(log:find("depot  : dumped; chest held %d+ fuel items, took [1-9]%d* fuel"),
@@ -1447,7 +1447,7 @@ assert(log:find("depot  : placed a container under the trunk floor"),
 assert(log:find("depot  : built the depot here"), "it did not report building one:\n" .. log)
 assert(log:find("depot  : banked %d+ fuel into it"),
   "it kept the coal instead of banking it for all three:\n" .. log)
-assert(log:find("depot  : container at the trunk floor"),
+assert(log:find("depot  : container at %d"),
   "it built a depot and then did not find it:\n" .. log)
 
 -- and it really is in the world, UNDER the trunk floor, with the coal in it.
@@ -1786,7 +1786,7 @@ world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 2000,
         chests = { [k3(BX, BY - 1, BZ)] = { { name = "minecraft:coal", count = 30 } } } })
 ok, err, log = runWorld("1")
 assert(ok, "the barrel-depot run crashed: " .. tostring(err))
-assert(log:find("depot  : container at the trunk floor .-%(dump down, fuel down%)"),
+assert(log:find("depot  : container at .-%(dump down, fuel down%)"),
   "it did not find the barrel under the trunk floor:\n" .. log)
 assert(log:find("depot  : dumped;"), "it found the barrel and never used it:\n" .. log)
 local inBarrel = 0
@@ -1922,5 +1922,66 @@ assert(ok, "the recall crashed: " .. tostring(err))
 assert(V.files["/startup"] == nil,
   "recall left the startup on, so a reboot would send it back down:\n" .. log)
 assert(log:find("recall : removed /startup"), "it never said so:\n" .. log)
+
+-- 62. bedrock under the trunk floor does not cost the run its depot ---------
+
+-- In-game 2026-08-28 (log Rpv9m): the depot goes UNDER the trunk floor, but
+-- bedrock scatters up through y=-60 and the floor stands at y=-59, so the block
+-- below it would not open. The run built nothing, found nothing under the other
+-- two trunks either, and stopped with a load and nowhere to put it. The
+-- fallback is beside the trunk one level UP, on an x side: +z/-z is the spine
+-- at every level, and the east-west legs only cross the trunk's own z on the
+-- levels isBranch names, which the next level up never is.
+world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+        blocks = { [k3(BX, BY - 1, BZ)] = "minecraft:bedrock" },
+        inv = { [1] = { name = "minecraft:chest", count = 1 },
+                [2] = { name = "minecraft:coal",  count = 64 } } })
+ok, err, log = runWorld("1")
+assert(ok, "the bedrock-under-the-floor run crashed: " .. tostring(err))
+assert(log:find("placed a container beside the trunk at y=" .. (BY + 1), 1, true),
+  "bedrock under the floor left the run with no depot at all:\n" .. log)
+local side62
+for _, dx in ipairs({ -1, 1 }) do
+  if V.blocks[k3(BX + dx, BY + 1, BZ)] then side62 = k3(BX + dx, BY + 1, BZ) end
+end
+assert(side62, "no container beside the trunk one level up:\n" .. log)
+for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+  local n = V.blocks[k3(BX + d[1], BY, BZ + d[2])]
+  assert(not (n and (n:find("chest") or n:find("barrel"))),
+    "it put a container beside the trunk FLOOR, in the pattern's way:\n" .. log)
+end
+assert(blockAt(BX, BY - 1, BZ) == "minecraft:bedrock", "it dug into bedrock")
+assert(log:find("depot  : banked %d+ fuel into it"),
+  "it placed the chest and never banked its coal for the others:\n" .. log)
+assert(log:find("depot  : dumped;"),
+  "it built a depot beside the trunk and then never used it:\n" .. log)
+
+-- 63. spare coal is not a reason to stop when there is nowhere to bank it ---
+
+-- In-game 2026-08-28 (log Rpv9m): turtle 1 came down carrying the depot chests
+-- and 192 coal it was holding back FOR that depot, could not place a container
+-- anywhere, found none under the other two trunks either -- and then stopped on
+-- its second branch with "carrying 192 fuel and fuelShare is 128, which the
+-- other turtles could burn", on a full tank with a nearly empty hold.
+-- fuelShare means "the other two could use some of this", which needs a depot
+-- to put it in; with none it is just fuel this turtle burns itself. A full hold
+-- still stops the run, because mining on with nowhere to empty out only
+-- destroys the drops.
+world({ conf = "tripBlocks = 100000\n" .. SECTIONS, fuel = 20000,
+        inv = { [1] = { name = "minecraft:chest", count = 1 },
+                [2] = { name = "minecraft:coal",  count = 64 },
+                [3] = { name = "minecraft:coal",  count = 64 },
+                [4] = { name = "minecraft:coal",  count = 64 } } })
+V.placeErrors = true            -- every placement throws: no depot, anywhere
+ok, err, log = runWorld("1")
+assert(ok, "the spare-coal run crashed: " .. tostring(err))
+assert(log:find("no container under any trunk floor"),
+  "the run found a depot, so this is not the no-depot case:\n" .. log)
+assert(not log:find("which the other turtles could burn"),
+  "it stopped over coal it could burn itself, with no depot to bank it in:\n" .. log)
+assert(log:find("STOPPED: inventory is full"),
+  "the run ended for the wrong reason:\n" .. log)
+assert((load("return " .. V.files["quarry.state"])()).dug > 150,
+  "it barely mined before stopping:\n" .. log)
 
 print("all quarry phase 5 checks passed")

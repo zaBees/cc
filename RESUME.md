@@ -21,12 +21,18 @@ here, or when something settled starts misbehaving again.
 
 ## Where the work stands
 
-Last updated **2026-08-28 night**, after the first run that reached the claim
-floor with GPS up and built its own depot (log `45bPE`). It mined 251 blocks,
-docked once, and then stopped on its own depot: the two chests it had placed
-beside the trunk floor were blocks the pattern later walked into and refused to
-dig. The depot now goes **under** the floor instead, and the deployment kit is
-no longer dumped into it.
+Last updated **2026-08-28 late night**, after log `Rpv9m` — the first run with
+the depot-under-the-floor build. It got a fix, crossed to its trunk, descended
+to y=-59, and then could not build a depot at all: **the block under the trunk
+floor is bedrock.** With no depot anywhere it mined 39 blocks and stopped, over
+coal it was perfectly able to burn itself. Both are fixed here: the depot falls
+back to a niche beside the trunk one level up, and spare coal is no longer a
+reason to stop when there is nowhere to bank it.
+
+The run before that (`45bPE`) mined 251 blocks, docked once, and stopped on its
+own depot: the two chests it had placed beside the trunk floor were blocks the
+pattern later walked into and refused to dig. That is why the depot goes under
+the floor, and why the fallback niche is a level UP rather than beside it.
 
 | Phase | State |
 | --- | --- |
@@ -43,23 +49,32 @@ coal has ever been handed out, and two turtles have never run at once.
 
 ## Next action
 
-**Run it from the surface again.** The user cleared the blockers on
-2026-08-28 night: both depot chests are broken and their contents recovered
-(turtles 2 and 3, the drive, the floppy, the modems, the coal), turtle 1 has
-been carried back up to the surface, and `quarry.state` is deleted. So the next
-run is a fresh start with a live GPS fix, not a resume.
+**Run it from the surface again**, from the same launch block as `Rpv9m`,
+carrying a barrel.
 
-1. **`update`** on the turtle, to get the depot-under-the-floor build.
+1. **`update`** on the turtle, for the bedrock-fallback build.
 2. **`quarry 1 --check`** and read the `position:` line against F3. Nobody has
    ever confirmed the turtle's fix matches the real world, and the pattern
    anchors to absolute coordinates — a wrong origin mines a correct claim in
    the wrong place.
-3. **Place it where it launched from before** if the trunk and depot already cut
-   at 248,-59,711 are to be reused. The claim anchors to the launch block: the
-   old run anchored at 243,73,734, claim x 224..271, z 704..751. Launched from
-   somewhere else it cuts a fresh trunk somewhere else, which is correct
-   behaviour and probably not what is wanted.
+3. **Launch from the same block** to reuse the trunk already cut at
+   248,-59,711. The claim anchors to the launch block: `Rpv9m` anchored at
+   243,73,734, claim x 224..271, z 704..751. Launched from somewhere else it
+   cuts a fresh trunk somewhere else, which is correct behaviour and probably
+   not what is wanted.
 4. **A barrel in the hold**, then `quarry 1`.
+
+**Expect `depot  : the floor under the trunk will not open — placed a container
+beside the trunk at y=-58 instead`** (with a plain `--` in the real line). That
+is the fallback working, not a fault. If it says `nothing beside the trunk will
+open` instead, read the lines above it: all three candidate spots refused to be
+dug.
+
+**Two rows of the old trunk level are gone for good.** `Rpv9m` reported
+`taken  : y=-59 z=711 is already cut` and the same for z=706 — that was the
+run's own earlier work, read back as another turtle's once `quarry.state` was
+deleted. `mouthTaken()` cannot tell the difference and by design does not try.
+Restarting over an old mine costs those rows; it is not a bug.
 
 Then run turtle 2 and watch it dock: dump, ration, restock.
 
@@ -131,6 +146,41 @@ that log.
   `gps    : Received 0 responses.` instead of one bare `CRASHED` line. Three
   sessions were spent theorising about a fix the api was willing to explain.
 
+## What shipped 2026-08-28 late night
+
+Both from run `Rpv9m`, both confirmed to fail against the build that produced
+that log. `test_quarry.lua` is 62 checks now, tests 62 and 63.
+
+- **Bedrock under the trunk floor no longer costs the run its depot.** The
+  depot still goes under the floor first — that is the one neighbour nothing
+  ever mines — but bedrock scatters up through y=-60 and the floor stands at
+  y=-59, so on most trunks the block below simply will not open. `Rpv9m` said
+  `the floor under the trunk will not open — no depot built` and then had
+  nowhere to put anything for the rest of the run. `buildDepot` now falls back
+  to a niche **beside the trunk, one level up**, on an x side: ±z is the spine
+  at every level, and the east-west legs only cross the trunk's own z on the
+  levels `isBranch` names — and a row never repeats on the next level up, since
+  it shifts 2 in z per level mod 5, so a free level is at most two up. It sets
+  `st.depot` itself, because `probeDepot` looks from the floor and would never
+  see it. Test 62.
+- **Spare coal is not a reason to stop when there is nowhere to bank it.**
+  `Rpv9m` ended `STOPPED: carrying 192 fuel and fuelShare is 128, which the
+  other turtles could burn` — on a full tank, with a nearly empty hold, 4520
+  fuel left and no depot in the claim. `fuelShare` means *the other two could
+  use some of this*, which needs a depot to put it in; without one it is just
+  fuel this turtle burns itself. `mineLeg` now flags the dock on spare coal only
+  when `st.depot` is set, the resume guard matches, and the halt reason is gone.
+  A full hold and a `tripBlocks` load still stop the run: with nowhere to empty
+  out, mining on only destroys the drops. Test 63.
+- **A dock flag whose reason has passed is cleared, not halted on.** Burning a
+  stack for the next branch empties the slot it came from, so a hold that was
+  full when the leg ended has room again by the time the loop looks. That used
+  to fall through to `STOPPED: a depot run was queued`, which named nothing.
+- `findSharedDepot` reported the depot sides with `%d`, which throws on the
+  `"down"` side the previous night's change introduced. Now `%s`.
+- The found-depot line is `depot  : container at x,y,z`, not `at the trunk
+  floor`: it may now be a level above it.
+
 ## GPS was down on 2026-08-28 evening and is up again
 
 The user fixed the constellation that night. Run `45bPE` opened with
@@ -182,7 +232,7 @@ from a run that finds ore, which is how the config learns this pack's ore ids.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-28 evening.** Nine review findings, the fuel-floor ration, the tank-limit fix, the calibration guard, `startDir`. 100,496 bytes, fletcher32 `3090748686`, confirmed by running the checksum on turtle 1 itself. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-28 late night.** The bedrock depot fallback and the spare-coal stop, on top of the depot-under-the-floor build. 119,158 bytes, fletcher32 `3223320507`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry` and itself. |
 
@@ -280,7 +330,7 @@ the machine, it prints the file's fletcher32 to compare against
 | --- | --- |
 | `MASTERMINE-PLAN.md` | The design, every decision and its reasoning. Read second. Trimmed 2026-08-28: §11 is now a status table, and the rules it used to carry are in this file's Settled and Corrections lists. |
 | `quarry.lua` | **The deliverable.** ~2,430 lines, Phases 1–5. Opens `local DRY = true`; the config lowers it. |
-| `test_quarry.lua` | Five suites against stubbed CC worlds, 60 checks. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones. `lua5.3 test_quarry.lua` |
+| `test_quarry.lua` | Five suites against stubbed CC worlds, 62 checks. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–63 the late-night ones. `lua5.3 test_quarry.lua` |
 | `update.lua` | The in-game updater: `update` replaces `quarry` and itself from GitHub. Downloaded once by hand. |
 | `test_update.lua` | Stubbed `http`/`fs` around the updater: the failed download, the HTML 404, the cache-buster, the checksum. `lua5.3 test_update.lua` |
 | `probe.lua` | The Phase 5 probe. `probe` is a dry run, `probe go` is the real one. |
@@ -335,7 +385,12 @@ Plan section numbers in brackets.
 - **Depot at the claim floor** [5], **found by looking, not configured**. One
   container serves all three; a turtle with none under its own trunk walks the
   spine to the others, once, and writes `st.noDepot` if the answer is no.
-- **The depot goes UNDER the trunk floor, never beside it.** Changed
+- **The depot goes UNDER the trunk floor, and beside the trunk one level UP
+  when bedrock is in the way.** The block under the floor is the one neighbour
+  nothing ever mines, so it is always tried first — but bedrock scatters up
+  through y=-60 and the floor stands at y=-59, so it usually will not open
+  (in-game 2026-08-28, `Rpv9m`). The fallback is an x-side niche one or two
+  levels up, never a side of the floor itself. Changed
   2026-08-28 night on in-game evidence (`45bPE`). All four sides of the floor
   block are working rows -- the branch legs run east-west through them, the
   spine runs north-south through them -- so a container on a side is a block
@@ -448,10 +503,13 @@ a dry run write `dry = true` into the stub config explicitly.
 - **"Burn on pickup, carry no fuel items" is about depot coal, not mined coal.**
   Coal dug on a branch rides home to the chest. Do not add a burn-it-where-you-
   find-it rule; that is the hoarding the sharing rule exists to stop.
-- **The depot chest stands on a branch row.** The trunk is on the spine, so its
-  four neighbours are spine or branch. One leg of one branch is lost at the
-  floor level. Do not redesign the geometry for it — but do remember `goTo`
-  must leave a spine block along z, or it walks into that chest.
+- **A depot chest beside the trunk floor stands on a branch row.** The trunk is
+  on the spine, so all four of the floor's neighbours are spine or branch, and
+  a container on any of them costs a leg or the spine. This program no longer
+  builds there — under the floor first, an x-side niche a level up when bedrock
+  blocks that — but a hand-placed one is still honoured and still in the way.
+  Do not redesign the geometry for it; do remember `goTo` must leave a spine
+  block along z, or it walks into that chest.
 - **Do not sweep the spine for the shared depot on boot.** It costs ~70 dug
   blocks every boot on a claim that has no chest. It waits until the depot is
   needed.

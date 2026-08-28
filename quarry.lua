@@ -1375,8 +1375,13 @@ local function mineLeg(c, conf, l, leg)
     -- Full, carrying a trip's worth, or sitting on a fuel find the other two
     -- turtles could be burning: stop here and let the loop dock. The leg
     -- position is already saved, so the walk back resumes exactly here.
+    -- Spare coal only counts when there is a depot to bank it INTO. Without
+    -- one it is simply fuel this turtle burns itself, and flagging a dock over
+    -- it stopped a run with a full tank and a nearly empty hold dead [in-game
+    -- 2026-08-28, log Rpv9m]. The full hold and the tripBlocks trip are real
+    -- either way: with nowhere to empty out, mining on only destroys the drops.
     if not room() or (st.carried or 0) >= conf.tripBlocks
-       or fuelAboard(l) >= conf.fuelShare then
+       or (st.depot and fuelAboard(l) >= conf.fuelShare) then
       st.needDock = true
       save()
       return false
@@ -1540,47 +1545,95 @@ function carryingContainer()
   return false
 end
 
-local function buildDepot(l)
-  -- One container, under the trunk floor. Every side of the floor is in the way
-  -- of something: the branch legs run east-west along it, the spine runs
-  -- north-south through it, so a container beside the floor is a block the
-  -- pattern walks into later and refuses to dig -- which ends that leg and then
-  -- stops the run [in-game 2026-08-28: turtle 1 built chests on sides 0 and 1,
-  -- lost the branch it was standing on to one and the spine to the other].
-  -- Below the floor is the one neighbour nothing ever mines. Fuel and spoil
-  -- share the single box, which is the case restock is already written for.
+local function buildDepot(l, c)
+  -- One container, in the one block beside the trunk that the mining pattern
+  -- never enters.
+  --
+  -- Under the trunk floor is the first choice and the best one: nothing is ever
+  -- dug below the bottom level. But bedrock scatters up through y=-60 and the
+  -- floor stands at y=-59, so the block below it is usually bedrock and simply
+  -- will not open [in-game 2026-08-28, log Rpv9m: "the floor under the trunk
+  -- will not open -- no depot built", and then a run with nowhere to bank].
+  --
+  -- The fallback is beside the trunk one level UP, on an x side. Never beside
+  -- the floor itself: all four of ITS neighbours are working rows -- the legs
+  -- run east-west through them, the spine north-south -- so a container there
+  -- is a block the pattern later walks into and refuses to dig [in-game
+  -- 2026-08-28, log 45bPE: turtle 1 lost the branch it was standing on to one
+  -- chest and the spine to the other]. One level up, +z/-z is still the spine,
+  -- but the east-west legs only cross the trunk's own z on the levels where
+  -- isBranch says so, and a row never repeats on the next level -- it shifts 2
+  -- in z per level, mod 5 -- so a free level is at most two up.
   local slot
   for sl = 1, 16 do
     local ok, item = pcall(turtle.getItemDetail, sl)
     if ok and item and isContainer(item.name) then slot = sl break end
   end
   if not slot then return 0 end
-  if turtle.detectDown()
-     and not clear(turtle.digDown, turtle.detectDown, turtle.inspectDown) then
-    say("depot  : the floor under the trunk will not open -- no depot built")
-    return 0
-  end
-  turtle.select(slot)
-  local lived, put = pcall(turtle.placeDown)
-  turtle.select(1)
-  if not (lived and put ~= false) then
-    say("depot  : could not place a container under the trunk floor")
-    return 0
-  end
-  say("depot  : placed a container under the trunk floor")
-  -- Everything burnable this turtle still carries goes in, and from here on it
-  -- rations out of it like the other two do [plan 7].
-  local banked = 0
-  for sl = 1, 16 do
-    local ok, item = pcall(turtle.getItemDetail, sl)
-    if ok and item and isFuelItem(l, item.name) then
-      turtle.select(sl)
-      if select(2, pcall(turtle.dropDown)) ~= false then banked = banked + item.count end
+
+  local tx, ty, tz = st.x, st.y, st.z
+  local spots = { { y = ty, dir = "down" } }
+  for off = 1, 3 do
+    if not isBranch(c, ty + off, tz) then
+      spots[#spots + 1] = { y = ty + off, dir = 1 }   -- -x
+      spots[#spots + 1] = { y = ty + off, dir = 3 }   -- +x
+      break
     end
   end
-  turtle.select(1)
-  if banked > 0 then sayf("depot  : banked %d fuel into it for all three", banked) end
-  return 1
+
+  -- clear() sets halt when it meets a deny-list block, and a neighbour it
+  -- cannot open is a reason to try the next spot, not to end the run.
+  local h0 = halt
+  for _, sp in ipairs(spots) do
+    if (st.y == sp.y or goTo(tx, sp.y, tz)) then
+      local dig, detect, inspect, place
+      if sp.dir == "down" then
+        dig, detect, inspect, place =
+          turtle.digDown, turtle.detectDown, turtle.inspectDown, turtle.placeDown
+      else
+        turnTo(sp.dir)
+        dig, detect, inspect, place =
+          turtle.dig, turtle.detect, turtle.inspect, turtle.place
+      end
+      if clear(dig, detect, inspect) then
+        turtle.select(slot)
+        local lived, put = pcall(place)
+        turtle.select(1)
+        if lived and put ~= false then
+          if sp.dir == "down" then
+            say("depot  : placed a container under the trunk floor")
+          else
+            sayf("depot  : the floor under the trunk will not open -- placed a "
+              .. "container beside the trunk at y=%d instead", sp.y)
+          end
+          -- probeDepot never sees this one: it looks from the trunk floor and
+          -- this may be a level up. One box is both roles, which is the case
+          -- restock is already written for.
+          st.depot = { x = st.x, y = st.y, z = st.z, dump = sp.dir, fuel = sp.dir }
+          save()
+          -- Everything burnable this turtle still carries goes in, and from
+          -- here on it rations out of it like the other two do [plan 7].
+          local banked = 0
+          local drop = depotDrop(sp.dir)
+          faceDepot(sp.dir)
+          for sl = 1, 16 do
+            local ok, item = pcall(turtle.getItemDetail, sl)
+            if ok and item and isFuelItem(l, item.name) then
+              turtle.select(sl)
+              if select(2, pcall(drop)) ~= false then banked = banked + item.count end
+            end
+          end
+          turtle.select(1)
+          if banked > 0 then sayf("depot  : banked %d fuel into it for all three", banked) end
+          halt = h0
+          return 1
+        end
+      end
+    end
+    halt = h0
+  end
+  say("depot  : nothing beside the trunk will open -- no depot built")
+  return 0
 end
 
 local function dumpLoad(l)
@@ -1962,8 +2015,8 @@ local function findSharedDepot(c, conf, l, index, trunkZ)
       for _, off in ipairs({ 0, 1, 2, 3, -1, -2, -3 }) do
         if goTo(c.spine, y0 + off, tz) and probeDepot(l) then
           local dp = st.depot
-          sayf("depot  : shared depot at %d,%d,%d (dump side %d, fuel side %d)",
-            dp.x, dp.y, dp.z, dp.dump, dp.fuel)
+          sayf("depot  : shared depot at %d,%d,%d (dump side %s, fuel side %s)",
+            dp.x, dp.y, dp.z, tostring(dp.dump), tostring(dp.fuel))
           return true
         end
       end
@@ -2169,14 +2222,14 @@ local function runMine(conf, l, index)
     -- build the depot, not to look for one. Placing first means probeDepot
     -- finds them on the same pass.
     if not probeDepot(l) then
-      local built = buildDepot(l)
+      local built = buildDepot(l, c)
       if built > 0 then
         sayf("depot  : built the depot here, %d container%s", built, built == 1 and "" or "s")
       end
     end
     if st.depot or probeDepot(l) then
       local dp = st.depot
-      sayf("depot  : container at the trunk floor %d,%d,%d (dump %s, fuel %s)",
+      sayf("depot  : container at %d,%d,%d (dump %s, fuel %s)",
         dp.x, dp.y, dp.z, tostring(dp.dump), tostring(dp.fuel))
     else
       say("depot  : nothing under my own trunk -- it will look under the others")
@@ -2202,7 +2255,7 @@ local function runMine(conf, l, index)
     -- the dock flag is a fact about the load, not durable state: a turtle that
     -- resumes with an empty hold has no trip to make, whatever the file says
     if st.needDock and room() and (st.carried or 0) < conf.tripBlocks
-       and fuelAboard(l) < conf.fuelShare then
+       and (not st.depot or fuelAboard(l) < conf.fuelShare) then
       st.needDock = nil
     end
 
@@ -2221,20 +2274,26 @@ local function runMine(conf, l, index)
           :format(fuelLevel(), want)
         break
       else
-        -- Three things set st.needDock and only one of them is a full hold.
-        -- Saying "inventory is full" for all three sent the user to look at an
-        -- inventory that had six free slots in it.
+        -- Three things set st.needDock and only two of them are a reason to
+        -- stop. Saying "inventory is full" for all three sent the user to look
+        -- at an inventory that had six free slots in it.
         local why
         if not room() then
           why = ("inventory is full: all 16 slots hold something")
         elseif (st.carried or 0) >= conf.tripBlocks then
           why = ("carrying %d blocks and tripBlocks is %d, so it is time to empty out")
             :format(st.carried or 0, conf.tripBlocks)
-        elseif fuelAboard(l) >= conf.fuelShare then
-          why = ("carrying %d fuel and fuelShare is %d, which the other turtles could burn")
-            :format(fuelAboard(l), conf.fuelShare)
         else
-          why = "a depot run was queued"
+          -- Spare coal is not on that list: banking it needs a depot to bank
+          -- it INTO, and there is none [in-game 2026-08-28, log Rpv9m: a run
+          -- with a full tank and a nearly empty hold stopped over 192 coal the
+          -- other two turtles were not there to burn]. Anything else that
+          -- flagged the dock has passed: burning a stack for the next branch
+          -- empties the slot it came out of, so a hold that was full at the end
+          -- of the leg has room again by the time the loop looks at it.
+          st.needDock = nil
+          save()
+          goto nextpass
         end
         halt = why .. ", and there is no depot to empty it into"
         break

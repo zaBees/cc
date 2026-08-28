@@ -401,6 +401,18 @@ local function locate(conf)
     local ok, x, y, z = pcall(gps.locate, GPS_TIMEOUT)
     if ok and x then return math.floor(x), math.floor(y), math.floor(z), "gps" end
   end
+  -- Underground there may be no constellation to reach: a wireless modem's
+  -- range shrinks with depth, and hosts near the surface are a hundred-odd
+  -- blocks above the claim floor. GPS being healthy up top says nothing about
+  -- y=-59 [in-game 2026-08-28, log td7FE: a turtle parked at the depot, modem
+  -- equipped, no host answering]. The state file is written every block and
+  -- carries the heading GPS never gives, so a turtle that has been running
+  -- already knows where it is. Last resort, and never silent: a turtle someone
+  -- picked up and moved cannot tell, so every user of this says where it came
+  -- from.
+  if st.x and st.y and st.z and st.dir then
+    return st.x, st.y, st.z, "quarry.state"
+  end
   return nil, nil, nil, "no fix"
 end
 
@@ -589,6 +601,13 @@ local function check(conf, l, source, index)
     return
   end
   sayf("position: %d,%d,%d (%s)", x, y, z, how)
+  if how == "quarry.state" then
+    say("         WARNING: gps.locate did not answer HERE, so that is the position")
+    say("         quarry.state was last saved at, with the heading it saved too.")
+    say("         A run will start on it. Underground that is normal -- modem range")
+    say("         falls off with depth and the hosts are far above. If this turtle")
+    say("         has been moved by hand since, delete quarry.state first.")
+  end
   if how == "quarry.conf" then
     say("         WARNING: that came from quarry.conf, not GPS. Calibration finds")
     say("         the heading by moving one block and watching the position change,")
@@ -972,6 +991,16 @@ local function calibrate(conf)
   -- at boot, resume and deploy -- so a stated heading is enough to mine on.
   -- What it costs is recovery: a turtle that loses its saved state cannot find
   -- itself again, so fixing GPS is still the better answer.
+  -- The saved fix comes with a saved heading, which is the whole reason it is
+  -- usable where a config pin is not: nothing has to be told, only trusted.
+  if how == "quarry.state" then
+    sayf("heading: %s from quarry.state -- no GPS fix here, resuming on the saved",
+      ({ [0] = "+z", [1] = "-x", [2] = "-z", [3] = "+x" })[st.dir])
+    say("         position. If somebody moved me since, this is wrong: delete")
+    say("         quarry.state and start me somewhere GPS answers.")
+    return true
+  end
+
   if how == "quarry.conf" then
     if not conf.startDir then
       return false, "quarry.conf sets startX/startY/startZ, which pins my position "

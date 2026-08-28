@@ -19,6 +19,7 @@ local function reset(o)
     equip = o.equip or { right = "modem" },
   }
   if W.conf then W.files["quarry.conf"] = W.conf end
+  if o.state then W.files["quarry.state"] = o.state end
 end
 
 local function mkenv()
@@ -409,6 +410,39 @@ assert(log:find("a modem IS equipped"),
   "a modem-equipped run was told to equip a modem:\n" .. log .. tostring(err))
 assert(log:find("no GPS host answered"),
   "it did not name the constellation as the cause:\n" .. log)
+
+-- 59. with no GPS down the hole, the saved state IS the fix -----------------
+
+-- In-game 2026-08-28 (log td7FE) turtle 1 sat at the depot at y=-59 with its
+-- modem equipped and got no answer: a wireless modem's range shrinks with
+-- depth and the hosts are a hundred-odd blocks up, so GPS being healthy at the
+-- surface says nothing at the claim floor. Refusing to start there means a
+-- turtle can never resume its own job. quarry.state is written every block and
+-- carries the heading GPS never gives, so it is the fallback -- announced, not
+-- silent, because a turtle someone carried off cannot tell.
+local SAVED = "{x=248,y=-59,z=711,dir=0,index=1,dug=251}"
+reset({ gps = false, state = SAVED })
+ok, err, log = run("1", "--check")
+assert(ok, "the saved-state --check crashed: " .. tostring(err))
+assert(log:find("position: 248,%-59,711 %(quarry%.state%)"),
+  "it did not fall back to the saved fix:\n" .. log)
+assert(log:find("WARNING: gps.locate did not answer HERE"),
+  "it passed a saved position off as a live one:\n" .. log)
+assert(log:find("delete quarry.state"),
+  "it did not say what to do if the turtle was moved by hand:\n" .. log)
+
+-- a live fix still wins over the saved one, or a moved turtle never notices
+reset({ state = SAVED, at = { 137, 71, -42 } })
+ok, err, log = run("1", "--check")
+assert(log:find("position: 137,71,%-42 %(gps%)"),
+  "a stale saved position beat a live GPS fix:\n" .. log)
+
+-- and a state file with no heading in it is not a fix: dead-reckoning from an
+-- unknown facing walks the claim sideways
+reset({ gps = false, state = "{x=248,y=-59,z=711,index=1}" })
+ok, err, log = run("1", "--check")
+assert(log:find("position: NO FIX"),
+  "it ran on a saved position with no saved heading:\n" .. log)
 
 print("all quarry phase 1 checks passed")
 

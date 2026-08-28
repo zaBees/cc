@@ -43,7 +43,12 @@ coal has ever been handed out, and two turtles have never run at once.
 
 ## Next action
 
-**Clear the two chests turtle 1 built, re-download, run `quarry 1` again.**
+**Clear the two chests turtle 1 built, update, run `quarry 1` again.**
+
+Turtle 1 is standing at the depot at 248,-59,711 where it stopped, and gets no
+GPS fix down there — that is the range falling off with depth, not a broken
+constellation. Since this build it resumes on `quarry.state` instead of
+refusing, so it can be started where it stands.
 
 1. **Go to 248,-59,711 and break both chests** — one at 247,-59,711 and one at
    248,-59,712. **Turtles 2 and 3, the disk drive, the floppy and the modems
@@ -95,6 +100,20 @@ that log.
   skip it. Test 56.
 - The report line is now `depot  : container at the trunk floor x,y,z
   (dump down, fuel down)` — `%s`, not `%d`, because the side can be `"down"`.
+- **A NO FIX crash names its own cause.** `noFix()` reports the equipped sides
+  and picks one answer: no modem equipped, or a modem with no host answering.
+  The old line listed both at once, which is why `URkmo` could not be read.
+  `gps.locate`'s timeout went 2s → 5s. Test 58.
+- **`quarry.state` is a position source when GPS is silent.** Log `td7FE`:
+  turtle 1 at the depot, `left=modem`, no host answering in 5s. A wireless
+  modem's range shrinks with depth and the constellation is a hundred-odd
+  blocks above the claim floor, so **GPS answering at the surface says nothing
+  at y=-59** — and a turtle that cannot get a fix at the floor can never resume
+  its own job. `locate` now falls back to the saved position, which comes with
+  the saved heading, so `calibrate` has nothing to measure and nothing to be
+  told. It is announced every time, in `--check` and in the run, because a
+  turtle someone picked up and moved cannot know it. A state file with no
+  `dir` in it is not a fix. Test 59, three cases.
 
 ## GPS was down on 2026-08-28 evening and is up again
 
@@ -245,7 +264,7 @@ the machine, it prints the file's fletcher32 to compare against
 | --- | --- |
 | `MASTERMINE-PLAN.md` | The design, every decision and its reasoning. Read second. Trimmed 2026-08-28: §11 is now a status table, and the rules it used to carry are in this file's Settled and Corrections lists. |
 | `quarry.lua` | **The deliverable.** ~2,430 lines, Phases 1–5. Opens `local DRY = true`; the config lowers it. |
-| `test_quarry.lua` | Five suites against stubbed CC worlds, 58 checks. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–58 the night ones. `lua5.3 test_quarry.lua` |
+| `test_quarry.lua` | Five suites against stubbed CC worlds, 59 checks. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–59 the night ones. `lua5.3 test_quarry.lua` |
 | `update.lua` | The in-game updater: `update` replaces `quarry` and itself from GitHub. Downloaded once by hand. |
 | `test_update.lua` | Stubbed `http`/`fs` around the updater: the failed download, the HTML 404, the cache-buster, the checksum. `lua5.3 test_update.lua` |
 | `probe.lua` | The Phase 5 probe. `probe` is a dry run, `probe go` is the real one. |
@@ -349,6 +368,13 @@ Plan section numbers in brackets.
   the default lists outright** — a file with no `[blacklist]` section has no
   blacklist. That is deliberate; tests must spell out the lists they need.
 - **Save state every block** [10]. Measured at 1.35 ms against a 400 ms move.
+- **GPS does not reach the claim floor, and that is physics, not a fault.**
+  A wireless modem's range shrinks with depth; the hosts sit near the surface
+  and the mine floor is y=-59, a hundred-odd blocks down. `gps.locate` answering
+  where the user is standing says nothing about where the turtle is. Every fix
+  a run gets is taken at the launch block before it descends; from there it
+  dead-reckons, and `quarry.state` is what a turtle at the floor resumes on.
+  Confirmed in-game 2026-08-28 (`td7FE`).
 - **GPS is NOT reliable on this server.** It worked on 2026-08-28 morning
   (`--check` reported `position: 8,79,4 (gps)`), was dead that evening --
   `gps.locate` returned nil from turtle 1 with `left=modem` equipped, so no

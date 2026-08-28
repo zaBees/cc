@@ -30,11 +30,13 @@ the fixed build still reads a container beside the floor as a depot. The user
 breaks both, takes everything back, re-downloads, and runs `quarry 1` with a
 barrel aboard.
 
-The last thing they reported (log URkmo) was `CRASHED: no position fix` while
-saying "gps locate works". The crash line has been rewritten to name which of
-the two causes it is -- no modem equipped, versus a modem but no host answering
--- so the next run's message is evidence, not a list. Ask for that message, or
-for `quarry --check`, before theorising.
+A crash they reported (URkmo, then td7FE) was `CRASHED: no position fix` while
+they said "gps locate works". Both were true: the turtle was parked at the
+depot at y=-59 with its modem equipped, and a wireless modem's range shrinks
+with depth, so the surface constellation simply does not reach the claim floor.
+locate() now falls back to quarry.state, which carries the heading GPS never
+gives. Expect this to come back in some other shape -- ask for the crash line
+or `quarry --check`, which name their own cause now, before theorising.
 
 GPS itself is UP: run 45bPE opened with `quarry 1  at 243,73,734`, so the
 constellation the user rebuilt answers and startX/Y/Z are out of quarry.conf.
@@ -69,7 +71,7 @@ in this sandbox -- checked -- so CC mod-side behaviour has to come from the
 wiki at tweaked.cc or from the user.
 
 Run `lua5.3 test_quarry.lua`, `lua5.3 test_probe.lua` and `lua5.3
-test_update.lua` before and after any change; all of them must pass, 58 checks
+test_update.lua` before and after any change; all of them must pass, 59 checks
 in test_quarry. When you fix a bug, add a test and
 verify it FAILS against the unfixed code -- sixteen tests have been confirmed
 non-vacuous that way and it is worth the extra minute every time.
@@ -80,9 +82,10 @@ reports/code-review-quarry.md records what each one was; RESUME.md summarises
 them. Nothing from that review is outstanding -- do not go looking for the "six
 open findings" an older copy of this prompt mentions. Tests 49-55 are the
 2026-08-28 evening fixes: the tank limit read from the turtle instead of a
-literal 20000, the fuel floor, the calibration guard, and startDir. Tests 56-58
+literal 20000, the fuel floor, the calibration guard, and startDir. Tests 56-59
 and the rewritten 33 are that night's: the kit staying out of the depot, the
-depot going under the trunk floor, and the NO FIX crash naming its own cause.
+depot going under the trunk floor, the NO FIX crash naming its own cause, and
+quarry.state standing in as a position source where GPS cannot reach.
 
 DELIVERY IS GITHUB, changed 2026-08-28 at the user's instruction. This
 directory is the working tree of https://github.com/zaBees/cc (public). The

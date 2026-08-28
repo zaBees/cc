@@ -518,6 +518,23 @@ local V   -- the phase 2 world
 -- topY in a test conf is a run bound, not a claim: a full depot no longer stops
 -- a run -- the junk goes on the tunnel floor -- so a world that does not cap the
 -- levels mines its whole third, which is a minute per test instead of a second.
+-- A floppy is 125 kB (CC:Tweaked floppy_space_limit) and the mod throws
+-- "Out of space" on the write that goes past it, not on the one after. The
+-- program is bigger than that, so the disk has to be a real limit here or a
+-- deploy that cannot possibly fit passes the suite [paste WHYa2].
+local FLOPPY = 125000
+local function writeFile(n, body)
+  body = body or ""
+  if n:sub(1, 5) == "/disk" then
+    local used = 0
+    for name, b in pairs(V.files) do
+      if name:sub(1, 5) == "/disk" and name ~= n then used = used + #b end
+    end
+    if used + #body > FLOPPY then error("Out of space", 0) end
+  end
+  V.files[n] = body
+end
+
 local function world(o)
   o = o or {}
   V = {
@@ -598,12 +615,12 @@ local function mkworldenv()
     end,
     delete = function(n) V.files[n] = nil end,
     move   = function(a, b) V.files[b], V.files[a] = V.files[a], nil end,
-    copy   = function(a, b) V.files[b] = V.files[a] end,
+    copy   = function(a, b) writeFile(b, V.files[a]) end,
     open   = function(n, m)
       if m == "w" then
         local buf = {}
         return { write = function(s) buf[#buf + 1] = s end,
-                 close = function() V.files[n] = table.concat(buf) end }
+                 close = function() writeFile(n, table.concat(buf)) end }
       end
       if V.files[n] == nil then return nil end
       return { readAll = function() return V.files[n] end, close = function() end }
@@ -2290,5 +2307,55 @@ assert(ok, "the given-up deploy run crashed: " .. tostring(err))
 assert(log:find("deploy : 2 turtles still in the hold"),
   "it said nothing about the turtles it is still carrying:\n" .. log)
 assert(log:find("branch : "), "giving the deploy up stopped the mine:\n" .. log)
+
+-- 73. the real program fits the floppy ---------------------------------------
+
+-- In-game the deploy died on `fs.copy(me, "/disk/quarry")` with "Out of space":
+-- quarry.lua is 132 kB and a floppy holds 125 kB [paste WHYa2]. The fix strips
+-- full-line comments on the way onto the disk, so the check that matters is
+-- that the REAL file goes across and still parses.
+local src = assert(io.open("quarry.lua", "r"))
+local REAL = src:read("a")
+src:close()
+
+world({ inv = kit(), leaveAfter = 3 })
+V.files["quarry"] = REAL
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "deploying the real program crashed: " .. tostring(err))
+assert(V.files["/disk/quarry"], "the real program never reached the floppy:\n" .. log)
+assert(#V.files["/disk/quarry"] < 125000,
+  ("what landed on the floppy is %d bytes"):format(#V.files["/disk/quarry"]))
+local prog, why = load(V.files["/disk/quarry"], "floppy")
+assert(prog, "the stripped copy is not valid Lua: " .. tostring(why))
+assert(V.files["/disk/quarry"]:find("DEFAULT_CONF", 1, true),
+  "stripping ate the config template")
+-- the config template is a long string: its blank lines and # comments survive
+assert(V.files["/disk/quarry"]:find("\n# startX = 0", 1, true),
+  "stripping reached inside the [[ long string ]] and cut the config help")
+assert(log:find("comments stripped"), "it did not say what it wrote:\n" .. log)
+
+-- 74. a manual-GPS deploy hands on the PLACED turtle's fix, not its own -------
+
+-- With startX/Y/Z set there is no GPS to correct a copied config, so copying
+-- the deployer's verbatim tells turtles 2 and 3 they are standing where turtle
+-- 1 stands. They are placed one block in front of it, facing back at it.
+world({ inv = kit(), leaveAfter = 3, at = { x = 137, y = 83, z = -42 }, dir = 0,
+        conf = "startX = 137\nstartY = 83\nstartZ = -42\nstartDir = 0\n" })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the manual-GPS deploy crashed: " .. tostring(err))
+local handed = V.files["/disk/quarry.conf"]
+assert(handed, "no config reached the floppy:\n" .. log)
+assert(handed:find("startZ = %-41"),
+  "the floppy config still says the deployer's z:\n" .. handed)
+assert(handed:find("startX = 137"), "it moved x, and only z changes here:\n" .. handed)
+assert(handed:find("startDir = 2"),
+  "the placed turtle faces back at the deployer, so startDir must flip:\n" .. handed)
+
+-- and with GPS the config still goes across untouched
+world({ inv = kit(), leaveAfter = 3 })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the GPS deploy crashed: " .. tostring(err))
+assert(V.files["/disk/quarry.conf"] == V.files["quarry.conf"],
+  "a GPS deploy rewrote a config it had no reason to touch")
 
 print("all quarry phase 5 checks passed")

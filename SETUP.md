@@ -460,6 +460,14 @@ one line:
 
 Use the **turtle's** block position, not yours, if you are standing next to it.
 
+`startDir` has to go in too, because a turtle told its position by hand cannot
+measure which way it faces: `0` = +z, `1` = -x, `2` = -z, `3` = +x.
+
+Deploying with manual coordinates is fine. Turtle 1 writes each deployed
+turtle's OWN position and heading onto the floppy rather than handing on its
+own, so turtles 2 and 3 do not both think they are standing where turtle 1
+stands.
+
 ---
 
 ## 7. Lava bucket — already settled, keep one on each turtle

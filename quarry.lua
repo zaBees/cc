@@ -2920,6 +2920,64 @@ end
 -- Build the boot rig once, then run every remaining turtle through it. The
 -- drive stays where it is: it is also the lava map's home [plan 7], and
 -- breaking it to carry it down would cost the floppy inside it.
+-- A floppy holds 125 kB and this program is past that, so what goes onto the
+-- disk is the source with its full-line comments dropped -- 83 kB of the same
+-- code. Anything inside a [[ long string ]] is left alone: DEFAULT_CONF is one,
+-- and its blank lines and layout are the config file the deployed turtle reads.
+-- Line numbers shift, so an error from a deployed turtle points into ITS copy.
+local function readAllOf(path)
+  local h = fs.open(path, "r")
+  if not h then error("cannot read " .. path, 0) end
+  local body = h.readAll()
+  h.close()
+  return body
+end
+
+local function copyStripped(src, dst)
+  local out, long = {}, false
+  for line in (readAllOf(src) .. "\n"):gmatch("([^\n]*)\n") do
+    if long then
+      out[#out + 1] = line
+      if line:find("%]%]") then long = false end
+    elseif not line:match("^%s*%-%-") then
+      out[#out + 1] = line
+      if line:find("%[%[") and not line:find("%]%]") then long = true end
+    end
+  end
+  local body = table.concat(out, "\n") .. "\n"
+  local h = fs.open(dst, "w")
+  if not h then return false, #body end
+  local ok = pcall(h.write, body)
+  pcall(h.close)
+  if not ok then return false, #body end
+  return true, #body
+end
+
+-- With startX/Y/Z set there is no GPS to correct a copied file, so handing the
+-- deployer's own coordinates on tells every turtle it is standing where turtle
+-- 1 stands -- and each one then mines someone else's third. Every turtle is
+-- placed in the one block in front, facing back at the deployer, so the fix is
+-- known exactly: write that rather than copy the deployer's.
+local function confForPlaced(conf, body)
+  if not (conf.startX and conf.startY and conf.startZ) then return body end
+  -- deploy runs before the mine does, so the heading is whatever the config
+  -- said: nothing has turned yet.
+  local dir = st.dir or conf.startDir or 0
+  local d = DIRS[dir]
+  local vals = { startX = st.x + d[1], startY = st.y, startZ = st.z + d[2],
+                 startDir = (dir + 2) % 4 }
+  for k, v in pairs(vals) do
+    local pat = "\n[ \t]*" .. k .. "[ \t]*=[^\n]*"
+    local rep = ("\n%s = %d"):format(k, v)
+    if body:find(pat) then body = body:gsub(pat, rep, 1)
+    else body = body .. rep:sub(2) .. "\n" end
+  end
+  sayf("deploy : GPS is manual, so the floppy says %d,%d,%d facing %d -- where the",
+    vals.startX, vals.startY, vals.startZ, vals.startDir)
+  say("         placed turtle actually stands, not where I stand.")
+  return body
+end
+
 function runDeploy(conf, l, index)
   if index ~= 1 then
     error("deploy is turtle 1's job -- it is the one holding the kit", 0)
@@ -2992,14 +3050,23 @@ function runDeploy(conf, l, index)
     error("cannot find my own file to copy onto the floppy", 0)
   end
   if fs.exists("/disk/quarry") then fs.delete("/disk/quarry") end
-  fs.copy(me, "/disk/quarry")
-  sayf("deploy : copied %s to /disk/quarry", me)
+  local wrote, size = copyStripped(me, "/disk/quarry")
+  if not wrote then
+    error(("the program will not fit the floppy even stripped (%d bytes); "):format(size)
+      .. "raise floppy_space_limit in the CC:Tweaked server config", 0)
+  end
+  sayf("deploy : copied %s to /disk/quarry (%d bytes, comments stripped)", me, size)
 
   -- and the config with it. A deployed turtle that seeds its own gets
   -- dry = true and never moves, which reads exactly like a hung deployment.
   if fs.exists(CONF) then
     if fs.exists("/disk/quarry.conf") then fs.delete("/disk/quarry.conf") end
-    fs.copy(CONF, "/disk/quarry.conf")
+    local body = readAllOf(CONF)
+    body = confForPlaced(conf, body)
+    local h = fs.open("/disk/quarry.conf", "w")
+    if not h then error("cannot write /disk/quarry.conf", 0) end
+    h.write(body)
+    h.close()
     sayf("deploy : copied %s to /disk/quarry.conf (dry = %s)", CONF, tostring(conf.dry))
     if conf.dry ~= false then
       say("         NOTE: dry is still true, so the turtles will plan and not move.")

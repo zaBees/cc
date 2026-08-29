@@ -4182,9 +4182,9 @@ end
 -- is one, and its blank lines and layout ARE the config file the deployed
 -- turtle reads. Line numbers shift, so an error from a deployed turtle points
 -- into ITS copy.
-local function strippedBody(src)
+local function stripText(body)
   local out, long = {}, false
-  for line in (readAllOf(src) .. "\n"):gmatch("([^\n]*)\n") do
+  for line in (body .. "\n"):gmatch("([^\n]*)\n") do
     if long then
       out[#out + 1] = line
       if line:find("%]%]") then long = false end
@@ -4244,6 +4244,14 @@ end
 -- fix: they are the smallest files on the disk and the only ones that decide
 -- whether a turtle boots at all, and written last they are exactly what a
 -- floppy short of room drops. Let the program be the thing that does not fit.
+--
+-- They go through stripText for the same reason the program does. BOOT is a
+-- long string, so the payload copy keeps its comments whichever way this goes;
+-- what is bought here is the ~5 kB of floppy the boot.lua comments used to
+-- take, which is the room the program was short of. In-game 2026-08-29 the
+-- deploy stopped with 109401 bytes free and 110442 needed -- 1041 short --
+-- with a 10064-byte boot.lua sitting on the disk. Do NOT strip the config the
+-- same way: that one IS a file the deployed turtle reads back.
 local function writeBoot(DISK, n, conf)
   -- The startup goes on under BOTH names. Which one a disk's auto-startup
   -- picks up is the mod's business, not ours, and getting it wrong costs an
@@ -4254,9 +4262,9 @@ local function writeBoot(DISK, n, conf)
   -- The index is the turtle number, so `cd disk` then `quarry` with no number
   -- is still THIS turtle rather than turtle 1 [HARVEST-PLAN A5].
   local files = {
-    { DISK .. "/startup.lua", BOOTSTRAP:format(n) },
-    { DISK .. "/startup",     BOOTSTRAP:format(n) },
-    { DISK .. "/boot.lua",    BOOT:format(n, tostring(manualFix(conf))) },
+    { DISK .. "/startup.lua", stripText(BOOTSTRAP:format(n)) },
+    { DISK .. "/startup",     stripText(BOOTSTRAP:format(n)) },
+    { DISK .. "/boot.lua",    stripText(BOOT:format(n, tostring(manualFix(conf)))) },
     { DISK .. "/index",       tostring(n) },
   }
   local sizes, bad = {}, {}
@@ -4513,7 +4521,7 @@ function runDeploy(conf, l, index)
     error("cannot find my own file to copy onto the floppy", 0)
   end
   if fs.exists(DISK .. "/quarry") then fs.delete(DISK .. "/quarry") end
-  local body = strippedBody(me)
+  local body = stripText(readAllOf(me))
   local free = freeOn(DISK)
   sayf("deploy : the floppy has %s bytes free and the stripped program is %d",
     tostring(free or "an unknown number of"), #body)

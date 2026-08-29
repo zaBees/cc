@@ -575,6 +575,20 @@ day. All five suites pass. **Unproven in-game: all of it.**
     which log `jGC2X` could not, having stopped turtle 2 one block from its own
     trunk against an unnamed turtle sitting on its spine.
 
+59. **The boot files go on the floppy stripped, and that is the 5 kB the
+    deploy was short of.** In-game 2026-08-29 the deploy stopped one file from
+    done: `the program will not fit: 109401 bytes free, 110442 needed` — 1041
+    short — with a 10064-byte `boot.lua` on the disk that was half comments.
+    `strippedBody` is now `stripText(body)` and `writeBoot` runs `BOOT` and
+    `BOOTSTRAP` through it: `boot.lua` 10065 to 5113, each `startup` 483 to
+    333, so 5252 bytes come back and the same floppy now takes the program with
+    about 4 kB to spare. Not the config — that one IS a file the deployed
+    turtle reads back, and its layout is the file. Test 138 sizes a floppy at
+    the program plus 6800 bytes: the stripped boot files, config and anchor
+    come to 5833 and the unstripped ones to 11085, so the fixed build fits with
+    1 kB to spare and the unfixed build prints the in-game refusal. Confirmed
+    to fail against the unstripped writeBoot.
+
 **Three loose ends this build left, all closed the same day:**
 
 - **`span()` now has a test (5b).** Three `--check` runs from a turtle pinned at
@@ -744,7 +758,7 @@ lock to one item type, so a mixed dump fails on the second stack.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, the floppy found through getMountPath, a stopped turtle that parks off the shared spine, one depot per turtle so they stop funnelling into one block, and the fuel build: coal burnt on pickup to `fuelKeep`, no ration at a turtle's own box, `sharePerDock` at a shared one, and a climb into coal country launched while it can still be paid for, with the depot read through a peripheral wrap rather than sixteen sucks and the lava map shared over rednet. **The harvest build (2026-08-29):** the floppy writes its boot files first and reads every write back, refuses a program that will not fit, retries the mount, and carries its own turtle index; `quarry stop` parks a turtle for relocation; a solo kit needs no drive or floppy; and the coal aboard is split evenly across every turtle, the deployer included. **The claim-size build (2026-08-29):** `chunksX`/`chunksZ` size the claim, a short tank climbs for coal instead of refusing the trip, and a jam names the turtle that caused it, through a shared `periph()` that is the one door to a peripheral read, and the surface climb is priced from the trunk column it will actually walk to. **Pushed 2026-08-29** as `00636b6` and verified against both the commit-pinned URL and `/main/`. 220,526 bytes, fletcher32 `4081775172`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, the floppy found through getMountPath, a stopped turtle that parks off the shared spine, one depot per turtle so they stop funnelling into one block, and the fuel build: coal burnt on pickup to `fuelKeep`, no ration at a turtle's own box, `sharePerDock` at a shared one, and a climb into coal country launched while it can still be paid for, with the depot read through a peripheral wrap rather than sixteen sucks and the lava map shared over rednet. **The harvest build (2026-08-29):** the floppy writes its boot files first and reads every write back, refuses a program that will not fit, retries the mount, and carries its own turtle index; `quarry stop` parks a turtle for relocation; a solo kit needs no drive or floppy; and the coal aboard is split evenly across every turtle, the deployer included. **The claim-size build (2026-08-29):** `chunksX`/`chunksZ` size the claim, a short tank climbs for coal instead of refusing the trip, and a jam names the turtle that caused it, through a shared `periph()` that is the one door to a peripheral read, and the surface climb is priced from the trunk column it will actually walk to. **The floppy-space fix (2026-08-29):** the boot files go on the floppy stripped, which is the 5 kB the deploy was 1041 bytes short of. **Not pushed yet.** 221,086 bytes, fletcher32 `3994103154`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. Briefly renamed `deep.lua` on the `deepseek` branch on 2026-08-29; the rename was reverted before the merge, because the turtles already have `update` installed and a renamed file would have left them asking GitHub for a name it no longer serves. 3,357 bytes, fletcher32 `4171412274`. |
 | `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |

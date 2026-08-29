@@ -4163,4 +4163,44 @@ local nd135 = 0
 for _ in pairs(sv135.done or {}) do nd135 = nd135 + 1 end
 assert(nd135 >= 2, "only " .. nd135 .. " row(s) finished across a docking run:\n" .. log)
 
+-- 138. the boot files are stripped, or the real program does not fit --------
+-- In-game 2026-08-29 the deploy stopped one floppy short of done: "109401
+-- bytes free, 110442 needed" -- 1041 short, with a 10064-byte boot.lua on the
+-- disk that was 5 kB of comments. The boot files now go through the same
+-- stripText the program does, which is where those 5 kB come from. This world
+-- hands the deploy the REAL quarry.lua on a stock 125 kB floppy: the same
+-- arithmetic that failed in-game, and it must now land.
+
+-- Run it once on a stock floppy to learn how big the stripped program is --
+-- that number is the same either way, since the payload strip is unchanged --
+-- then run it again on a floppy holding the program plus 6800 bytes. The boot
+-- files, the config and the claim anchor come to 5833 stripped and 11085 with
+-- boot.lua's comments still on it, so that floppy takes this build with about
+-- 1 kB to spare and does not take the unstripped one at all. Sized off the
+-- program rather than pinned, so the test keeps its meaning as quarry grows.
+local realSrc = assert(io.open("quarry.lua")):read("a")
+world({ inv = kit(), leaveAfter = 3 })
+V.floppy = 125000                       -- CC:Tweaked's stock floppy_space_limit
+V.files["quarry"] = realSrc
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the real-payload deploy crashed: " .. tostring(err))
+local free138, need138 = log:match("floppy has (%d+) bytes free and the stripped program is (%d+)")
+assert(free138, "the deploy never said how much room was left:\n" .. log)
+world({ inv = kit(), leaveAfter = 3 })
+V.floppy = tonumber(need138) + 6800
+V.files["quarry"] = realSrc
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the tight-floppy deploy crashed: " .. tostring(err))
+assert(not log:find("the program will not fit"),
+  "the real program does not fit beside stripped boot files:\n" .. log)
+assert(V.files["/disk/quarry"] and #V.files["/disk/quarry"] > 100000,
+  "the real program did not land on the floppy:\n" .. log)
+-- and what was stripped off boot.lua is comments only: it still compiles, and
+-- it still carries the turtle number the startup beside it was written for.
+local b138 = V.files["/disk/boot.lua"]
+assert(load(b138, "boot"), "the stripped boot.lua is not valid Lua")
+assert(b138:find("local N = %d"), "the stripped boot.lua lost its turtle number")
+assert(not b138:find("\n%s*%-%-"), "boot.lua went on the floppy with its comments")
+assert(#b138 < 6000, "boot.lua is " .. #b138 .. " bytes -- it was not stripped")
+
 print("all quarry phase 5 checks passed")

@@ -148,6 +148,19 @@ confirmed to fail against its own unfixed code:
     skipped still moves on, because nothing was stranded. Test 92, and test
     76's skip case rewritten; both confirmed to fail against the unfixed code.
 
+19. **A re-run of the deploy resumes; it does not start over at turtle 2.**
+    `runDeploy` looped `for n = 2, conf.turtles` every time, with no record of
+    who was already out. So every retry re-did turtle 2 -- and once turtle 2
+    had walked off, the next turtle ITEM in the hold was placed and labelled
+    `quarry 2` as well: two turtles on one third, and turtle 3's third never
+    worked at all. That is the "restarting every time" the user reported
+    [2026-08-29]. Each index that goes out is now written to `quarry.state` as
+    `st.staffed[n]` and skipped on a later run, counted in the `N of M` line so
+    the total stays honest. **The field is `staffed`, not `deployed`** --
+    `deployed` was the abandoned one-shot boolean and older state files still
+    carry it as `true`, which an index into would throw on. Test 93, confirmed
+    to fail against the unfixed code.
+
 ## Next action
 
 The code is ready. The run to ask for: **`update`, then `quarry 1`** from the
@@ -244,7 +257,7 @@ lock to one item type, so a mixed dump fails on the second stack.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, and a deploy that stops rather than feeding two kits to one turtle. 153,532 bytes, fletcher32 `1631593240`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, and a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2. 154,482 bytes, fletcher32 `4042648459`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. |
 | `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |
@@ -296,7 +309,7 @@ and the in-game computer running `cloud <token>`.
 | --- | --- |
 | `MASTERMINE-PLAN.md` | The design, every decision and its reasoning. Read second. Trimmed 2026-08-28: §11 is now a status table, and the rules it used to carry are in this file's Settled and Corrections lists. |
 | `quarry.lua` | **The deliverable.** ~2,430 lines, Phases 1–5. Opens `local DRY = true`; the config lowers it. |
-| `test_quarry.lua` | Five suites against stubbed CC worlds, 92 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot; 75–91 the deploy build of that night; 92 the double-fed turtle. `lua5.3 test_quarry.lua` |
+| `test_quarry.lua` | Five suites against stubbed CC worlds, 93 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot; 75–91 the deploy build of that night; 92 the double-fed turtle; 93 the deploy that restarted at turtle 2. `lua5.3 test_quarry.lua` |
 | `alert.lua` | For a computer: prints what the turtles broadcast on the `quarry` protocol. |
 | `update.lua` | The in-game updater: `update` replaces `quarry` and itself from GitHub. Downloaded once by hand. |
 | `test_update.lua` | Stubbed `http`/`fs` around the updater: the failed download, the HTML 404, the cache-buster, the checksum. `lua5.3 test_update.lua` |
@@ -532,6 +545,10 @@ a dry run write `dry = true` into the stub config explicitly.
 - **The vein sweep must be absolute.** `goTo` faces the direction it travels,
   so `st.dir` after a chase is the walk home's heading, not the cell's. Anchor
   the four-way sweep to a `d0` captured on entry. Test 43.
+- **A deploy is resumable, and `st.staffed` is the record.** Do not go back to
+  looping from 2 unconditionally: with turtle 2 already out, that places the
+  next turtle item as a SECOND quarry 2. `deployed` is a dead name from the
+  abandoned one-shot flag; do not reuse it.
 - **Adoption is for a turtle a PREVIOUS run stranded, never one this run just
   stranded.** `deployOne` treats a turtle standing in the placement spot as
   itself, already placed. Inside the loop that means a turtle that failed to

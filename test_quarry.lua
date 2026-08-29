@@ -2782,4 +2782,30 @@ assert(log:find("wrote the boot script for turtle 3") == nil,
 assert(log:find("turtle 3 onwards is still in the hold"),
   "it did not say turtle 3 is still aboard:\n" .. log)
 
+-- 93. a re-run resumes at the turtle that has not gone out yet ---------------
+-- The loop started at 2 every time, so every retry re-did the turtles that had
+-- already walked off -- and with turtle 2 out there, the next turtle ITEM in
+-- the hold was placed and labelled quarry 2 as well: two turtles on one third,
+-- and turtle 3's third never worked at all.
+
+world({ inv = kit(), leaveAfter = 3 })
+V.files["quarry.state"] = [[{ ["index"]=1, ["staffed"]={ [2]=true } }]]
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the resumed deploy crashed: " .. tostring(err))
+assert(log:find("turtle 2 is already out at its own trunk"),
+  "it placed a second turtle 2 over the one already mining:\n" .. log)
+assert(not log:find("boot script for turtle 2"),
+  "it rewrote the floppy for a turtle that is already out:\n" .. log)
+assert(log:find("boot script for turtle 3"),
+  "skipping turtle 2 cost it turtle 3:\n" .. log)
+assert(log:find("deploy : 2 of 2 deployed"),
+  "the one already out was not counted:\n" .. log)
+
+-- and a turtle that goes out is written down, so the next run skips it
+world({ inv = kit(), leaveAfter = 3 })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the first deploy crashed: " .. tostring(err))
+local st5 = V.files["quarry.state"]
+assert(st5 and st5:find("staffed"), "it did not record who went out:\n" .. tostring(st5))
+
 print("all quarry phase 5 checks passed")

@@ -3383,8 +3383,23 @@ function runDeploy(conf, l, index)
 
   -- 3. one turtle at a time through the same spot. Each leaves before the next
   --    is placed, which is why one drive serves all of them.
+  -- A re-run picks up where the last one stopped. The loop used to start at 2
+  -- every time, so every retry re-did the turtles that had already walked off
+  -- -- and once turtle 2 was out there, the next turtle ITEM in the hold was
+  -- placed and labelled quarry 2 as well: two turtles on one third, and turtle
+  -- 3's third never worked at all. Which indices are out is state, so it goes
+  -- in quarry.state with everything else. NOT under `deployed`: that name held
+  -- the abandoned one-shot boolean [test 72], and a state file written by an
+  -- older build still carries it.
   local done, failed = 0, {}
+  st.staffed = type(st.staffed) == "table" and st.staffed or {}
   for n = 2, conf.turtles do
+    if st.staffed[n] then
+      sayf("deploy : turtle %d is already out at its own trunk -- not placing", n)
+      say("         another one for it. Delete quarry.state if that is wrong.")
+      done = done + 1
+      goto next
+    end
     -- Written under BOTH names. Which one a disk's auto-startup picks up is
     -- the mod's business, not ours, and getting it wrong costs an in-game trip;
     -- writing both costs nothing and cannot pick the wrong one.
@@ -3401,7 +3416,11 @@ function runDeploy(conf, l, index)
     sayf("deploy : wrote the boot script for turtle %d (%d names)", n, wrote)
 
     local okn, why, stop = deployOne(conf, l, n)
-    if okn then done = done + 1 else
+    if okn then
+      done = done + 1
+      st.staffed[n] = true
+      save()
+    else
       failed[#failed + 1] = ("turtle %d: %s"):format(n, tostring(why))
       sayf("deploy : turtle %d did not deploy -- %s", n, tostring(why))
       -- It is still standing in the one block a turtle can be placed into, so
@@ -3426,6 +3445,7 @@ function runDeploy(conf, l, index)
       end
       break
     end
+    ::next::
   end
 
   sayf("deploy : %d of %d deployed", done, conf.turtles - 1)

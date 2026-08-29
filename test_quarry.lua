@@ -267,6 +267,45 @@ ok, err, log = run("1", "--check")
 assert(ok, "startXYZ --check crashed: " .. tostring(err))
 assert(log:find("corners: x %-16%.%.31, z %-16%.%.31"), "startXYZ claim is wrong:\n" .. log)
 
+-- 5b. chunksX/chunksZ size the claim ---------------------------------------
+
+-- The claim used to be a hard-coded 3x3. It is now n chunks by m, centred on
+-- the start chunk, and the arithmetic is the only part a config value can get
+-- wrong in a way nothing else catches: the claim looks fine, the turtles all
+-- compute the same wrong rim, and the mine runs off the loaded chunks.
+--
+-- Start at 0,64,0 so the start chunk is 0 and the spans are readable.
+local AT0 = "startX = 0\nstartY = 64\nstartZ = 0\n"
+
+-- odd: 5 chunks centre exactly, so chunk 0 spans -2..2 -> x -32..47 (80 wide)
+reset({ gps = false, conf = AT0 .. "chunksX = 5\nchunksZ = 3\n" })
+ok, err, log = run("1", "--check")
+assert(ok, "the 5x3 --check crashed: " .. tostring(err))
+assert(log:find("claim  : chunks %-2%.%.2 by %-1%.%.1"),
+  "chunksX = 5 did not span five chunks:\n" .. log)
+assert(log:find("corners: x %-32%.%.47, z %-16%.%.31  %(80x48%)"),
+  "a 5x3 claim is not 80x48:\n" .. log)
+
+-- even: 4 chunks cannot centre, so they lean one toward -c -- chunk 0 spans
+-- -1..2, which is the half that keeps the START chunk inside the claim. The
+-- other lean would put the turtle on the rim of its own mine.
+reset({ gps = false, conf = AT0 .. "chunksX = 4\nchunksZ = 4\n" })
+ok, err, log = run("1", "--check")
+assert(ok, "the 4x4 --check crashed: " .. tostring(err))
+assert(log:find("claim  : chunks %-1%.%.2 by %-1%.%.2"),
+  "an even chunk count did not lean toward -c:\n" .. log)
+assert(log:find("corners: x %-16%.%.47, z %-16%.%.47  %(64x64%)"),
+  "a 4x4 claim is not 64x64:\n" .. log)
+
+-- and the shipped default is still the 3x3 the player holds open by standing
+-- in the centre chunk
+reset({ gps = false, conf = AT0 })
+ok, err, log = run("1", "--check")
+assert(ok, "the default --check crashed: " .. tostring(err))
+assert(log:find("claim  : chunks %-1%.%.1 by %-1%.%.1"),
+  "the default claim is no longer 3x3:\n" .. log)
+assert(log:find("48x48"), "the default claim is no longer 48x48:\n" .. log)
+
 -- 6. a bad config line names the line, it does not crash the miner ---------
 
 reset({ conf = "topY = 60\nbottomY = banana\n" })
@@ -789,9 +828,25 @@ local function mkworldenv()
       -- written before this defaults to.
       if side == "front" and method == "isOn" then return V.frontOn end
       -- and a booted turtle labels itself quarryN in its first seconds, well
-      -- before it walks off. V.frontLabelAt is the poll it appears on.
-      if side == "front" and method == "getLabel" then
-        if V.frontLabelAt and V.sleeps >= V.frontLabelAt then return V.frontLabel end
+      -- before it walks off. V.frontLabelAt is the poll it appears on. An
+      -- adjacent turtle is a peripheral to its neighbour, which is how a jam
+      -- reads the name of whatever is in its way.
+      if method == "getLabel" then
+        -- The real api ERRORS when nothing is attached; it does not answer nil.
+        -- V.labelDead is CC:Tweaked #660 held open -- the turtle is there and
+        -- reads as nothing -- and it is the case that catches a caller who
+        -- takes the SECOND value out of pcall without its ok flag: the error
+        -- string is a non-empty string and sails through every
+        -- `type(x) == "string"` guard. It is a flag of its own rather than
+        -- V.periphStale because the first turnRight clears that one, and a
+        -- turtle mines its way to a jam through many turns.
+        if V.labelDead or V.periphStale then
+          error("No peripheral attached to " .. side .. " side", 0)
+        end
+        if side == "front" then
+          if V.frontLabelAt and V.sleeps >= V.frontLabelAt then return V.frontLabel end
+          return nil
+        end
         return nil
       end
       -- the drive answers where it put the floppy; V.mount lets a world put it
@@ -3438,6 +3493,36 @@ assert(log:find("another turtle, not a block I may dig"),
 local sv108 = load("return " .. V.files["quarry.state"])()
 assert(sv108.halt and sv108.halt:find("would not move"),
   "the jam did not reach the state file: " .. tostring(sv108.halt))
+
+-- 136. the jam names the blocker, and never prints an error as its name ----
+
+-- A booted turtle has labelled itself quarryN, and an adjacent one is a
+-- peripheral, so the jam can say WHICH turtle stopped it. Read against the
+-- other two turtles' logs that is who deadlocked whom, which log jGC2X could
+-- not say.
+world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+        blocks = { [k3(BX, -55, -48)] = "computercraft:turtle_advanced" } })
+V.frontLabel, V.frontLabelAt = "quarry3", 0
+ok, err, log = runWorld("1")
+assert(ok, "the labelled-jam run crashed: " .. tostring(err))
+assert(log:find("%(quarry3%)"),
+  "the jam did not name the turtle that caused it:\n" .. log)
+
+-- And the case that catches the pcall trap: CC:Tweaked #660, where the turtle
+-- in the way is not visible as a peripheral at all and peripheral.call ERRORS.
+-- A caller taking the second value out of pcall without its ok flag gets the
+-- error STRING, which is a non-empty string and passes the guard -- so the jam
+-- would report "(No peripheral attached to front side)" as the blocker's name.
+-- Five times this file has made that mistake; periph() is the one door now.
+world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+        blocks = { [k3(BX, -55, -48)] = "computercraft:turtle_advanced" } })
+V.labelDead = true
+ok, err, log = runWorld("1")
+assert(ok, "the stale-peripheral jam run crashed: " .. tostring(err))
+assert(not log:find("No peripheral attached"),
+  "an error string was printed where the blocker's name goes:\n" .. log)
+assert(log:find("%(unlabelled%)"),
+  "a blocker that would not answer was not reported as unlabelled:\n" .. log)
 
 -- 113. coal is burnt on pickup, up to conf.fuelKeep ------------------------
 

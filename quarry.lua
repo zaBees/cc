@@ -497,6 +497,19 @@ local function equippedItem(side)
   return nil, true                  -- the method answered: that side is EMPTY
 end
 
+-- One door to a peripheral, because pcall prepends its own success flag and
+-- the answer is the SECOND value -- a mistake this file has now made five
+-- separate times [RESUME, corrections]. A FAILED call puts an error STRING
+-- where the answer goes, and an error string is a non-empty string: every
+-- guard of the form `type(x) == "string"` waves it straight through, and the
+-- error text is then printed as if it were the answer. Returns nil when the
+-- call did not live, so "it would not answer" and "it answered nil" are the
+-- same thing to every caller here, which is what they all want.
+local function periph(fn, ...)
+  local ok, res = pcall(fn, ...)
+  if ok then return res end
+end
+
 local function isModemName(n)
   n = tostring(n or "")
   return n:find("wireless_modem") ~= nil or n:find("ender_modem") ~= nil
@@ -1443,7 +1456,11 @@ function giveWay(detect, inspect)
   local what = (okj and hitj and dj and tostring(dj.name)) or "another turtle"
   -- Read the blocker's own label and work out which cell it is in, so the log
   -- says WHICH turtle and WHERE rather than only that one was there.
-  local label = select(2, pcall(peripheral.call, side, "getLabel"))
+  -- Through periph(), not a bare pcall: a neighbour that is not yet visible as
+  -- a peripheral is CC:Tweaked #660, which this file already handles elsewhere,
+  -- and a bare pcall would put "No peripheral attached to front side" in
+  -- `label` and print that as the blocker's name.
+  local label = periph(peripheral.call, side, "getLabel")
   local who = (type(label) == "string" and label ~= "") and label or "unlabelled"
   local bx, by, bz = st.x, st.y, st.z
   if side == "top" then by = by + 1
@@ -3937,7 +3954,7 @@ local function deployOne(conf, l, index, coalShare)
   -- left is a no-op for the heading tracked in st.dir, so nothing else shifts.
   local ptype
   for _ = 1, 6 do
-    ptype = select(2, pcall(peripheral.getType, "front"))
+    ptype = periph(peripheral.getType, "front")
     if ptype then break end
     pcall(turtle.turnRight)
     pcall(turtle.turnLeft)

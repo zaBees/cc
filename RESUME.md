@@ -575,20 +575,22 @@ day. All five suites pass. **Unproven in-game: all of it.**
     which log `jGC2X` could not, having stopped turtle 2 one block from its own
     trunk against an unnamed turtle sitting on its spine.
 
-**Two things this build left undone**, both flagged and neither blocking:
+**Two loose ends this build left, both closed the same day:**
 
-- **`span()` ships without a test.** Every suite still runs the 3×3 default, so
-  the odd and even branches of the chunk span are unproven. The even case is the
-  one that bites. The check to add: `claimOf(0, 0, {chunksX=5, chunksZ=3})`
-  gives `xMin=-32, xMax=47`, and `chunksX=4` gives `xMin=-16, xMax=47`.
-- **`quarry.lua:1447` reads a label without its `ok` flag.**
-  `select(2, pcall(peripheral.call, side, "getLabel"))` drops the success
-  boolean, so when the call *errors* the error string lands in `label`, passes
-  the `type(label) == "string"` guard, and the jam log prints
-  `(No peripheral attached to front side)` where the turtle's name should be.
-  Not hypothetical here: a neighbour not yet visible as a peripheral is
-  CC:Tweaked #660, already handled elsewhere in this file. Take `okl, label`
-  from the `pcall` and require `okl`.
+- **`span()` now has a test (5b).** Three `--check` runs from a turtle pinned at
+  `0,64,0`: `chunksX = 5` spans chunks −2..2 for an 80×48 claim, `chunksX = 4`
+  leans to −1..2 for 64×64 — the half that keeps the START chunk inside rather
+  than on its own rim — and the shipped default is still −1..1 and 48×48. Both
+  branches were confirmed to fail against a mutated `span`.
+- **`giveWay` read a label without its `ok` flag, and that is fixed.** It was
+  the fifth time this file has taken the second value out of a `pcall` without
+  the first; see the corrections list. The fix is a shared `periph(fn, ...)`
+  beside `equippedItem` that returns nil when the call did not live, now used by
+  `giveWay` and by `runDeploy`'s `getType` probe. Test 136 covers it: a blocker
+  that answers `quarry3` is named, and a blocker that will not answer at all
+  (CC:Tweaked #660) reads as `(unlabelled)` rather than
+  `(No peripheral attached to front side)`. Confirmed to fail against the
+  unfixed line.
 
 ## Next action
 
@@ -610,8 +612,9 @@ is in on top of it. The five suites pass.
   surface.
 - **A jam, if one happens**: `... (quarry3) at x,y,z would not move out of the
   way after N tries ... I am at x,y,z`. `(unlabelled)` means the blocker had no
-  label to give. Anything that reads like an error message in those brackets is
-  the `pcall` bug noted above, and confirms it is worth fixing.
+  label to give, or would not answer at all. Read it against the other turtles'
+  logs: between them they say who deadlocked whom, which is what log `jGC2X`
+  could not.
 
 **What to read in the log this time** — the harvest build is unproven in-game:
 
@@ -729,7 +732,7 @@ lock to one item type, so a mixed dump fails on the second stack.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, the floppy found through getMountPath, a stopped turtle that parks off the shared spine, one depot per turtle so they stop funnelling into one block, and the fuel build: coal burnt on pickup to `fuelKeep`, no ration at a turtle's own box, `sharePerDock` at a shared one, and a climb into coal country launched while it can still be paid for, with the depot read through a peripheral wrap rather than sixteen sucks and the lava map shared over rednet. **The harvest build (2026-08-29):** the floppy writes its boot files first and reads every write back, refuses a program that will not fit, retries the mount, and carries its own turtle index; `quarry stop` parks a turtle for relocation; a solo kit needs no drive or floppy; and the coal aboard is split evenly across every turtle, the deployer included. **The claim-size build (2026-08-29):** `chunksX`/`chunksZ` size the claim, a short tank climbs for coal instead of refusing the trip, and a jam names the turtle that caused it. **Not pushed yet** — the URL above still serves the harvest build until it is. What will land: 219,112 bytes, fletcher32 `180785937`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, the floppy found through getMountPath, a stopped turtle that parks off the shared spine, one depot per turtle so they stop funnelling into one block, and the fuel build: coal burnt on pickup to `fuelKeep`, no ration at a turtle's own box, `sharePerDock` at a shared one, and a climb into coal country launched while it can still be paid for, with the depot read through a peripheral wrap rather than sixteen sucks and the lava map shared over rednet. **The harvest build (2026-08-29):** the floppy writes its boot files first and reads every write back, refuses a program that will not fit, retries the mount, and carries its own turtle index; `quarry stop` parks a turtle for relocation; a solo kit needs no drive or floppy; and the coal aboard is split evenly across every turtle, the deployer included. **The claim-size build (2026-08-29):** `chunksX`/`chunksZ` size the claim, a short tank climbs for coal instead of refusing the trip, and a jam names the turtle that caused it, through a shared `periph()` that is the one door to a peripheral read. **Not pushed yet** — the URL above still serves the harvest build until it is. What will land: 220,075 bytes, fletcher32 `3775022116`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. |
 | `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |
@@ -784,8 +787,9 @@ and the in-game computer running `cloud <token>`.
 | `test_quarry.lua` | Five suites against stubbed CC worlds, 135 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot; 75–91 the deploy build of that night; 92 the double-fed turtle; 93 the deploy that restarted at turtle 2; 94 the position-fix order; 95 the equipped-upgrade check and the modem fit; 96-98 the mount point, the auto-reboot and the depot-sweep floor; 99-102 the three-turtle run; 103-109 the depot-funnel deadlock and the boot split; 124-129 the harvest boot build (floppy write order, read-back, space refusal, mount retry, floppy index); 131 `quarry stop`; 132-134 the fuel split (solo kit, multi-slot hand-over, even coal split); 135 the guard that a mid-pair dock keeps the pair. The claim-size build changed
 two existing tests rather than adding numbered ones: the low-fuel test now
 asserts the turtle forages instead of refusing, and the jam test asserts the
-blocker is named and placed. `chunksX`/`chunksZ` have no test yet — see the
-claim-size build above. `lua5.3 test_quarry.lua` |
+blocker is named and placed. 5b is the chunk span, odd and even; 136 is the
+jam that names its blocker, including the blocker that will not answer.
+`lua5.3 test_quarry.lua` |
 | `alert.lua` | For a computer: prints what the turtles broadcast on the `quarry` protocol. |
 | `update.lua` | The in-game updater: `update` replaces `quarry` and itself from GitHub. Downloaded once by hand. |
 | `test_update.lua` | Stubbed `http`/`fs` around the updater: the failed download, the HTML 404, the cache-buster, the checksum. `lua5.3 test_update.lua` |
@@ -1063,10 +1067,16 @@ a dry run write `dry = true` into the stub config explicitly.
   peripheral dump in the skill's references was taken from a COMPUTER
   (`turtle=false`) and never described what a turtle sees.
 - **`pcall` prepends its own success flag.** Two locals binds `data` to a
-  boolean. This has now been got wrong four times, in `checkLava`, `deployOne`,
-  `buildDepot` and `turtleAhead`. Capture both values and test the second
-  against `false` explicitly — and remember a *failed* `pcall` puts an error
-  STRING second, which is not `false`. Tests 41, 44, 46.
+  boolean. This has now been got wrong **five** times, in `checkLava`,
+  `deployOne`, `buildDepot`, `turtleAhead` and `giveWay`. Capture both values
+  and test the second against `false` explicitly — and remember a *failed*
+  `pcall` puts an error STRING second, which is not `false`, and is not empty,
+  so every guard of the form `type(x) == "string"` waves it through and the
+  error text gets printed as if it were the answer. **There is now one door:
+  `periph(fn, ...)`, beside `equippedItem`, which returns nil when the call did
+  not live.** Use it for every `peripheral.*` read; `frontAsk` inside
+  `runDeploy` is the same idea kept local because it wants the error text for
+  its log. Tests 41, 44, 46, 136.
 - **`st.chased` is a per-chase counter, not a run total.** Reset it where a
   chase begins, never where a run begins, or `veinMax` silently switches off
   all vein chasing for the rest of the shift. `st.veined` is the run total.

@@ -4380,27 +4380,36 @@ function runDeploy(conf, l, index)
       done = done + 1
       goto next
     end
-    -- Rewritten for this turtle, and read back off the floppy every time. The
-    -- space for them was taken above, before the program went on, so this is
-    -- an overwrite of files that already exist at almost exactly this size.
+    -- Rewritten for this turtle, and read back off the floppy every time --
+    -- FROM UP BESIDE THE DRIVE. Down here the drive is one up and one forward,
+    -- diagonal, on no side of this turtle, so /disk is not mounted and these
+    -- writes land in a plain /disk folder on my own hard drive. They read back
+    -- perfectly and the floppy keeps the number the last write up here left on
+    -- it: turtle 3 booted as quarry2 [paste Ql3Nv, 2026-08-29].
+    if not stepUp() then
+      failed[#failed + 1] = ("turtle %d: cannot get back up to the drive"):format(n)
+      sayf("deploy : I cannot get up to the drive to write turtle %d's boot files,", n)
+      say("         and placing it without them would only strand it.")
+      break
+    end
+    DISK = diskPath() or DISK
     local okb, whyb = writeBoot(DISK, n, conf)
+
+    -- And the disk itself says who it is for, harvested from replicator, which
+    -- names each floppy after the baby it is for. Best effort: disk.setLabel
+    -- addresses the DRIVE, which from up here is the block in front.
+    local dside = diskDrive()
+    if dside and disk and disk.setLabel then
+      local lived = pcall(disk.setLabel, dside, "quarry" .. n)
+      if lived then sayf("deploy : labelled the floppy quarry%d", n) end
+    end
+
+    if not stepDown() then error("cannot move back down from the drive", 0) end
     if not okb then
       failed[#failed + 1] = ("turtle %d: %s"):format(n, tostring(whyb))
       sayf("deploy : turtle %d gets no boot files, so placing it would only strand", n)
       say("         it at a CraftOS prompt. Not placing it.")
       break
-    end
-
-    -- And the disk itself says who it is for, harvested from replicator, which
-    -- names each floppy after the baby it is for. Best effort: disk.setLabel
-    -- addresses the DRIVE, and from where this turtle stands to place turtles
-    -- the drive is one up and one forward -- diagonal, on no side of it -- so
-    -- there is usually nothing to address. It costs one line and it is free
-    -- when the player has put the drive somewhere this turtle can see.
-    local dside = diskDrive()
-    if dside and disk and disk.setLabel then
-      local lived = pcall(disk.setLabel, dside, "quarry" .. n)
-      if lived then sayf("deploy : labelled the floppy quarry%d", n) end
     end
 
     local okn, why, stop = deployOne(conf, l, n, coalShare)

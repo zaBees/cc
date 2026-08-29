@@ -650,6 +650,12 @@ local function world(o)
   -- running the world forwards -- an old file missing a field, or a depot that
   -- belongs to another turtle
   if o.state then V.files["quarry.state"] = o.state end
+  for k, b in pairs(V.blocks) do
+    if type(b) == "string" and b:find("disk_drive") then
+      local x, y, z = k:match("(-?%d+),(-?%d+),(-?%d+)")
+      V.driveAt = { x = tonumber(x), y = tonumber(y), z = tonumber(z) }
+    end
+  end
 end
 
 local function k3(x, y, z) return x .. "," .. y .. "," .. z end
@@ -663,6 +669,22 @@ local function blockAt(x, y, z)
 end
 
 local function setAir(x, y, z) V.blocks[k3(x, y, z)] = false end
+
+-- A floppy is mounted only while the drive is on a SIDE of this turtle. Down at
+-- the placing spot the deploy's drive is one up and one forward -- diagonal, on
+-- no side -- so /disk is not a mount there, and a write to it lands in a plain
+-- /disk folder on the turtle's own hard drive: it reads back perfectly and the
+-- floppy never sees it [paste Ql3Nv, 2026-08-29]. Those writes get keys of
+-- their own here, and only a read taken from off the drive finds them.
+-- V.driveAt is where the drive block stands; a world that says disk = true and
+-- never puts one down is the drive-at-the-depot shorthand, always mounted.
+local function onDrive()
+  if not V.disk then return false end
+  local d = V.driveAt
+  if not d then return true end
+  return math.abs(d.x - V.pos.x) + math.abs(d.y - V.pos.y)
+       + math.abs(d.z - V.pos.z) == 1
+end
 
 -- turtles are lavaproof and detect() is false for liquid, so liquid is not a
 -- block as far as movement and digging are concerned
@@ -706,27 +728,35 @@ local function mkworldenv()
   -- are the same file. The stub keys on the string, so make them the same
   -- string.
   local function nn(n) return (n:gsub("^disk", "/disk"):gsub("^//", "/")) end
+  -- where a /disk path actually is: the floppy while the drive is on a side of
+  -- this turtle, the turtle's own hard drive when it is not
+  local function fp(n)
+    if n:sub(1, 5) == "/disk" and not onDrive() then return "(off the drive)" .. n end
+    return n
+  end
+  local function rp(n) return V.files[fp(n)] ~= nil and fp(n) or n end
   env.fs = {
     exists = function(n)
       n = nn(n)
       if n == "/disk" or n == (V.mount or "/disk") then return V.disk end
-      return V.files[n] ~= nil
+      return V.files[rp(n)] ~= nil
     end,
-    delete = function(n) V.files[nn(n)] = nil end,
+    delete = function(n) V.files[rp(nn(n))] = nil end,
     move   = function(a, b) a, b = nn(a), nn(b) V.files[b], V.files[a] = V.files[a], nil end,
-    copy   = function(a, b) writeFile(nn(b), V.files[nn(a)]) end,
+    copy   = function(a, b) writeFile(fp(nn(b)), V.files[rp(nn(a))]) end,
     getFreeSpace = function(n)
       n = nn(n)
-      if n:sub(1, 5) ~= "/disk" then return 1000000 end
+      if n:sub(1, 5) ~= "/disk" or fp(n) ~= n then return 1000000 end
       return math.max(0, (V.floppy or FLOPPY) - diskUsed(nil))
     end,
     open   = function(n, m)
       n = nn(n)
       if m == "w" then
-        local buf = {}
+        local buf, w = {}, fp(n)
         return { write = function(s) buf[#buf + 1] = s end,
-                 close = function() writeFile(n, table.concat(buf)) end }
+                 close = function() writeFile(w, table.concat(buf)) end }
       end
+      n = rp(n)
       if V.files[n] == nil then return nil end
       return { readAll = function() return V.files[n] end, close = function() end }
     end,
@@ -978,7 +1008,9 @@ local function mkworldenv()
                or it.name:find("chest") or it.name:find("barrel")) then
       if blockAt(x, y, z) then return false end
       V.blocks[k3(x, y, z)] = it.name
-      -- placing the drive does not mount /disk; the floppy going into it does
+      -- placing the drive does not mount /disk; the floppy going into it does,
+      -- and only while the drive is still on a side of this turtle
+      if it.name:find("disk_drive") then V.driveAt = { x = x, y = y, z = z } end
       if it.name:find("chest") or it.name:find("barrel") then
         V.chests[k3(x, y, z)] = {}         -- a placed chest starts empty
       elseif it.name:find("turtle") then
@@ -4202,5 +4234,30 @@ assert(load(b138, "boot"), "the stripped boot.lua is not valid Lua")
 assert(b138:find("local N = %d"), "the stripped boot.lua lost its turtle number")
 assert(not b138:find("\n%s*%-%-"), "boot.lua went on the floppy with its comments")
 assert(#b138 < 6000, "boot.lua is " .. #b138 .. " bytes -- it was not stripped")
+
+-- 139. every turtle's boot files reach the FLOPPY, not my own hard drive -----
+-- In-game 2026-08-29 turtles 2 and 3 both came up quarry2 [paste Ql3Nv]. The
+-- deploy writes the boot files from the placing spot, where the drive is one up
+-- and one forward -- diagonal, on no side -- so /disk is not a mount and the
+-- writes made a /disk folder on the deployer's own hard drive and read back
+-- from it. The floppy kept turtle 2's number, so turtle 3 booted as quarry2.
+
+world({ inv = kit(), leaveAfter = 3 })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the deploy crashed: " .. tostring(err))
+-- in its own function: the main chunk is at Lua's 200-local ceiling
+;(function()
+local b139 = V.files["/disk/boot.lua"]
+assert(b139, "no boot.lua on the floppy at all")
+assert(b139:find("local N = 3"),
+  "the floppy boots the last turtle as quarry"
+    .. tostring(b139:match("local N = (%d+)")) .. " -- both turtles get one number")
+assert(V.files["/disk/index"] == "3",
+  "the floppy says turtle " .. tostring(V.files["/disk/index"]) .. ", not turtle 3")
+for k in pairs(V.files) do
+  assert(not k:find("off the drive", 1, true),
+    "a boot file landed at " .. k .. " -- my own hard drive, not the floppy:\n" .. log)
+end
+end)()
 
 print("all quarry phase 5 checks passed")

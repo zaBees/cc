@@ -589,6 +589,24 @@ day. All five suites pass. **Unproven in-game: all of it.**
     1 kB to spare and the unfixed build prints the in-game refusal. Confirmed
     to fail against the unstripped writeBoot.
 
+60. **Every turtle's boot files reach the FLOPPY now, not the deployer's own
+    hard drive.** In-game 2026-08-29 [paste Ql3Nv] turtles 2 and 3 both came up
+    `quarry2`. The loop rewrites the boot files per turtle from the PLACING
+    spot, where the drive is one up and one forward -- diagonal, on no side of
+    the turtle -- so `/disk` is not a mount there and `writeVerified` created a
+    plain `/disk` folder on the deployer's own hard drive, wrote into it and
+    read it back perfectly. The floppy kept whatever the last write from up
+    beside the drive left on it, which was `local N = 2`. The loop now steps up
+    beside the drive, re-asks `diskPath()`, writes, labels the floppy (from up
+    there the drive is the block in front, so `disk.setLabel` finally has
+    something to address) and steps back down before placing. A failed `stepUp`
+    records the turtle as failed rather than placing one with no boot files.
+    **The test harness had modelled `/disk` as writable from anywhere, which is
+    why this shipped**; it now mounts the floppy only while the drive is on a
+    side (`onDrive()`, `V.driveAt`), and an off-drive `/disk` write lands under
+    an `(off the drive)` key. Test 139, plus three older deploy tests that had
+    been passing on the harness's fiction and now fail against the unfixed code.
+
 **Three loose ends this build left, all closed the same day:**
 
 - **`span()` now has a test (5b).** Three `--check` runs from a turtle pinned at

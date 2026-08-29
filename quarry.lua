@@ -1,4 +1,4 @@
--- quarry : three turtles read a chunk-snapped 3x3 claim with mod-5 branches
+-- quarry : three turtles read a chunk-snapped claim with mod-5 branches
 -- wget https://raw.githubusercontent.com/zaBees/cc/main/quarry.lua quarry
 -- usage:  quarry <1|2|3> [--check|recall|deploy]
 --
@@ -21,6 +21,8 @@ local NUM = {
   topY         = 60,    -- highest level mined; surface builds live above it
   bottomY      = -59,   -- safety floor. bedrock scatters -63..-60
   turtles      = 3,
+  chunksX      = 3,     -- claim width in chunks; the branches cut across this axis
+  chunksZ      = 3,     -- claim length in chunks; the spine runs along this axis
   veinMax      = 64,    -- hard cap on blocks per vein chase
   veinDepth    = 12,    -- how far a vein chase may wander off the branch
   fuelMargin   = 64,    -- spare fuel kept on top of the walk home
@@ -81,6 +83,12 @@ bottomY      = -59     # lowest level mined, and the trunk's safety floor.
 deepestFirst = true    # mine the deepest level first and work up
 dry          = false   # true = plan the route and touch nothing. false = mine for real.
 turtles      = 3
+chunksX      = 3       # claim width in chunks; branches cut across this axis
+chunksZ      = 3       # claim length in chunks; the spine runs along this axis
+                       # 3x3 keeps the start chunk and its eight neighbours. 5x5 or
+                       # 3x5 mine more, but every turtle must share these two values
+                       # (like topY) or their branches will not line up -- and the
+                       # player must keep every chunk loaded or a branch strands.
 veinMax      = 64      # blocks per vein chase, hard cap
 veinDepth    = 12      # how far a chase may wander off the branch
 fuelMargin   = 64      # spare fuel kept on top of the walk home
@@ -257,15 +265,27 @@ end
 
 -- claim maths --------------------------------------------------------------
 -- Two anchors on purpose: the claim snaps to chunk borders so a player in the
--- centre chunk keeps all nine loaded; the branch pattern anchors to the block
+-- centre chunk keeps it all loaded; the branch pattern anchors to the block
 -- the turtle started on.
 
-local function claimOf(x, z)
+local function claimOf(x, z, conf)
   local cx, cz = math.floor(x / 16), math.floor(z / 16)
+  local nx, nz = conf and conf.chunksX or 3, conf and conf.chunksZ or 3
+  -- n chunks centred on chunk c, so 3 spans c-1..c+1 and the start chunk stays
+  -- in the middle. An even n leans one chunk toward -c so the centre is inside.
+  local function span(c, n)
+    -- math.floor, not /: CC is Lua 5.2 (all doubles) but the test harness is
+    -- Lua 5.3, where a bare / makes 1.0 print as "1.0" and breaks the report.
+    if n % 2 == 1 then return c - math.floor((n - 1) / 2), c + math.floor((n - 1) / 2) end
+    return c - math.floor(n / 2) + 1, c + math.floor(n / 2)
+  end
+  local cxLo, cxHi = span(cx, nx)
+  local czLo, czHi = span(cz, nz)
   local c = {
     cx = cx, cz = cz,
-    xMin = (cx - 1) * 16, xMax = (cx + 1) * 16 + 15,
-    zMin = (cz - 1) * 16, zMax = (cz + 1) * 16 + 15,
+    cxLo = cxLo, cxHi = cxHi, czLo = czLo, czHi = czHi,
+    xMin = cxLo * 16, xMax = cxHi * 16 + 15,
+    zMin = czLo * 16, zMax = czHi * 16 + 15,
   }
   c.xLen  = c.xMax - c.xMin + 1
   c.zLen  = c.zMax - c.zMin + 1
@@ -290,7 +310,7 @@ end
 -- floor for 1-wide.
 --
 -- Both terms come from the world, never from quarry.conf. That is deliberate:
--- every turtle standing anywhere in the same 3x3 chunk region computes the
+-- every turtle standing anywhere in the same chunk region computes the
 -- identical pattern, so their branch mouths line up and "an air mouth is
 -- already taken" works. Keying it to the turtle's own start block did not,
 -- and keying it to a config value would break the moment one turtle's
@@ -1082,9 +1102,9 @@ local function check(conf, l, source, index)
     end
   end
 
-  local c = claimOf(x, z)
+  local c = claimOf(x, z, conf)
 
-  sayf("claim  : chunks %d..%d by %d..%d", c.cx - 1, c.cx + 1, c.cz - 1, c.cz + 1)
+  sayf("claim  : chunks %d..%d by %d..%d", c.cxLo, c.cxHi, c.czLo, c.czHi)
   sayf("corners: x %d..%d, z %d..%d  (%dx%d)", c.xMin, c.xMax, c.zMin, c.zMax, c.xLen, c.zLen)
   sayf("spine  : x=%d, branches run %d west and %d east", c.spine, c.west, c.east)
   for i = 1, conf.turtles do
@@ -1496,7 +1516,7 @@ end
 -- Bounded, because a turtle that keeps sidestepping is not making progress.
 local DETOUR_TRIES = 8
 
--- Never sidestep out of the claim. The claim is the 3x3 chunk region the
+-- Never sidestep out of the claim. The claim is the chunk region the
 -- player keeps loaded, so a detour past its border digs a neighbour's ground
 -- and walks into chunks that may not be ticking.
 local function inClaim(x, z)
@@ -1708,7 +1728,7 @@ local function chase(depth, l, conf)
   -- A vein does not stop at the claim rim and chase() used to follow it out:
   -- veinDepth is 12, so a vein off a rim branch walked the turtle twelve blocks
   -- into the neighbouring claim -- ground nobody is keeping loaded, and outside
-  -- the 3x3 the player holds open by standing in the centre chunk. Upward it is
+  -- the claim the player holds open by standing in the centre chunk. Upward it is
   -- worse: past topY is the user's surface builds, which topY exists to protect.
   -- There is no floor to match it: bottomY is where the TRUNK stops, and
   -- bedrock scatters up to -60, so the ore worth having at the bottom of the
@@ -3000,7 +3020,7 @@ local function runRecall(conf, l, index)
   if not st.home then
     error("nothing to recall from: quarry.state has no claim for this turtle", 0)
   end
-  local c = claimOf(st.home.x, st.home.z)
+  local c = claimOf(st.home.x, st.home.z, conf)
   claim = c
   local _, _, trunkZ = thirdOf(c, index, conf.turtles)
   local h = st.home
@@ -3057,7 +3077,7 @@ local function runMine(conf, l, index)
   -- wakes up outside its old claim has plainly been carried to a new spot:
   -- forget the old anchor and the branch that went with it.
   if st.home then
-    local hc = claimOf(st.home.x, st.home.z)
+    local hc = claimOf(st.home.x, st.home.z, conf)
     if x < hc.xMin or x > hc.xMax or z < hc.zMin or z > hc.zMax then
       say("moved: this is not the claim in quarry.state, starting a new one")
       st.home, st.level, st.branch, st.leg, st.along = nil, nil, nil, nil, 0
@@ -3108,7 +3128,7 @@ local function runMine(conf, l, index)
         halt, obstacle = nil, nil
       elseif a:sub(1, 1) == "q" then
         halt = "stopped on your say-so after the deploy failed: " .. tostring(whyd)
-        report(claimOf(st.home.x, st.home.z), conf)
+        report(claimOf(st.home.x, st.home.z, conf), conf)
         return
       end
     end
@@ -3124,7 +3144,7 @@ local function runMine(conf, l, index)
   -- where it happens to be standing now. A turtle resuming from 24 blocks
   -- down a branch is often in a different chunk than it started in, and
   -- claimOf() on that position hands it a whole different claim to mine.
-  local c = claimOf(st.home.x, st.home.z)
+  local c = claimOf(st.home.x, st.home.z, conf)
   claim = c
   local lo, hi, trunkZ = thirdOf(c, index, conf.turtles)
   sayf("quarry %d  at %d,%d,%d  claim x %d..%d z %d..%d (anchored at %d,%d)",
@@ -3495,7 +3515,7 @@ local function dryRun(conf, l, index)
     return
   end
   -- same anchor rule as the live run: a saved home wins over where it stands
-  local c = claimOf(st.home and st.home.x or x, st.home and st.home.z or z)
+  local c = claimOf(st.home and st.home.x or x, st.home and st.home.z or z, conf)
   local lo, hi, trunkZ = thirdOf(c, index, conf.turtles)
   local travelY = math.min(y, conf.topY)
   local level = conf.deepestFirst and conf.bottomY or conf.topY
@@ -3653,7 +3673,7 @@ local function main()
 
   -- The claim is anchored on the block a turtle wakes on, and this turtle wakes
   -- one block in front of its deployer -- which is over a chunk border often
-  -- enough to matter. claimOf() would then hand it a different 3x3 region and it
+  -- enough to matter. claimOf() would then hand it a different region and it
   -- would sink a trunk in a mine of its own. The deployer's anchor is on the
   -- floppy for exactly that reason; take it, and never overwrite a state file
   -- this turtle has already written for itself.
@@ -4444,7 +4464,7 @@ function runDeploy(conf, l, index)
 
     -- The claim anchor rides with it. A placed turtle wakes one block in front
     -- of me, which is over a chunk border often enough to matter, and claimOf()
-    -- would then give it a whole different 3x3 region to mine -- a second mine,
+    -- would then give it a whole different region to mine -- a second mine,
     -- not a third of this one. Only the home is seeded: no position and no
     -- heading, so locate() still starts it on its own pin, and its own state
     -- overwrites this the moment it saves.

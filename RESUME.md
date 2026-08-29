@@ -413,15 +413,51 @@ branches with fuel still in the tank. Two bugs, both in the new code:
 once-per-run printout on top of it. **A world with no wrap is still the
 fallback everywhere** — every test but 119 leaves `chestSize` nil.
 
+## What shipped on 2026-08-29, from logs rVv2v and lYwey
+
+Two long, healthy runs -- 2,753 blocks and 45 branches on `rVv2v` -- and both
+ended stranded at the depot on 124 and 131 fuel. The first climb worked
+(`lYwey`: `tank is 2028 -- back to the schedule`). Every climb after it turned
+round on arrival, because the turtle had already cut every row it owns at
+y=60: three bounces in `rVv2v`, two in `lYwey`, and then a slow grind down to
+nothing.
+
+50. **The lava map is shared over rednet, not over the floppy.** The drive and
+    the floppy stay at the SURFACE launch block and every depot is at a trunk
+    floor 119 blocks down, so `/disk` is never mounted where `dock` calls
+    `mapMerge` -- a source one turtle found never reached the other two [user,
+    2026-08-29]. A find is broadcast on the `quarrylava` protocol, a scoop is
+    broadcast as `gone`, and `forage` reads the in-memory list as well as the
+    floppy. **The listener is a coroutine under `parallel.waitForAny`**, not a
+    drain at dock time: an event that arrives while `turtle.forward()` waits
+    for its `turtle_response` is pulled and DISCARDED by the turtle API, so by
+    dock time there is nothing left in the queue. Test 122.
+51. **Foraging goes to the nearest level coal generates on that still has a row
+    this turtle owns** -- not always `topY`. Coal does not generate below y=0
+    in 1.21, so anything from 0 up is coal country; from a depot at y=-59 that
+    makes y=0 the answer, which is 118 blocks of climb cheaper than y=60 for
+    the same coal. A claim whose top is already under y=0 has only its top
+    level to offer, which is the old behaviour. Test 21.
+52. **The gate is `conf.fuelKeep`, not twice one climb.** Twice a climb is about
+    790; a turtle that came back from a climb with less than that, or whose box
+    ran dry on a healthy tank, spent the rest of the shift mining its reserve
+    down instead of going to get coal. `fuelKeep` is the tank the turtle wants,
+    and below it, with a dry box, going to get coal IS the work. Test 120.
+53. **A worked-out forage level moves to the next one.** One level's rows rarely
+    carry 2,000 fuel of coal, and giving up after one is what made the climbs
+    bounce. Only when coal country has no work left in it does the schedule get
+    the turtle back. Test 120.
+
 ## Next action
 
-**Ask for `update`, then `quarry 1`** from the launch block. Changes 48–49 fix
-what the first live run of the fuel build showed; the three suites pass.
+**Ask for `update`, then `quarry 1`** from the launch block. Changes 50–53 are
+in; the three suites pass.
 
-**What to read in the log**: that a climb only ever follows a dock reporting
-`chest held 0 fuel items`, and that a turtle which does climb comes back with
-`forage : tank is N -- back to the schedule` or `forage : the top level is
-worked out`, rather than `claim  : every branch in this third is mined`.
+**What to read in the log**: `forage : depot is dry -- climbing to y=0` rather
+than `y=60`, and at a much healthier tank than before; `forage : tank is N --
+back to the schedule` after it; and `lavamap: turtle N found a source at ...`
+on a turtle that did not find it itself, which is the first time the three of
+them have shared anything.
 
 The code is ready. The run to ask for: **`update`, then `quarry 1`** from the
 launch block, carrying a barrel, turtles 2 and 3, the drive and the floppy.
@@ -518,7 +554,7 @@ lock to one item type, so a mixed dump fails on the second stack.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, the floppy found through getMountPath, a stopped turtle that parks off the shared spine, one depot per turtle so they stop funnelling into one block, and the fuel build: coal burnt on pickup to `fuelKeep`, no ration at a turtle's own box, `sharePerDock` at a shared one, and a climb to `topY` launched while it can still be paid for, with the depot read through a peripheral wrap rather than sixteen sucks. 190,608 bytes, fletcher32 `414108213`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, the floppy found through getMountPath, a stopped turtle that parks off the shared spine, one depot per turtle so they stop funnelling into one block, and the fuel build: coal burnt on pickup to `fuelKeep`, no ration at a turtle's own box, `sharePerDock` at a shared one, and a climb into coal country launched while it can still be paid for, with the depot read through a peripheral wrap rather than sixteen sucks and the lava map shared over rednet. 196,444 bytes, fletcher32 `2290759998`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. |
 | `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |

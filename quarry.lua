@@ -2443,6 +2443,74 @@ local function scoop(conf, side)
   return ok and got ~= nil
 end
 
+-- The lava map is shared over rednet, because the floppy cannot do it. The
+-- drive and the floppy stay at the SURFACE launch block and every depot is at
+-- a trunk floor 119 blocks down, so /disk is not mounted where dock() calls
+-- mapMerge -- a source one turtle found never reached the other two [user,
+-- 2026-08-29]. A broadcast is the only channel three turtles at y=-59 share.
+--
+-- It has to be a coroutine blocked on rednet.receive for the whole run. Events
+-- that arrive while turtle.forward() is waiting for its turtle_response are
+-- pulled and DISCARDED by the turtle API, so draining the queue at dock time
+-- finds nothing: by then the message has been thrown away. That is what
+-- parallel is for.
+local LAVA_PROTO = "quarrylava"
+
+local function lavaSay(kind, x, y, z)
+  local side = modemSide()
+  if not side or type(rednet) ~= "table" then return end
+  pcall(rednet.open, side)
+  pcall(rednet.broadcast, ("%s %d,%d,%d"):format(kind, x, y, z), LAVA_PROTO)
+end
+
+-- Forget a source everywhere this turtle keeps one: the floppy map if it has
+-- one, and the in-memory list the broadcast fills. mapDrop alone left a
+-- scooped source in st.lava, and forage would walk to it again.
+local function forgetSource(x, y, z)
+  mapDrop(x, y, z)
+  local k = ("%d,%d,%d"):format(x, y, z)
+  local out = {}
+  for _, p in ipairs(st.lava or {}) do
+    if ("%d,%d,%d"):format(p.x, p.y, p.z) ~= k then out[#out + 1] = p end
+  end
+  st.lava = out
+  if st.lavaSeen then st.lavaSeen[k] = nil end
+end
+
+local function lavaAdd(x, y, z, who)
+  local k = ("%d,%d,%d"):format(x, y, z)
+  st.lava, st.lavaSeen = st.lava or {}, st.lavaSeen or {}
+  if st.lavaSeen[k] or #st.lava >= LAVA_KEEP then return false end
+  st.lavaSeen[k] = true
+  st.lava[#st.lava + 1] = { x = x, y = y, z = z }
+  save()
+  if who then sayf("lavamap: turtle %s found a source at %d,%d,%d", who, x, y, z) end
+  return true
+end
+
+local function lavaListen()
+  local side = modemSide()
+  if not side or type(rednet) ~= "table" or not rednet.receive then
+    -- no modem, or no rednet: idle forever so parallel still ends with the mine
+    while true do os.sleep(60) end
+  end
+  pcall(rednet.open, side)
+  while true do
+    local ok, from, msg = pcall(rednet.receive, LAVA_PROTO)
+    if not ok then
+      os.sleep(5)                 -- a broken modem must not spin this hot
+    elseif type(msg) == "string" then
+      local kind, x, y, z = msg:match("^(%a+) (-?%d+),(-?%d+),(-?%d+)$")
+      x, y, z = tonumber(x), tonumber(y), tonumber(z)
+      if kind == "lava" and x then
+        lavaAdd(x, y, z, tostring(from))
+      elseif kind == "gone" and x then
+        forgetSource(x, y, z)
+      end
+    end
+  end
+end
+
 -- Every block of the branch passes this. Record a source's position for the
 -- map; scoop it only when the tank is low enough to be worth a bucket trip.
 function watchLava(conf, l)
@@ -2459,17 +2527,15 @@ function watchLava(conf, l)
       -- map, or the next dock would put a source back that no longer exists
       local took = conf.lava and fuelLevel() < conf.lavaFloor and scoop(conf, p[2])
       if took then
-        mapDrop(x, y, z)
+        forgetSource(x, y, z)
+        lavaSay("gone", x, y, z)     -- so the others stop walking to it
       else
         -- Capped because save() serialises the whole state table on every dug
         -- block, and mapMerge -- the only thing that empties these -- is a
         -- no-op wherever /disk is not mounted. Unbounded, they turn every
         -- save of a long run into a longer one.
-        st.lava, st.lavaSeen = st.lava or {}, st.lavaSeen or {}
-        if not st.lavaSeen[k] and #st.lava < LAVA_KEEP then
-          st.lavaSeen[k] = true
-          st.lava[#st.lava + 1] = { x = x, y = y, z = z }
-          save()
+        if not (st.lavaSeen or {})[k] and lavaAdd(x, y, z) then
+          lavaSay("lava", x, y, z)
         end
       end
     end
@@ -2554,13 +2620,49 @@ function branchCost(c, conf, y, z)
   return toMouth + legs + back + conf.fuelMargin
 end
 
+-- Where to go and mine for coal. It used to be `topY` and nothing else, and
+-- once this turtle had cut every row it owns at y=60 the climb became a
+-- 238-block round trip to a level with no work left on it: three climbs in
+-- log rVv2v and two in lYwey turned round the moment they arrived, and the
+-- turtle then ground its tank down to 124 with nowhere left to go.
+--
+-- Any level from y=0 up is coal country -- coal does not generate below 0 in
+-- 1.21, which is why the claim floor is somewhere a turtle cannot mine its
+-- way out of. So take the NEAREST such level that still has a row this turtle
+-- owns: from the depot at y=-59 that is y=0, which is 118 blocks of climb
+-- cheaper than y=60 as well as being somewhere there is work.
+--
+-- A claim whose top is already below y=0 has no coal country in it at all;
+-- there, the top level is the best that can be offered and the old behaviour
+-- is what is left.
+local function forageLevel(conf, c)
+  local lo, hi = thirdOf(c, st.index or 1, conf.turtles or 1)
+  st.done = st.done or {}
+  local best
+  for _, y in ipairs(levels(conf)) do
+    if (conf.topY >= 0 and y >= 0) or y == conf.topY then
+      local free = false
+      for z = lo, hi do
+        if isBranch(c, y, z) and not st.done[doneKey(y, z)] then free = true break end
+      end
+      if free and (not best or math.abs(y - st.y) < math.abs(best - st.y)) then
+        best = y
+      end
+    end
+  end
+  return best
+end
+
 -- Foraging, only when the depot is dry [plan 7]: nearest mapped lava source
--- first, then a top-level branch (coal lives y=0..192 and those levels are on
--- the schedule anyway), then park.
+-- first, then a coal level, then park.
 function forage(conf, l, c)
   if conf.lava and findItem("minecraft:bucket") then
     local best, bd
-    for _, p in ipairs(mapRead()) do
+    -- both maps: the floppy where there is one, and the list the broadcast
+    -- fills, which is the only one a turtle 119 blocks from the drive has
+    local pts = mapRead()
+    for _, p in ipairs(st.lava or {}) do pts[#pts + 1] = p end
+    for _, p in ipairs(pts) do
       local d = math.abs(p.x - st.x) + math.abs(p.y - st.y) + math.abs(p.z - st.z)
       if d * 2 + conf.fuelMargin < fuelLevel() and (not bd or d < bd) then best, bd = p, d end
     end
@@ -2570,14 +2672,16 @@ function forage(conf, l, c)
       if goTo(best.x, best.y + 1, best.z) then
         local ok, hit, data = pcall(turtle.inspectDown)
         if ok and hit and isSource(data) and scoop(conf, "down") then
-          mapDrop(best.x, best.y, best.z)
+          forgetSource(best.x, best.y, best.z)
+          lavaSay("gone", best.x, best.y, best.z)
           return true
         end
       end
-      mapDrop(best.x, best.y, best.z)   -- gone or unreachable: stop trying it
+      forgetSource(best.x, best.y, best.z)   -- gone or unreachable: stop trying
+      lavaSay("gone", best.x, best.y, best.z)
     end
   end
-  local top = conf.topY
+  local top = forageLevel(conf, c) or conf.topY
   if not conf.forageCoal then
     halt = ("depot is dry and forageCoal is off: %d fuel, and I am not to climb for coal")
       :format(fuelLevel())
@@ -2671,9 +2775,15 @@ function dock(c, conf, l, want)
   -- yiALS and PwHyZ]. The wrap answers it properly on a box too big for the
   -- suck to read; `avail` is the fallback where there is no wrap.
   local seen  = boxRead(l)
-  local climb = branchCost(c, conf, conf.topY, st.z)
+  -- Go for coal while there is plenty left to go on, not at the last moment.
+  -- The old gate was twice one climb -- about 790 -- and a turtle that came
+  -- back from a climb with less than that, or whose box ran dry with a healthy
+  -- tank, spent the rest of the shift mining its reserve down instead. Both
+  -- turtles ended a 2,700-block run stranded on 124 fuel with the depot empty
+  -- [in-game 2026-08-29, logs rVv2v and lYwey]. conf.fuelKeep is the tank the
+  -- turtle wants; below it, with a dry box, going to get coal IS the work.
   local early = (seen or avail or 0) <= 0 and conf.forageCoal and fuelLevel() >= want
-                and fuelLevel() < 2 * climb
+                and fuelLevel() < (conf.fuelKeep or 0)
   if fuelLevel() < want or early then
     if not forage(conf, l, c) then
       -- An early climb that could not be started is not a reason to stop: the
@@ -3093,18 +3203,28 @@ local function runMine(conf, l, index)
     if not st.plan then
       local by, bz = nextBranch(conf, c, lo, hi, trunkZ)
       if not by and st.foraging then
-        -- The top level is worked out and the tank never reached fuelKeep, so
-        -- whatever coal was up here is all there is. nextBranch searches from
-        -- st.level onward, so a foraging turtle sitting at topY reads a claim
-        -- with unmined levels UNDER it as finished -- and both turtles called
-        -- the mine complete after four branches, parked at y=60, with fuel in
-        -- the tank [in-game 2026-08-29, logs yiALS and PwHyZ].
-        st.foraging = nil
-        st.level, st.branch, st.leg, st.along = nil, nil, nil, 0
-        st.plan, st.step = nil, nil
+        -- This level is worked out. nextBranch searches from st.level ONWARD,
+        -- so a foraging turtle sitting up high reads a claim with unmined
+        -- levels under it as finished -- both turtles called the mine complete
+        -- after four branches with fuel in the tank [logs yiALS and PwHyZ].
+        --
+        -- Keep foraging on the next coal level rather than giving up on the
+        -- tank: the point of the climb is a full tank, and one level's rows
+        -- rarely carry 2,000 fuel of coal. Only when there is no coal country
+        -- left with work in it does the schedule get the turtle back.
+        local ny = forageLevel(conf, c)
+        st.branch, st.leg, st.along, st.plan, st.step = nil, nil, 0, nil, nil
+        if ny and ny ~= st.level then
+          sayf("forage : y=%d is worked out, still %d short -- on to y=%d",
+            st.level, math.max(0, (conf.fuelKeep or 0) - fuelLevel()), ny)
+          st.level = ny
+        else
+          st.foraging = nil
+          st.level = nil
+          sayf("forage : no coal level left with work on it -- back to the schedule on %d fuel",
+            fuelLevel())
+        end
         save()
-        sayf("forage : the top level is worked out -- back to the schedule on %d fuel",
-          fuelLevel())
         goto nextpass
       end
       if not by then
@@ -4217,7 +4337,19 @@ end
 if DRY then
   dryRun(conf, l, index)
 else
-  local ok, err = pcall(runMine, conf, l, index)
-  if not ok then sayf("CRASHED: %s", tostring(err)) end
+  local function mine()
+    local ok, err = pcall(runMine, conf, l, index)
+    if not ok then sayf("CRASHED: %s", tostring(err)) end
+  end
+  -- The lava listener has to be blocked on rednet.receive for the whole run
+  -- rather than drained at dock time: a message that arrives while
+  -- turtle.forward() waits for its turtle_response is pulled and discarded by
+  -- the turtle API, so by dock time it is gone [see lavaListen]. waitForAny
+  -- ends when the mine ends; the listener never returns on its own.
+  if type(parallel) == "table" and parallel.waitForAny then
+    parallel.waitForAny(mine, lavaListen)
+  else
+    mine()
+  end
 end
 upload()

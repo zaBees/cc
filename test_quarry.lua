@@ -1390,7 +1390,14 @@ world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 700,
 ok, err, log = runWorld("1")
 assert(ok, "forage run crashed: " .. tostring(err))
 assert(log:find("forage : depot is dry"), "a dry depot did not send it foraging:\n" .. log)
-assert(log:find("climbing to y=60"), "it did not head for the top level where the coal is:\n" .. log)
+-- to coal country, which is anything from y=0 up -- the NEAREST such level
+-- with a row left on it, not always topY. From the depot that is y=0, and it
+-- is 118 blocks of climb cheaper than y=60 for the same coal.
+local climbY = tonumber(log:match("climbing to y=(%-?%d+) for coal"))
+assert(climbY == 0,
+  "it climbed to y=" .. tostring(climbY) .. ", not to the nearest level coal\n"
+  .. "generates on. From a depot at y=-59 that is y=0, and it is 118 blocks of\n"
+  .. "climb cheaper than y=60 for the same coal:\n" .. log)
 assert(log:find("STOPPED: out of coal"),
   "it did not stop once foraging was exhausted:\n" .. log)
 -- and it parked at the top of its own trunk, which is where a player with a
@@ -3367,7 +3374,10 @@ assert(sv108.halt and sv108.halt:find("would not move"),
 -- the end of every leg -- not carried home first and rationed back out. The
 -- old code burnt from the hold only when the walk-home reserve had already
 -- failed, which is far too late to be the answer to a dry box.
-world({ conf = "topY = -55\ntripBlocks = 60\nfuelKeep = 400\nfuelShare = 100000\n" .. SECTIONS,
+-- forageCoal off so the empty box it builds cannot send it climbing before it
+-- reaches the seam: this is a test about the hold, not about the climb
+world({ conf = "topY = -55\ntripBlocks = 60\nfuelKeep = 400\nfuelShare = 100000\n"
+        .. "forageCoal = false\n" .. SECTIONS,
         fuel = 500,
         blocks = (function()
           local b = {}
@@ -3426,9 +3436,9 @@ world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 900,
         chests = { [k3(DX, DY, DZ)] = {} } })
 ok, err, log = runWorld("1")
 assert(ok, "early-climb run crashed: " .. tostring(err))
-local climbTank = tonumber(log:match("climbing to y=60 for coal, (%d+) fuel"))
+local climbTank = tonumber(log:match("climbing to y=%-?%d+ for coal, (%d+) fuel"))
 assert(climbTank, "a dry box did not launch the climb:\n" .. log)
--- one branch at the working level costs about 160 and the climb about 400: a
+-- one branch at the working level costs about 160 and the climb about 280: a
 -- turtle that waited for `fuelLevel() < want` would be starting on under 160
 assert(climbTank > 400,
   "it only climbed once it was down to " .. climbTank
@@ -3525,15 +3535,19 @@ assert(log:find("chest held %d+ fuel items, took 0 fuel"),
 -- leaves chestSize nil, which is the no-wrap fallback.
 assert(log:find("wrapped %-%- 132 slots"),
   "the box was never read through the wrap:\n" .. log)
--- the invariant, whatever the run does with the rest of its shift: the dock
--- that launches a climb is a dock that found an EMPTY box
+-- the invariant, whatever the run does with the rest of its shift: no climb
+-- follows a dock that saw coal in the box and took none of it. That pairing --
+-- coal there, nothing taken, climb anyway -- IS the bug. Taking the last of it
+-- and then finding the box empty is not.
 local climbAt = log:find("forage : depot is dry")
 if climbAt then
-  local held
-  for h in log:sub(1, climbAt):gmatch("chest held (%d+) fuel items") do held = h end
-  assert(tonumber(held) == 0,
-    "it climbed straight after a dock that reported " .. tostring(held)
-    .. " coal in the box:\n" .. log)
+  local held, took
+  for h, t in log:sub(1, climbAt):gmatch("chest held (%d+) fuel items, took (%d+) fuel") do
+    held, took = tonumber(h), tonumber(t)
+  end
+  assert(not (held and held > 0 and took == 0),
+    "it climbed straight after a dock that saw " .. tostring(held)
+    .. " coal in the box and took none of it:\n" .. log)
 end
 
 -- 120. the top level running out is not the claim running out ---------------
@@ -3547,12 +3561,61 @@ world({ conf = "tripBlocks = 60\n" .. SECTIONS, fuel = 1500,
         chests = { [k3(DX, DY, DZ)] = {} } })
 ok, err, log = runWorld("1")
 assert(ok, "worked-out-top run crashed: " .. tostring(err))
-assert(log:find("climbing to y=60"), "a dry box did not send it up:\n" .. log)
-local out = log:find("the top level is worked out %-%- back to the schedule")
-assert(out, "it treated the worked-out top level as a finished claim:\n" .. log)
-local deeper = tonumber(log:match("level  : moving to y=(%-?%d+)", out))
-assert(deeper and deeper < -55,
-  "it came back to y=" .. tostring(deeper) .. ", not to a level below the top:\n" .. log)
+local up = log:find("forage : depot is dry %-%- climbing to y=")
+assert(up, "a dry box did not send it up:\n" .. log)
+-- and it went while there was plenty left to go on. The old gate was twice one
+-- climb, about 790, so a turtle whose box ran dry on a healthy tank spent the
+-- rest of the shift mining its reserve down instead of going to get coal.
+local upTank = tonumber(log:match("climbing to y=%-?%d+ for coal, (%d+) fuel"))
+assert(upTank and upTank > 900,
+  "it waited until " .. tostring(upTank) .. " fuel to go for coal:\n" .. log)
+-- a claim this size is nowhere near mined out, so "every branch is mined" here
+-- can only be nextBranch reading the levels UNDER a foraging turtle as done
+assert(not log:find("claim  : every branch in this third is mined"),
+  "it called a claim with unmined levels under it finished:\n" .. log)
+-- and one level is not the end of the forage: it keeps working coal country
+-- for the tank, because one level's rows rarely carry fuelKeep's worth of coal
+local levelsUp = 0
+for y in log:gmatch("level  : moving to y=(%-?%d+)") do
+  if tonumber(y) >= 0 then levelsUp = levelsUp + 1 end
+end
+assert(levelsUp >= 2,
+  "it worked " .. levelsUp .. " level of coal country and gave up:\n" .. log)
+
+-- 122. a lava source is broadcast, because the floppy cannot share it -------
+
+-- The drive and the floppy stay at the SURFACE launch block and every depot is
+-- at a trunk floor 119 blocks down, so /disk is not mounted where dock() calls
+-- mapMerge: a source one turtle found never reached the other two [user,
+-- 2026-08-29]. A broadcast is the only channel three turtles at y=-59 share.
+world({ conf = "topY = -55\ntripBlocks = 200\nlava = true\nlavaFloor = 0\n" .. SECTIONS,
+        fuel = 2000,
+        blocks = { [k3(DX, DY, DZ)] = "minecraft:chest",
+                   [k3(145, BY - 1, BZ)] = "minecraft:lava" },
+        chests = coalChest(30) })
+ok, err, log = runWorld("1")
+assert(ok, "lava-broadcast run crashed: " .. tostring(err))
+local shared
+for _, m in ipairs(V.sent) do
+  if m.proto == "quarrylava" and m.msg == "lava 145,-60,-57" then shared = m end
+end
+assert(shared, "the source it mapped was never broadcast:\n" .. log)
+
+-- and a source it TAKES is broadcast as gone, so the other two stop walking to
+-- a block that is not there any more
+world({ conf = "topY = -55\ntripBlocks = 200\nlava = true\nlavaFloor = 20000\n" .. SECTIONS,
+        fuel = 2000,
+        blocks = { [k3(DX, DY, DZ)] = "minecraft:chest",
+                   [k3(145, BY - 1, BZ)] = "minecraft:lava" },
+        chests = coalChest(30),
+        inv = { [16] = { name = "minecraft:bucket", count = 1 } } })
+ok, err, log = runWorld("1")
+assert(ok, "lava-gone run crashed: " .. tostring(err))
+local gone
+for _, m in ipairs(V.sent) do
+  if m.proto == "quarrylava" and m.msg == "gone 145,-60,-57" then gone = m end
+end
+assert(gone, "a scooped source was not called in:\n" .. log)
 
 -- 109. the disk startup is a bootstrap that logs before it runs anything ----
 -- "reboot works, running the actual code doesn't" [user, 2026-08-29]. With one

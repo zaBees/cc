@@ -433,46 +433,6 @@ local function manualFix(conf)
      and conf.startDir ~= nil
 end
 
--- gps.locate's own default is 2s, which is one round trip to four hosts and no
--- slack. A rebuilt constellation at the edge of modem range answers late rather
--- than not at all, and this is called about four times in a whole run, so the
--- extra wait is free and a false NO FIX is not. Raised from 5s to 10s on the
--- user's instruction 2026-08-28: a whole run pays 40s at worst, and a NO FIX
--- underground costs a trip out to the turtle.
-local GPS_TIMEOUT = 10
-
-local function locate(conf)
-  if conf.startX and conf.startY and conf.startZ then
-    -- A pinned position is a starting value, not a sensor. It names the block
-    -- the turtle was launched from, and a turtle that has been running is not
-    -- standing there any more -- with no GPS to correct it, which is the whole
-    -- reason it is pinned, the saved state is the only thing that knows where
-    -- it went. So the state wins whenever it has a full fix of its own; a
-    -- freshly deployed turtle has none, and starts on the pin.
-    if st.x and st.y and st.z and st.dir then
-      return st.x, st.y, st.z, "quarry.state"
-    end
-    return conf.startX, conf.startY, conf.startZ, "quarry.conf"
-  end
-  if gps then
-    local ok, x, y, z = pcall(gps.locate, GPS_TIMEOUT)
-    if ok and x then return math.floor(x), math.floor(y), math.floor(z), "gps" end
-  end
-  -- Underground there may be no constellation to reach: a wireless modem's
-  -- range shrinks with depth, and hosts near the surface are a hundred-odd
-  -- blocks above the claim floor. GPS being healthy up top says nothing about
-  -- y=-59 [in-game 2026-08-28, log td7FE: a turtle parked at the depot, modem
-  -- equipped, no host answering]. The state file is written every block and
-  -- carries the heading GPS never gives, so a turtle that has been running
-  -- already knows where it is. Last resort, and never silent: a turtle someone
-  -- picked up and moved cannot tell, so every user of this says where it came
-  -- from.
-  if st.x and st.y and st.z and st.dir then
-    return st.x, st.y, st.z, "quarry.state"
-  end
-  return nil, nil, nil, "no fix"
-end
-
 -- A turtle reaches gps.locate only through an equipped WIRELESS modem, and
 -- "wireless" is not the same question as "is there a modem". CC's gps.locate
 -- walks the sides looking for one whose isWireless() is true, so a WIRED modem
@@ -510,6 +470,46 @@ local function hasWiredModem()
   local e = equippedSides()
   return (e.left == "wired modem") or (e.right == "wired modem")
 end
+
+-- gps.locate's own default is 2s, which is one round trip to four hosts and no
+-- slack. A rebuilt constellation at the edge of modem range answers late rather
+-- than not at all, and this is called about four times in a whole run, so the
+-- extra wait is free and a false NO FIX is not. Raised from 5s to 10s on the
+-- user's instruction 2026-08-28: a whole run pays 40s at worst, and a NO FIX
+-- underground costs a trip out to the turtle.
+local GPS_TIMEOUT = 10
+
+-- GPS, then the config pin, then the questions -- in that order, on the user's
+-- instruction 2026-08-29. GPS goes first because it is the only thing here that
+-- actually LOOKS: the pin and the state file are both records of where the
+-- turtle was put, and neither of them can tell that somebody has picked it up
+-- and moved it. It is skipped only where it cannot work at all -- no wireless
+-- modem equipped means no fix is possible -- so a turtle running on a pin with
+-- no modem pays nothing for being asked first.
+local function locate(conf)
+  if gps and hasModem() then
+    local ok, x, y, z = pcall(gps.locate, GPS_TIMEOUT)
+    if ok and x then return math.floor(x), math.floor(y), math.floor(z), "gps" end
+  end
+  -- Then the turtle's own dead reckoning. Underground there may be no
+  -- constellation to reach: a wireless modem's range shrinks with depth, and
+  -- the hosts sit near the surface a hundred-odd blocks above the claim floor
+  -- [in-game 2026-08-28, log td7FE]. quarry.state is written every block and
+  -- carries the heading GPS never gives, so a turtle that has been running
+  -- already knows where it is -- and it beats the pin, which names a launch
+  -- block that a running turtle left long ago.
+  if st.x and st.y and st.z and st.dir then
+    return st.x, st.y, st.z, "quarry.state"
+  end
+  -- Then the pin. It is exactly right for a turtle that has not moved yet,
+  -- which is what a freshly deployed one is, and wrong for every other.
+  if conf.startX and conf.startY and conf.startZ then
+    return conf.startX, conf.startY, conf.startZ, "quarry.conf"
+  end
+  -- And last, nothing -- which is locateOrAsk's cue to ask the player.
+  return nil, nil, nil, "no fix"
+end
+
 
 -- Tell the player something only they can fix. It always goes into the log, so
 -- the uploaded paste carries it either way, and it goes out over rednet as well

@@ -1179,6 +1179,7 @@ assert(twoLeft == 8,
 -- reading before it and no direction matches. The message named the symptom and
 -- hid the cause, which cost a live run.
 world({ conf = "startX = 10\nstartY = 80\nstartZ = 5\n" .. SECTIONS, fuel = 2000 })
+V.noGps = true          -- the pin is only reached when GPS cannot answer [test 94]
 ok, err, log = runWorld("1")
 assert(ok, "pinned-position run crashed outright: " .. tostring(err))
 assert(log:find("pins my position"),
@@ -1190,6 +1191,7 @@ assert(not log:find("calibration moved 0,0"),
 -- is stated instead of measured, and everything past calibration dead-reckons.
 world({ conf = "startX = 137\nstartY = 71\nstartZ = -42\nstartDir = 1\ntripBlocks = 200\n"
         .. SECTIONS, fuel = 4000 })
+V.noGps = true          -- the pin is only reached when GPS cannot answer [test 94]
 ok, err, log = runWorld("1")
 assert(ok, "startDir run crashed: " .. tostring(err))
 assert(log:find("heading: %-x from quarry.conf startDir"),
@@ -2807,5 +2809,39 @@ ok, err, log = runWorld("1", "deploy")
 assert(ok, "the first deploy crashed: " .. tostring(err))
 local st5 = V.files["quarry.state"]
 assert(st5 and st5:find("staffed"), "it did not record who went out:\n" .. tostring(st5))
+
+-- 94. GPS, then the config pin, then the questions ---------------------------
+-- On the user's instruction 2026-08-29. locate() used to check the pin FIRST
+-- and never call gps.locate at all when one was set, so a turtle somebody had
+-- picked up and moved kept insisting it was on its launch block with a live
+-- constellation overhead saying otherwise.
+
+-- GPS beats a full pin
+reset({ gps = true, conf = MANUAL })
+ok, err, log = run("1", "--check")
+assert(log:find("position: .* %(gps%)"),
+  "the config pin beat a working GPS:\n" .. log)
+
+-- with GPS down the pin is what is left, and it is used rather than asked for
+reset({ gps = false, conf = MANUAL })
+ok, err, log = run("1", "--check")
+assert(log:find("position: 137,83,%-42 %(quarry.conf%)"),
+  "with no GPS it did not fall back to the pin:\n" .. log)
+
+-- and the turtle's own record still beats the pin: the pin names the launch
+-- block, and a running turtle left it long ago [test 82]
+reset({ gps = false, conf = MANUAL,
+        state = "{x=137,y=-59,z=-42,dir=1,index=1}" })
+ok, err, log = run("1", "--check")
+assert(log:find("position: 137,%-59,%-42 %(quarry.state%)"),
+  "the pin beat the turtle's own saved fix:\n" .. log)
+
+-- with no modem there is no GPS to try, so a pinned turtle pays nothing for
+-- being asked first -- and questions are still the last resort, not the second
+world({ inv = kit(), leaveAfter = 3 })
+V.noGps = true
+ok, err, log = runWorld("1", "deploy")
+assert(log:find("no coordinates given"),
+  "it asked before it had run out of everything else:\n" .. log)
 
 print("all quarry phase 5 checks passed")

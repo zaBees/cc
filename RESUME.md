@@ -70,7 +70,8 @@ to fail against its own unfixed code (tests 75-83, plus 29).
    one.
 5. **`locate()` prefers `quarry.state` to the pin.** The pin is the launch
    block; a running turtle is not standing on it, and with GPS unavailable
-   nothing else would ever catch that.
+   nothing else would ever catch that. Superseded in part by item 20: GPS is
+   now tried above both.
 6. **The deployed turtles inherit the deployer's claim anchor**, seeded as a
    `home`-only `quarry.state` on the floppy. They wake one block in front of
    turtle 1, which is over a chunk border often enough to matter -- that is
@@ -160,6 +161,19 @@ confirmed to fail against its own unfixed code:
     `deployed` was the abandoned one-shot boolean and older state files still
     carry it as `true`, which an index into would throw on. Test 93, confirmed
     to fail against the unfixed code.
+
+20. **Position fix order is GPS, then `quarry.state`, then the config pin,
+    then the questions** -- on the user's instruction 2026-08-29. `locate()`
+    used to check the pin FIRST and never call `gps.locate` at all when one was
+    set, so a turtle somebody had picked up and moved kept insisting it was on
+    its launch block with a live constellation overhead saying otherwise. GPS
+    goes first because it is the only thing here that actually LOOKS; the pin
+    and the state file are both records of where the turtle was put. GPS is
+    skipped only where it cannot work -- `hasModem()` is false, so no fix is
+    possible -- which is why a pinned turtle with no modem pays nothing for the
+    new order. `st.x/y/z/dir` still beats the pin [item 5, unchanged]. Test 94,
+    confirmed to fail against the unfixed code; tests 53 and 54 now turn GPS
+    off explicitly, because that is the only way the pin is reached.
 
 ## Next action
 
@@ -257,7 +271,7 @@ lock to one item type, so a mixed dump fails on the second stack.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, and a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2. 154,482 bytes, fletcher32 `4042648459`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, and GPS asked before the config pin. 154,560 bytes, fletcher32 `1365001046`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. |
 | `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |
@@ -309,7 +323,7 @@ and the in-game computer running `cloud <token>`.
 | --- | --- |
 | `MASTERMINE-PLAN.md` | The design, every decision and its reasoning. Read second. Trimmed 2026-08-28: §11 is now a status table, and the rules it used to carry are in this file's Settled and Corrections lists. |
 | `quarry.lua` | **The deliverable.** ~2,430 lines, Phases 1–5. Opens `local DRY = true`; the config lowers it. |
-| `test_quarry.lua` | Five suites against stubbed CC worlds, 93 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot; 75–91 the deploy build of that night; 92 the double-fed turtle; 93 the deploy that restarted at turtle 2. `lua5.3 test_quarry.lua` |
+| `test_quarry.lua` | Five suites against stubbed CC worlds, 94 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot; 75–91 the deploy build of that night; 92 the double-fed turtle; 93 the deploy that restarted at turtle 2; 94 the position-fix order. `lua5.3 test_quarry.lua` |
 | `alert.lua` | For a computer: prints what the turtles broadcast on the `quarry` protocol. |
 | `update.lua` | The in-game updater: `update` replaces `quarry` and itself from GitHub. Downloaded once by hand. |
 | `test_update.lua` | Stubbed `http`/`fs` around the updater: the failed download, the HTML 404, the cache-buster, the checksum. `lua5.3 test_update.lua` |
@@ -398,6 +412,11 @@ Plan section numbers in brackets.
 - **Right of way by launch index** — lower wins, higher moves [8]. `giveWay`
   only ever waits; moving aside is `goTo`'s job, because a sidestep inside
   `mineLeg` would desync `st.along`.
+- **Position fixes come in one order: GPS, `quarry.state`, the `quarry.conf`
+  pin, then coordinates typed in by hand.** GPS is skipped only when no
+  wireless modem is equipped, because then no fix is possible. Do not move the
+  pin back above GPS: a pinned turtle somebody has picked up and moved has no
+  other way to notice. Set 2026-08-29 at the user's instruction.
 - **`recall` is per-turtle and typed; normal returns are independent** [4].
 - **Haul everything; the blacklist is a junk tier**, dumped first on overflow
   [6]. A turtle cannot decline to pick up what it digs.

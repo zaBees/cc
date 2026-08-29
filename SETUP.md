@@ -460,6 +460,13 @@ one line:
 
 Use the **turtle's** block position, not yours, if you are standing next to it.
 
+The pin is a fallback, not an override. The turtle asks GPS first every time,
+and only falls back to these lines when GPS cannot answer -- so you can leave
+them in place, and the moment the constellation comes back the turtle uses it
+instead. Its own `quarry.state` still beats the pin, because the pin names the
+block it was launched from and a running turtle left that long ago. Typed-in
+coordinates are the last resort, after all three.
+
 `startDir` has to go in too, because a turtle told its position by hand cannot
 measure which way it faces: `0` = +z, `1` = -x, `2` = -z, `3` = +x. At the
 prompt you can also type what F3 actually shows — `+z` or `south`, `-x` or

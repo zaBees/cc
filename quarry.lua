@@ -1317,7 +1317,12 @@ end
 -- asymmetry has to come from our own, which is exactly what the launch
 -- argument is for: index 1 retries soonest and effectively holds the
 -- corridor, 2 and 3 wait longer and are the ones that end up moving.
-local YIELD_TRIES = 6
+-- Six was not enough: a turtle parked at a trunk stays there for as long as it
+-- is stopped, and the one behind it burned its tries in 9 seconds and then
+-- routed around into the wrong place [2026-08-29, log 9KJAs]. The waits are
+-- scaled by index, so this costs the turtle with right of way the least, and
+-- the parking rule above is what makes the wait finite in the first place.
+local YIELD_TRIES = 12
 
 local function turtleAt(detect, inspect)
   if not detect() then return false end
@@ -1971,15 +1976,29 @@ local function buildDepot(l, c, conf)
   -- 1's trunk, at one end of the claim, and the turtle at the far end walks
   -- the whole spine on every single trip. The middle trunk is the claim's own
   -- centre, because each turtle's trunk sits at the centre of its third.
+  -- The fallback is this turtle's OWN trunk, never wherever it happens to be
+  -- standing when the walk gave up. Every other turtle looks for the shared
+  -- depot by visiting TRUNK FLOORS -- that is all findSharedDepot knows how to
+  -- do -- so a container one block short of a trunk is a container none of them
+  -- will ever find. In-game [2026-08-29, log 9KJAs] turtle 2 was parked on the
+  -- middle trunk, turtle 1 waited out 24 give-ways one block short of it at
+  -- z=118, gave up, and built there; turtles 2 and 3 then both stopped with a
+  -- full hold and nowhere to put it.
   local h1 = halt
   local mid = math.ceil((conf.turtles or 1) / 2)
   local _, _, midZ = thirdOf(c, mid, conf.turtles or 1)
-  if st.z ~= midZ then
-    sayf("depot  : the depot belongs at the middle trunk, z=%d -- walking there", midZ)
-    if not goTo(c.spine, st.y, midZ) then
-      halt = h1
-      sayf("depot  : cannot reach the middle trunk, so building here at z=%d instead", st.z)
-    end
+  local _, _, ownZ = thirdOf(c, st.index or 1, conf.turtles or 1)
+  for _, tz in ipairs({ midZ, ownZ }) do
+    if st.z == tz then break end
+    sayf("depot  : the depot belongs at a trunk floor -- walking to z=%d", tz)
+    if goTo(c.spine, st.y, tz) then break end
+    halt = h1
+    sayf("depot  : cannot reach z=%d", tz)
+  end
+  if st.z ~= midZ and st.z ~= ownZ then
+    sayf("depot  : I am at z=%d, which is not a trunk. Building here anyway, but", st.z)
+    say("         the other turtles sweep trunk floors, so they will not find it.")
+    say("         Move me onto a trunk and delete quarry.state to redo this.")
   end
 
   local tx, ty, tz = st.x, st.y, st.z
@@ -2719,6 +2738,21 @@ local function runMine(conf, l, index)
   if not okc then error("cannot work out which way I am facing: " .. tostring(why), 0) end
   sayf("heading: %d, fuel %d", st.dir, fuelLevel())
 
+  -- "No depot anywhere" is true for one run at most. It is a latch inside a
+  -- run, so a turtle that has swept the spine once does not sweep it again on
+  -- every dock -- but it was surviving into the NEXT run, and by then turtle 1
+  -- has usually built the depot the sweep went looking for. In-game
+  -- [2026-08-29, logs H2Ie0 and sCv32] turtles 2 and 3 both stopped with a full
+  -- hold and "there is no depot", never sweeping, because their state files
+  -- still carried the noDepot written the run before. Clearing it here still
+  -- costs no sweep on boot: the sweep only ever runs when a dock is due.
+  if st.noDepot then
+    st.noDepot = nil
+    say("depot  : forgetting last run's \"no depot anywhere\" -- one may have been")
+    say("         built since. It is looked for again the first time one is needed.")
+    save()
+  end
+
   -- Refuse the trip it cannot pay for, while still at the surface where the
   -- user can reach it. The reserve inside the branch is what stops it later;
   -- this is what stops it stranding itself 119 blocks down before it starts.
@@ -2952,11 +2986,24 @@ local function runMine(conf, l, index)
     ::nextpass::
   end
 
-  -- Park, but do NOT clear the leg position on a stop: that is the resume
-  -- point, and a stopped turtle is resumed far more often than a finished one.
+  -- Park OFF the spine. The spine is the one corridor all three share and every
+  -- trunk floor sits on it, so a turtle that stops where it stands is a wall
+  -- the other two cannot get past for as long as it is there -- and they do not
+  -- stop, they burn their give-way tries and then mis-route. In-game
+  -- [2026-08-29, log 9KJAs] turtle 2 stopped on the middle trunk and turtle 1
+  -- spent 24 give-ways in front of it, gave up, and built the depot in the
+  -- wrong place. A branch mouth one block west is out of the way and is a row
+  -- that gets mined anyway.
+  -- The resume point is st.leg/st.along, not the position, so a block sideways
+  -- costs nothing: goTo walks back from wherever it wakes up.
   st.task = "park"
   if not halt then st.leg, st.along = nil, 0 end
   save()
+  if claim and st.x == claim.spine and stepAside() then
+    sayf("park   : stepped off the spine to %d,%d,%d so the others can get past",
+      st.x, st.y, st.z)
+    save()
+  end
   report(c, conf)
 end
 
@@ -3722,9 +3769,20 @@ local args = { ... }
 local me = shell and shell.getRunningProgram and shell.getRunningProgram()
 local DISK = diskPath()
 local onFloppy = false
-if me and DISK then
+if me then
   local full = (me:sub(1, 1) == "/") and me or ("/" .. me)
-  onFloppy = full:sub(1, #DISK + 1) == (DISK .. "/")
+  if DISK and full:sub(1, #DISK + 1) == (DISK .. "/") then
+    onFloppy = true
+  elseif full:match("^/disk%d*/") then
+    -- The drive answered nothing -- it is not on a side of this turtle, which
+    -- is the normal case for a turtle standing away from the launch block --
+    -- but the path still says where this program is running from. Asking the
+    -- drive is the better answer where there IS one; the name is what is left
+    -- when there is not, and without this fallback a `cd disk` + `quarry 2`
+    -- run installs nothing at all [user, 2026-08-29].
+    onFloppy = true
+    DISK = full:match("^(/disk%d*)/")
+  end
 end
 if onFloppy then
   sayf("startup: I am running off the floppy at %s, which stays here when I leave.", DISK)

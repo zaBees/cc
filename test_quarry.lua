@@ -1581,7 +1581,7 @@ assert(log:find("depot  : container at %d"),
 -- all three, so it belongs where the walk to it is the same from either end
 -- [user, 2026-08-29]. Turtle 1's third is z -64..-49, turtle 2's is -48..-33
 -- with its trunk at z=-41, and that is the claim's own centre.
-assert(log:find("the depot belongs at the middle trunk, z=%-41"),
+assert(log:find("the depot belongs at a trunk floor %-%- walking to z=%-41"),
   "it built the depot under its own trunk instead of the middle one:\n" .. log)
 local built = 0
 for key, name in pairs(V.blocks) do
@@ -3029,5 +3029,87 @@ assert(log:find("no container under any trunk floor"),
   "the sweep found something, so this world does not test the clamp:\n" .. log)
 assert(V.minY >= -59,
   "it went to y=" .. tostring(V.minY) .. ", below bottomY, digging into bedrock")
+
+-- 99. "no depot anywhere" does not outlive the run that decided it ----------
+-- In-game [2026-08-29, logs H2Ie0 and sCv32] turtles 2 and 3 both filled up and
+-- stopped with "there is no depot to empty it into", never once sweeping the
+-- spine -- because the run BEFORE had swept, found nothing, and latched
+-- st.noDepot into the state file. Turtle 1 built the depot in between.
+
+world({ conf = "topY = -55\ntripBlocks = 96\n" .. SECTIONS, fuel = 20000,
+        blocks = { [k3(DX, DY, DZ)] = "minecraft:chest" },
+        chests = coalChest(300) })
+V.files["quarry.state"] = [[{ ["index"]=1, ["noDepot"]=true, ["done"]={} }]]
+ok, err, log = runWorld("1")
+assert(ok, "the stale-noDepot run crashed: " .. tostring(err))
+assert(log:find("forgetting last run"),
+  "it kept last run's no-depot answer:\n" .. log)
+assert(log:find("depot  : docking"),
+  "it never docked, so the stale latch is still stopping it:\n" .. log)
+assert(not log:find("there is no depot to empty it into"),
+  "it still stopped for want of a depot that is right there:\n" .. log)
+
+-- 100. a depot that cannot go at the middle trunk goes at THIS turtle's -----
+-- Every other turtle looks for the shared depot by visiting trunk floors, so a
+-- container one block short of a trunk is one none of them will ever find.
+-- In-game [log 9KJAs] turtle 1 could not reach the middle trunk, built where it
+-- stood, and turtles 2 and 3 then both stopped with a full hold.
+
+-- turtle 2 is parked on the middle trunk, so the walk there cannot finish
+world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+        blocks = { [k3(BX, BY, MZ)] = "computercraft:turtle_advanced" },
+        inv = { [1] = { name = "minecraft:chest", count = 1 },
+                [2] = { name = "minecraft:coal",  count = 64 } } })
+ok, err, log = runWorld("1")
+assert(ok, "the blocked-middle-trunk run crashed: " .. tostring(err))
+assert(log:find("cannot reach z=%-41"), "the middle trunk was not blocked after all:\n" .. log)
+assert(V.blocks[k3(BX, BY - 1, BZ)],
+  "it did not fall back to its own trunk floor:\n" .. log)
+assert(not log:find("which is not a trunk"),
+  "it built somewhere no other turtle will look:\n" .. log)
+
+-- 101. a stopped turtle parks OFF the spine -------------------------------
+-- The spine is the one corridor all three share and every trunk floor is on
+-- it, so a turtle that stops where it stands walls the other two in. Turtle 1
+-- spent 24 give-ways in front of one [log 9KJAs].
+
+-- no depot anywhere: it sweeps, walks back to its own trunk to stop tidily,
+-- and that trunk floor is a spine block
+world({ conf = "topY = -55\ntripBlocks = 96\n" .. SECTIONS, fuel = 20000 })
+ok, err, log = runWorld("1")
+assert(ok, "the parking run crashed: " .. tostring(err))
+assert(log:find("no container under any trunk floor"),
+  "it did not stop back at its own trunk, so this world tests nothing:\n" .. log)
+assert(log:find("stepped off the spine"),
+  "it stopped on the shared corridor and left it blocked:\n" .. log)
+local parked = tonumber(log:match("stepped off the spine to (%-?%d+),"))
+assert(parked and parked ~= BX,
+  "it says it stepped off the spine and is still on it: " .. tostring(parked))
+
+-- 102. run off the floppy with no drive in reach, and it still installs -----
+-- `cd disk` then `quarry 2` is what a player types on a turtle that did not
+-- boot, and that turtle is standing away from the drive -- so getMountPath has
+-- nothing to answer with, and the path name is all there is [user, 2026-08-29].
+-- disk = false: no drive on any side and no mount to test for, so getMountPath
+-- answers nothing and the path name is the only evidence left
+world({ running = "disk/quarry", disk = false })
+V.files["/disk/quarry"] = "-- the copy on the floppy"
+V.files["/disk/quarry.conf"] = "turtles = 3\ndry = false\n"
+V.files["quarry.conf"], V.files["quarry.state"] = nil, nil
+ok, err, log = runWorld("2")
+assert(ok, "the run off the floppy crashed: " .. tostring(err))
+assert(log:find("running off the floppy"),
+  "with no drive in reach it did not notice it was on a floppy:\n" .. log)
+assert(V.files["quarry.lua"] == "-- the copy on the floppy",
+  "it never installed itself onto the turtle:\n" .. log)
+assert(V.ran and V.ran[1] == "/quarry.lua",
+  "it did not hand the run to the installed copy:\n" .. log)
+
+-- and a mount that is not /disk is still recognised by name
+world({ running = "/disk2/quarry", disk = false })
+V.files["/disk2/quarry"] = "-- the copy on the second drive"
+ok, err, log = runWorld("2")
+assert(V.files["quarry.lua"] == "-- the copy on the second drive",
+  "a floppy at /disk2 was not recognised as a floppy:\n" .. log)
 
 print("all quarry phase 5 checks passed")

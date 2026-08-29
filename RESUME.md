@@ -234,6 +234,40 @@ others' -- and stopped at 145 blocks with nowhere to bank them. Four changes.
     being told to do by hand. Sent at 6s and again at 16s; the right-click
     question moved back to 24s. Test 97.
 
+## What shipped on 2026-08-29, from logs 9KJAs, H2Ie0 and sCv32
+
+Three turtles ran at once for the first time. The chain: turtle 2 parked on the
+middle trunk, turtle 1 waited out 24 give-ways one block short of it, gave up
+and built the depot at z=118 -- not a trunk floor -- and turtles 2 and 3, whose
+state files still carried last run's `noDepot`, never swept for it and both
+stopped with a full hold. Four changes.
+
+26. **`st.noDepot` does not outlive the run that set it.** It is a within-run
+    latch so a turtle does not re-sweep the spine on every dock; it was
+    surviving into the next run, by which time turtle 1 has usually built the
+    depot the sweep was looking for. Cleared at the top of a run, which still
+    costs no sweep on boot -- the sweep only ever runs when a dock is due.
+    Test 99.
+27. **A depot that cannot go at the middle trunk goes at THIS turtle's trunk**,
+    never wherever the walk gave up. `findSharedDepot` only knows how to visit
+    trunk floors, so a container one block short of one is a container no other
+    turtle will ever find -- which is exactly what z=118 was. Falls back
+    mid-trunk, then own trunk, and says loudly if it ends up on neither.
+    Test 100.
+28. **A stopped turtle parks OFF the spine.** The spine is the one corridor all
+    three share and every trunk floor sits on it, so a turtle that stops where
+    it stands is a wall the other two cannot pass -- and they do not stop, they
+    burn their give-way tries and mis-route. It now steps into a branch mouth,
+    a row that gets mined anyway. The resume point is `st.leg`/`st.along`, not
+    the position, so a block sideways costs nothing. Test 101.
+    `YIELD_TRIES` also went 6 to 12; the waits are index-scaled, so this costs
+    the turtle with right of way the least.
+29. **A floppy run with no drive in reach is still a floppy run.** `diskPath()`
+    answers nothing when the drive is not on a side of this turtle, which is
+    the normal case for one standing away from the launch block -- and item 24
+    made that the only test, so `cd disk` then `quarry 2` installed nothing at
+    all. The path name is the fallback. Test 102.
+
 ## Next action
 
 The code is ready. The run to ask for: **`update`, then `quarry 1`** from the
@@ -330,7 +364,7 @@ lock to one item type, so a mixed dump fails on the second stack.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, one depot at the middle trunk, and the floppy found through getMountPath. 167,497 bytes, fletcher32 `1293994432`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, one depot at the middle trunk, the floppy found through getMountPath, and a stopped turtle that parks off the shared spine. 170,977 bytes, fletcher32 `3875880222`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. |
 | `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |
@@ -382,7 +416,7 @@ and the in-game computer running `cloud <token>`.
 | --- | --- |
 | `MASTERMINE-PLAN.md` | The design, every decision and its reasoning. Read second. Trimmed 2026-08-28: §11 is now a status table, and the rules it used to carry are in this file's Settled and Corrections lists. |
 | `quarry.lua` | **The deliverable.** ~2,430 lines, Phases 1–5. Opens `local DRY = true`; the config lowers it. |
-| `test_quarry.lua` | Five suites against stubbed CC worlds, 98 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot; 75–91 the deploy build of that night; 92 the double-fed turtle; 93 the deploy that restarted at turtle 2; 94 the position-fix order; 95 the equipped-upgrade check and the modem fit; 96-98 the mount point, the auto-reboot and the depot-sweep floor. `lua5.3 test_quarry.lua` |
+| `test_quarry.lua` | Five suites against stubbed CC worlds, 102 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot; 75–91 the deploy build of that night; 92 the double-fed turtle; 93 the deploy that restarted at turtle 2; 94 the position-fix order; 95 the equipped-upgrade check and the modem fit; 96-98 the mount point, the auto-reboot and the depot-sweep floor; 99-102 the three-turtle run. `lua5.3 test_quarry.lua` |
 | `alert.lua` | For a computer: prints what the turtles broadcast on the `quarry` protocol. |
 | `update.lua` | The in-game updater: `update` replaces `quarry` and itself from GitHub. Downloaded once by hand. |
 | `test_update.lua` | Stubbed `http`/`fs` around the updater: the failed download, the HTML 404, the cache-buster, the checksum. `lua5.3 test_update.lua` |
@@ -460,10 +494,21 @@ Plan section numbers in brackets.
   Drawers and bins stay off it on purpose — they lock to one item type, so a
   mixed dump fails on the second stack. Do not re-split this into per-question
   copies; there were four.
+- **`st.noDepot` is a within-RUN latch, not a permanent one.** Cleared at the
+  top of every run. It exists only so a turtle does not re-sweep the spine on
+  every dock of the same run; kept across runs it makes a turtle stop over a
+  depot that was built in the meantime.
+- **A turtle parks OFF the spine when it stops.** Every trunk floor is a spine
+  block and the spine is the only corridor, so a parked turtle is a wall. The
+  resume point is `st.leg`/`st.along`, never the position.
 - **The depot is built at the MIDDLE trunk**, `math.ceil(turtles / 2)`, whose
   trunk is the claim's own z-centre -- one box serves all three, so it belongs
   where the walk is the same from either end. Set 2026-08-29 at the user's
   instruction. Do not go back to building it where the carrier happens to stand.
+  **When the middle trunk cannot be reached the fallback is this turtle's own
+  trunk, never the spot the walk stopped at**: `findSharedDepot` visits trunk
+  floors and nothing else, so a depot that is not on one is invisible to the
+  other two.
 - **Nothing hard-codes `/disk`.** `diskPath()` asks the drive through
   `getMountPath`; `/disk` is only the first drive's mount and a second one puts
   the floppy at `/disk2`. The boot script resolves it the same way into `D`.

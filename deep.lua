@@ -1,16 +1,16 @@
--- update: pull the current programs out of https://github.com/zaBees/cc and
+-- deep: pull the current programs out of https://github.com/zaBees/cc and
 -- replace the local copies. Written because the two-line ritual --
 -- `delete quarry` then a long wget -- is retyped every time a fix ships, and
 -- forgetting the delete makes CC print "File already exists" and download
 -- nothing, which reads like success.
 --
---   update            every program below
---   update quarry     just that one
+--   deep            every program below
+--   deep quarry     just that one
 --
 -- Configs are never touched: quarry.conf and quarry.state stay as they are.
 
-local RAW   = "https://raw.githubusercontent.com/zaBees/cc/main/"
-local FILES = { quarry = "quarry.lua", update = "update.lua", alert = "alert.lua" }
+local RAW   = "https://raw.githubusercontent.com/zaBees/cc/deepseek/"
+local FILES = { quarry = "quarry.lua", deep = "deep.lua", alert = "alert.lua" }
 
 -- The /main/ URL is CDN-cached and has served a previous build more than two
 -- minutes after a push. A unique query string is part of the cache key and is

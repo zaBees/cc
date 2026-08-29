@@ -440,16 +440,67 @@ end
 -- and still yields no fix ever. Those are two different problems with two
 -- different answers, so this tells them apart rather than reporting "modem"
 -- for both. The pickaxe is not a peripheral, so it reads as nil here.
+-- First slot whose item id matches the pattern. Defined up here because the
+-- modem check needs it: everything from the equip dance down uses this one.
+local function slotLike(pat)
+  for s = 1, 16 do
+    local ok, d = pcall(turtle.getItemDetail, s)
+    if ok and d and d.name:find(pat) then return s, d.name, d.count end
+  end
+end
+
+-- turtle.getEquippedLeft/Right name the upgrade itself, which peripheral.getType
+-- cannot: a pickaxe is not a peripheral, so under getType an armed side and an
+-- EMPTY side both read as nil. That is the whole reason the boot script has to
+-- equip blind and undo it if the pickaxe fell out. Ask for the name when the
+-- method is there. It is not in references/peripherals.md -- that dump was
+-- taken from a computer, which has no turtle API at all -- so it is called
+-- through pcall and the old getType route stays as the fallback, which is also
+-- what an older CC:Tweaked gets. Returns an item table on this build; a string
+-- would do as well, so both shapes are read.
+local function equippedItem(side)
+  local fn = turtle and turtle[side == "left" and "getEquippedLeft" or "getEquippedRight"]
+  if not fn then return nil, false end
+  local ok, d = pcall(fn)
+  if not ok then return nil, false end
+  if type(d) == "table" then return d.name, true end
+  if type(d) == "string" then return d, true end
+  return nil, true                  -- the method answered: that side is EMPTY
+end
+
+local function isModemName(n)
+  n = tostring(n or "")
+  return n:find("wireless_modem") ~= nil or n:find("ender_modem") ~= nil
+     or n:find("modem") ~= nil
+end
+
+-- Wired and wireless modems both report their peripheral type as "modem" and
+-- gps.locate only ever answers through a wireless one, so the two are told
+-- apart by name where a name is available and by isWireless() where it is not.
 local function equippedSides()
   local out = {}
   for _, side in ipairs({ "left", "right" }) do
-    local ok, t = pcall(peripheral.getType, side)
-    if ok and t then
-      out[side] = t
-      if t == "modem" then
+    local name, asked = equippedItem(side)
+    if name and isModemName(name) then
+      if name:find("wireless_modem") or name:find("ender_modem") then
+        out[side] = "wireless modem"
+      else
         local okw, wireless = pcall(peripheral.call, side, "isWireless")
-        -- an old build with no isWireless is not evidence of a wired modem
         out[side] = (okw and wireless == false) and "wired modem" or "wireless modem"
+      end
+    elseif name then
+      out[side] = name                -- a pickaxe, or anything else equipped
+    elseif not asked then
+      -- no getEquipped* on this build: fall back to the peripheral type, which
+      -- sees a modem and nothing else
+      local ok, t = pcall(peripheral.getType, side)
+      if ok and t then
+        out[side] = t
+        if t == "modem" then
+          local okw, wireless = pcall(peripheral.call, side, "isWireless")
+          -- an old build with no isWireless is not evidence of a wired modem
+          out[side] = (okw and wireless == false) and "wired modem" or "wireless modem"
+        end
       end
     end
   end
@@ -471,6 +522,66 @@ local function hasWiredModem()
   return (e.left == "wired modem") or (e.right == "wired modem")
 end
 
+-- A modem sitting in a slot is not a modem on a side, and only a side answers
+-- gps.locate. If one is aboard and neither side holds it, put it on.
+--
+-- equip SWAPS: it exchanges the SELECTED slot with that side's upgrade. Equip
+-- off the wrong slot and the pickaxe lands in the inventory and the turtle
+-- cannot dig -- so the selection is verified by reading the slot back before
+-- anything is equipped, never inferred from turtle.select's return.
+--
+-- Which side to use is the other half. getEquippedLeft/Right name what is
+-- there, so the empty side is known outright. Without them a pickaxe and an
+-- empty side both read as nil, and the only way to find out is the boot
+-- script's move: equip, look at what came off in the hand, and undo it if that
+-- was the pickaxe.
+local function ensureModem()
+  if hasModem() then return true end
+  local slot = slotLike("wireless_modem") or slotLike("ender_modem")
+  if not slot then return false, "no wireless modem is equipped and none is aboard" end
+
+  turtle.select(slot)
+  local okd, d = pcall(turtle.getItemDetail)
+  if not okd or not d or not isModemName(d.name) then
+    return false, ("slot %d does not hold a modem after selecting it (%s), so "):format(
+      slot, tostring(okd and d and d.name or "empty"))
+      .. "equipping would swap out the pickaxe instead"
+  end
+
+  local e = equippedSides()
+  local _, named = equippedItem("left")
+  if named then
+    -- the sides are known by name: use the empty one, or the one that is not
+    -- the pickaxe, and never touch a side holding a tool when the other is free
+    local side = (e.left == nil and "left") or (e.right == nil and "right")
+      or (not tostring(e.left):find("pickaxe") and "left")
+      or (not tostring(e.right):find("pickaxe") and "right")
+    if not side then return false, "both sides hold a pickaxe, so there is nowhere to put a modem" end
+    local ok = select(2, pcall(side == "left" and turtle.equipLeft or turtle.equipRight))
+    if ok == false then return false, "the modem would not equip on " .. side end
+    if hasModem() then
+      sayf("equipped: a modem was in a slot and not on a side -- fitted it on %s", side)
+      return true, side
+    end
+    return false, "the modem went on " .. side .. " but no wireless modem reads back"
+  end
+
+  -- No getEquipped*: equip blind and undo it if the pickaxe fell out.
+  local okR = select(2, pcall(turtle.equipRight))
+  local came = select(2, pcall(turtle.getItemDetail))
+  if type(came) == "table" and tostring(came.name):find("pickaxe") then
+    pcall(turtle.equipRight)          -- pickaxe back on the right, modem in hand
+    pcall(turtle.equipLeft)           -- modem goes left instead
+  end
+  if hasModem() then
+    local e = equippedSides()
+    sayf("equipped: a modem was in a slot and not on a side -- fitted it on %s",
+      e.left == "wireless modem" and "left" or "right")
+    return true
+  end
+  return false, "the modem would not equip on either side (equipRight " .. tostring(okR) .. ")"
+end
+
 -- gps.locate's own default is 2s, which is one round trip to four hosts and no
 -- slack. A rebuilt constellation at the edge of modem range answers late rather
 -- than not at all, and this is called about four times in a whole run, so the
@@ -486,8 +597,14 @@ local GPS_TIMEOUT = 10
 -- and moved it. It is skipped only where it cannot work at all -- no wireless
 -- modem equipped means no fix is possible -- so a turtle running on a pin with
 -- no modem pays nothing for being asked first.
+--
+-- "No modem equipped" is not the same as "no modem", and it used to be treated
+-- as one: a turtle carrying a wireless modem in a slot has everything it needs
+-- for GPS and was falling through to dead reckoning anyway. ensureModem puts it
+-- on a side first, so the question this asks is whether a fix is POSSIBLE, not
+-- whether somebody remembered to equip it.
 local function locate(conf)
-  if gps and hasModem() then
+  if gps and (hasModem() or ensureModem()) then
     local ok, x, y, z = pcall(gps.locate, GPS_TIMEOUT)
     if ok and x then return math.floor(x), math.floor(y), math.floor(z), "gps" end
   end
@@ -844,9 +961,17 @@ local function check(conf, l, source, index)
   sayf("config : %s (%s)", CONF, source)
   if st.halt then sayf("last   : the last run stopped -- %s", st.halt) end
 
+  -- A modem in a slot is not a modem on a side, so fit it before reporting on
+  -- it -- the whole point of --check is to leave the turtle ready to run.
+  -- A modem in a slot is not a modem on a side, so fit it before reporting on
+  -- it -- the whole point of --check is to leave the turtle ready to run. It
+  -- says so itself when it fits one; what is left to report here is the case
+  -- where a modem is aboard and could NOT be fitted.
+  local fitted, whyFit = ensureModem()
   local e = equippedSides()
   sayf("equipped: left=%s  right=%s", tostring(e.left or "tool or empty"),
     tostring(e.right or "tool or empty"))
+  if not fitted and whyFit then sayf("equipped: %s", tostring(whyFit)) end
 
   if not x then
     say("position: NO FIX -- gps.locate returned nothing and quarry.conf sets no startX/Y/Z")
@@ -2929,19 +3054,54 @@ if not slotLike("coal") then
 end
 
 -- Equip the modem on whichever side is not holding the pickaxe. Guessing wrong
--- disarms the turtle: equip swaps, so the pickaxe would land in the inventory
--- and this turtle could not dig. Do it, look at what came off, and undo it if
--- that was the pickaxe.
+-- disarms the turtle: equip swaps the SELECTED slot with that side's upgrade,
+-- so equipping off the wrong slot puts the pickaxe in the inventory and this
+-- turtle cannot dig. Two guards. Re-find the slot rather than trusting the one
+-- the wait loop saw, because the deployer was still dropping items in after
+-- that; and read the slot back after selecting it, so nothing is equipped until
+-- the modem is confirmed to be under the hand.
 if modemSlot then
+  modemSlot = slotLike("wireless_modem") or slotLike("ender_modem") or modemSlot
   turtle.select(modemSlot)
-  local okR = turtle.equipRight()
-  local came = turtle.getItemDetail()
-  if came and came.name:find("pickaxe") then
-    turtle.equipRight()             -- pickaxe back on the right, modem back in hand
-    local okL = turtle.equipLeft()  -- modem goes left instead
-    note("equipRight " .. tostring(okR) .. ", pickaxe came off, equipLeft " .. tostring(okL))
+  local held = turtle.getItemDetail()
+  if not held or not held.name:find("modem") then
+    note("slot " .. tostring(modemSlot) .. " holds " ..
+      tostring(held and held.name or "nothing") .. ", not a modem -- not equipping,")
+    note("because that would swap my pickaxe out instead")
+    modemSlot = nil
+  end
+end
+if modemSlot then
+  -- getEquippedLeft/Right name the upgrade, so the free side is known outright.
+  -- Without them a pickaxe and an empty side both read as nil under
+  -- peripheral.getType, and the only way to find out is to equip and look at
+  -- what came off in the hand.
+  local function equippedName(side)
+    local fn = turtle[side == "left" and "getEquippedLeft" or "getEquippedRight"]
+    if not fn then return nil, false end
+    local ok, d = pcall(fn)
+    if not ok then return nil, false end
+    if type(d) == "table" then return d.name, true end
+    return (type(d) == "string" and d or nil), true
+  end
+  local leftName, named = equippedName("left")
+  if named then
+    local rightName = equippedName("right")
+    local side = (leftName == nil and "left") or (rightName == nil and "right")
+      or (not tostring(leftName):find("pickaxe") and "left") or "right"
+    local ok = side == "left" and turtle.equipLeft() or turtle.equipRight()
+    note("left=" .. tostring(leftName or "empty") .. " right=" .. tostring(rightName or "empty")
+      .. ", equip" .. side .. " " .. tostring(ok))
   else
-    note("equipRight " .. tostring(okR) .. ", nothing came off")
+    local okR = turtle.equipRight()
+    local came = turtle.getItemDetail()
+    if came and came.name:find("pickaxe") then
+      turtle.equipRight()             -- pickaxe back on the right, modem back in hand
+      local okL = turtle.equipLeft()  -- modem goes left instead
+      note("equipRight " .. tostring(okR) .. ", pickaxe came off, equipLeft " .. tostring(okL))
+    else
+      note("equipRight " .. tostring(okR) .. ", nothing came off")
+    end
   end
 
   -- Do not trust the swap. Ask the peripheral API which side actually holds a
@@ -2999,13 +3159,6 @@ end
 note("fuel " .. tostring(turtle.getFuelLevel()) .. ", starting quarry " .. N)
 shell.run("quarry", tostring(N))
 ]==]
-
-local function slotLike(pat)
-  for s = 1, 16 do
-    local ok, d = pcall(turtle.getItemDetail, s)
-    if ok and d and d.name:find(pat) then return s, d.name, d.count end
-  end
-end
 
 -- What block is in front, by peripheral type. A block that has just appeared
 -- reads as nothing (CC:Tweaked #660 -- discovery goes stale); a turn refreshes

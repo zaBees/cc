@@ -175,6 +175,30 @@ confirmed to fail against its own unfixed code:
     confirmed to fail against the unfixed code; tests 53 and 54 now turn GPS
     off explicitly, because that is the only way the pin is reached.
 
+21. **The equipped upgrades are read by name, and a modem in a slot is fitted
+    to a side.** On the user's instruction 2026-08-29. Three parts:
+    - **`turtle.getEquippedLeft/Right` name the upgrade**, which
+      `peripheral.getType` cannot: a pickaxe is not a peripheral, so under
+      `getType` an armed side and an EMPTY side both read as nil. That is why
+      the boot script had to equip blind and undo it when the pickaxe fell out.
+      **The method is not in `references/peripherals.md` -- that dump was taken
+      from a COMPUTER, which has no turtle API at all** -- so it is called
+      through `pcall` and the `getType` route stays as the fallback, which is
+      also what an older CC:Tweaked gets. Both return shapes are read, a table
+      with `.name` and a bare string.
+    - **`ensureModem()` equips a modem that is aboard but not on a side.** A
+      modem in a slot is not a modem on a side and only a side answers
+      `gps.locate`, so a turtle carrying one was falling through to dead
+      reckoning with everything it needed for a real fix. `locate()` now asks
+      `hasModem() or ensureModem()`, so the question is whether a fix is
+      POSSIBLE, not whether somebody remembered to equip it.
+    - **The selected slot is read back before anything is equipped.** `equip`
+      SWAPS the selected slot with that side's upgrade, so equipping off the
+      wrong slot puts the pickaxe in the inventory and the turtle cannot dig.
+      The boot script also re-finds the slot rather than trusting the one its
+      wait loop saw, because the deployer is still dropping items in after that.
+    Test 95, confirmed to fail against the unfixed code.
+
 ## Next action
 
 The code is ready. The run to ask for: **`update`, then `quarry 1`** from the
@@ -271,7 +295,7 @@ lock to one item type, so a mixed dump fails on the second stack.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, and GPS asked before the config pin. 154,560 bytes, fletcher32 `1365001046`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, and a modem in a slot fitted to a side. 162,576 bytes, fletcher32 `373307761`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. |
 | `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |
@@ -323,7 +347,7 @@ and the in-game computer running `cloud <token>`.
 | --- | --- |
 | `MASTERMINE-PLAN.md` | The design, every decision and its reasoning. Read second. Trimmed 2026-08-28: §11 is now a status table, and the rules it used to carry are in this file's Settled and Corrections lists. |
 | `quarry.lua` | **The deliverable.** ~2,430 lines, Phases 1–5. Opens `local DRY = true`; the config lowers it. |
-| `test_quarry.lua` | Five suites against stubbed CC worlds, 94 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot; 75–91 the deploy build of that night; 92 the double-fed turtle; 93 the deploy that restarted at turtle 2; 94 the position-fix order. `lua5.3 test_quarry.lua` |
+| `test_quarry.lua` | Five suites against stubbed CC worlds, 95 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot; 75–91 the deploy build of that night; 92 the double-fed turtle; 93 the deploy that restarted at turtle 2; 94 the position-fix order; 95 the equipped-upgrade check and the modem fit. `lua5.3 test_quarry.lua` |
 | `alert.lua` | For a computer: prints what the turtles broadcast on the `quarry` protocol. |
 | `update.lua` | The in-game updater: `update` replaces `quarry` and itself from GitHub. Downloaded once by hand. |
 | `test_update.lua` | Stubbed `http`/`fs` around the updater: the failed download, the HTML 404, the cache-buster, the checksum. `lua5.3 test_update.lua` |
@@ -446,6 +470,15 @@ Plan section numbers in brackets.
   the default lists outright** — a file with no `[blacklist]` section has no
   blacklist. That is deliberate; tests must spell out the lists they need.
 - **Save state every block** [10]. Measured at 1.35 ms against a 400 ms move.
+- **A modem in a slot is fitted to a side, not reported as missing.**
+  `ensureModem()` does it, `locate()` calls it, and `--check` leaves the turtle
+  with the modem on. Read the SELECTED slot back before equipping: `equip`
+  swaps, so the wrong slot costs the pickaxe.
+- **Ask `getEquippedLeft`/`getEquippedRight` for what is on a side, through
+  `pcall`, with `peripheral.getType` as the fallback.** `getType` cannot tell a
+  tool from an empty side -- a pickaxe is not a peripheral, so both read nil.
+  The method is NOT in the peripherals dump: that dump was taken from a
+  computer, which has no turtle API, so its absence there is not evidence.
 - **"A modem is equipped" was never the right question.** `getType` says
   `"modem"` for a wired one too, and `gps.locate` only ever answers through a
   modem whose `isWireless()` is true. Ask `isWireless`, not `getType`, anywhere

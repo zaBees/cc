@@ -22,7 +22,18 @@ local function reset(o)
     conf = o.conf,
     equip = o.equip or { right = "modem" },
     wired = o.wired or {},                -- side -> true: a modem that is not wireless
+    equipItem = o.equipItem or {},        -- side -> item id actually on that side
+    getEquipped = o.getEquipped,          -- true: the build has getEquippedLeft/Right
   }
+  -- W.equip is the PERIPHERAL view of a side and a pickaxe is not a peripheral,
+  -- so it cannot tell a tool from an empty side. W.equipItem is what is really
+  -- there, which is what getEquippedLeft/Right report.
+  for side, t in pairs(W.equip) do
+    if t == "modem" and not W.equipItem[side] then
+      W.equipItem[side] = W.wired[side] and "computercraft:wired_modem"
+        or "computercraft:wireless_modem_advanced"
+    end
+  end
   if W.conf then W.files["quarry.conf"] = W.conf end
   if o.state then W.files["quarry.state"] = o.state end
 end
@@ -111,6 +122,18 @@ local function mkenv()
     end,
   }
 
+  -- equip SWAPS the selected slot with that side's upgrade, which is the whole
+  -- hazard: off the wrong slot it takes the pickaxe instead of fitting a modem.
+  local function equipSwap(side)
+    local held = W.inv[W.sel]
+    local was  = W.equipItem[side]
+    W.equipItem[side] = held and held.name or nil
+    W.inv[W.sel] = was and { name = was, count = 1 } or nil
+    W.equip[side] = W.equipItem[side] and W.equipItem[side]:find("modem") and "modem" or nil
+    W.wired[side] = W.equipItem[side] and W.equipItem[side]:find("wired") and true or nil
+    return true
+  end
+
   env.http = { post = function(_, body)
     W.posted = body
     return { readAll = function() return "https://paste.rs/TEST1" end, close = function() end }
@@ -127,10 +150,18 @@ local function mkenv()
     getFuelLimit   = W.fuelLimit and function() return W.fuelLimit end or nil,
     select         = function(s) W.sel = s end,
     getItemDetail  = function(s)
-      local d = W.inv[s]
+      local d = W.inv[s or W.sel]
       if d and not d.count then d.count = 1 end
       return d
     end,
+    equipLeft      = function() return equipSwap("left") end,
+    equipRight     = function() return equipSwap("right") end,
+    getEquippedLeft  = W.getEquipped
+      and function() local n = W.equipItem.left  return n and { name = n, count = 1 } or nil end
+      or nil,
+    getEquippedRight = W.getEquipped
+      and function() local n = W.equipItem.right return n and { name = n, count = 1 } or nil end
+      or nil,
     getItemCount   = function(s) return W.inv[s] and 1 or 0 end,
     inspect        = function() return inspect("front") end,
     inspectDown    = function() return inspect("down") end,
@@ -2843,5 +2874,67 @@ V.noGps = true
 ok, err, log = runWorld("1", "deploy")
 assert(log:find("no coordinates given"),
   "it asked before it had run out of everything else:\n" .. log)
+
+-- 95. a modem in a slot is fitted to a side, and never off the wrong slot -----
+-- On the user's instruction 2026-08-29. A modem in the inventory is not a modem
+-- on a side, and only a side answers gps.locate -- so a turtle carrying one was
+-- falling through to dead reckoning with everything it needed for a real fix.
+-- equip SWAPS the selected slot with that side's upgrade, so the danger in
+-- fixing it is equipping off the wrong slot and taking the pickaxe instead.
+
+local MODEM = "computercraft:wireless_modem_advanced"
+
+-- getEquippedLeft/Right available: the empty side is known, so it goes there
+reset({ equip = {}, getEquipped = true, equipItem = { right = "minecraft:diamond_pickaxe" },
+        inv = { [3] = { name = MODEM, count = 1 } } })
+ok, err, log = run("1", "--check")
+assert(ok, "--check crashed fitting a modem: " .. tostring(err))
+assert(log:find("fitted it on left"),
+  "it did not fit the modem on the free side:\n" .. log)
+assert(W.equipItem.right == "minecraft:diamond_pickaxe",
+  "it equipped over the pickaxe and disarmed the turtle: " .. tostring(W.equipItem.right))
+assert(W.equipItem.left == MODEM, "the modem is not on the left: " .. tostring(W.equipItem.left))
+assert(log:find("position: .* %(gps%)"),
+  "GPS still did not run after the modem went on:\n" .. log)
+
+-- no getEquippedLeft/Right: equip blind, see the pickaxe come off, put it back
+reset({ equip = {}, equipItem = { right = "minecraft:diamond_pickaxe" },
+        inv = { [3] = { name = MODEM, count = 1 } } })
+ok, err, log = run("1", "--check")
+assert(ok, "--check crashed on the fallback equip: " .. tostring(err))
+assert(W.equipItem.right == "minecraft:diamond_pickaxe",
+  "the fallback left the pickaxe off: " .. tostring(W.equipItem.right))
+assert(W.equipItem.left == MODEM,
+  "the fallback did not end with the modem on the left: " .. tostring(W.equipItem.left))
+
+-- and the selected slot is read back before anything is equipped: a slot that
+-- does not hold a modem is not equipped off, whatever the search said
+reset({ equip = {}, getEquipped = true, inv = {} })
+ok, err, log = run("1", "--check")
+assert(ok, "--check crashed with no modem at all: " .. tostring(err))
+assert(W.equipItem.left == nil and W.equipItem.right == nil,
+  "it equipped something with no modem aboard")
+assert(log:find("no wireless modem is equipped"),
+  "it did not say the modem is missing:\n" .. log)
+
+-- a modem already on a side is left alone
+reset({ equip = { right = "modem" }, getEquipped = true,
+        inv = { [3] = { name = MODEM, count = 1 } } })
+ok, err, log = run("1", "--check")
+assert(not log:find("fitted it on"), "it re-equipped a modem already on a side:\n" .. log)
+assert(W.inv[3] and W.inv[3].name == MODEM, "it consumed the spare modem in the hold")
+
+-- the deployed turtle equips its own modem, and it is the one place a wrong
+-- slot costs the pickaxe. Its dance has the same two guards, and the boot
+-- script is a string, so this is the only way to see them.
+world({ inv = kit(), leaveAfter = 3 })
+ok, err, log = runWorld("1", "deploy")
+local bootTxt = V.files["/disk/startup.lua"]
+assert(bootTxt, "no boot script to check")
+assert(load(bootTxt, "boot"), "the boot script is not valid Lua")
+assert(bootTxt:find("not a modem %-%- not equipping"),
+  "the boot script equips without reading the slot back")
+assert(bootTxt:find("getEquippedLeft"),
+  "the boot script never asks which side is free")
 
 print("all quarry phase 5 checks passed")

@@ -432,12 +432,18 @@ nothing.
     drain at dock time: an event that arrives while `turtle.forward()` waits
     for its `turtle_response` is pulled and DISCARDED by the turtle API, so by
     dock time there is nothing left in the queue. Test 122.
-51. **Foraging goes to the nearest level coal generates on that still has a row
-    this turtle owns** -- not always `topY`. Coal does not generate below y=0
-    in 1.21, so anything from 0 up is coal country; from a depot at y=-59 that
-    makes y=0 the answer, which is 118 blocks of climb cheaper than y=60 for
-    the same coal. A claim whose top is already under y=0 has only its top
-    level to offer, which is the old behaviour. Test 21.
+51. **Foraging starts at `topY` and works DOWN.** Coal gets commoner the higher
+    you go [user, 2026-08-29], so the top of the claim is the level worth the
+    climb; what changed is where the turtle goes when that level's rows are
+    gone -- the next level down, and the one under that, instead of the same
+    finished level over and over. Nothing below y=0 counts as foraging: coal
+    does not generate there in 1.21, which is why the claim floor is somewhere
+    a turtle cannot mine its way out of. A claim whose top is already under y=0
+    has only its top level to offer. Tests 21 and 120.
+
+    *(Shipped for an hour as "the nearest level from y=0 up", on the reasoning
+    that y=0 is 118 blocks of climb cheaper. The user corrected the density
+    assumption; the climb is paid once and the descent afterwards is free.)*
 52. **The gate is `conf.fuelKeep`, not twice one climb.** Twice a climb is about
     790; a turtle that came back from a climb with less than that, or whose box
     ran dry on a healthy tank, spent the rest of the shift mining its reserve
@@ -448,16 +454,26 @@ nothing.
     bounce. Only when coal country has no work left in it does the schedule get
     the turtle back. Test 120.
 
+55. **A level change happens in this turtle's own TRUNK COLUMN.** `goTo` moves
+    y first, so a level change made anywhere else sinks a fresh shaft through
+    solid rock: coming down from a forage level the turtle cut 53 blocks of new
+    tunnel at the claim rim with its trunk standing open [user, 2026-08-29].
+    The trunk is air from `topY` to the floor from the first descent, and
+    walking to it costs at most the width of a third, every block of it already
+    cut. This replaces `goTo(c.spine, st.y, st.z)` -- the spine column at
+    whatever z the turtle stopped on, which is only air where it has been
+    walked, and at a forage level 119 blocks up it has not. Test 123.
+
 ## Next action
 
 **Ask for `update`, then `quarry 1`** from the launch block. Changes 50–53 are
 in; the three suites pass.
 
-**What to read in the log**: `forage : depot is dry -- climbing to y=0` rather
-than `y=60`, and at a much healthier tank than before; `forage : tank is N --
-back to the schedule` after it; and `lavamap: turtle N found a source at ...`
-on a turtle that did not find it itself, which is the first time the three of
-them have shared anything.
+**What to read in the log**: `climbing to y=60` at a much healthier tank than
+before, then `forage : y=60 is worked out, still N short -- on to y=59` if one
+level is not enough; `forage : tank is N -- back to the schedule` when the tank
+is full; and `lavamap: turtle N found a source at ...` on a turtle that did not
+find it itself, which is the first time the three of them have shared anything.
 
 The code is ready. The run to ask for: **`update`, then `quarry 1`** from the
 launch block, carrying a barrel, turtles 2 and 3, the drive and the floppy.
@@ -554,7 +570,7 @@ lock to one item type, so a mixed dump fails on the second stack.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, the floppy found through getMountPath, a stopped turtle that parks off the shared spine, one depot per turtle so they stop funnelling into one block, and the fuel build: coal burnt on pickup to `fuelKeep`, no ration at a turtle's own box, `sharePerDock` at a shared one, and a climb into coal country launched while it can still be paid for, with the depot read through a peripheral wrap rather than sixteen sucks and the lava map shared over rednet. 196,444 bytes, fletcher32 `2290759998`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, the floppy found through getMountPath, a stopped turtle that parks off the shared spine, one depot per turtle so they stop funnelling into one block, and the fuel build: coal burnt on pickup to `fuelKeep`, no ration at a turtle's own box, `sharePerDock` at a shared one, and a climb into coal country launched while it can still be paid for, with the depot read through a peripheral wrap rather than sixteen sucks and the lava map shared over rednet. 197,234 bytes, fletcher32 `1713934345`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. |
 | `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |

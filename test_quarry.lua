@@ -937,8 +937,18 @@ local function mkworldenv()
       local d = VDIRS[V.dir]
       return move(V.pos.x - d[1], V.pos.y, V.pos.z - d[2])
     end,
-    up           = function() return move(V.pos.x, V.pos.y + 1, V.pos.z) end,
-    down         = function() return move(V.pos.x, V.pos.y - 1, V.pos.z) end,
+    -- every column the turtle changes level in, so a test can see a fresh
+    -- shaft sunk somewhere the trunk was already open
+    up           = function()
+      V.vcol = V.vcol or {}
+      V.vcol[k3(V.pos.x, 0, V.pos.z)] = (V.vcol[k3(V.pos.x, 0, V.pos.z)] or 0) + 1
+      return move(V.pos.x, V.pos.y + 1, V.pos.z)
+    end,
+    down         = function()
+      V.vcol = V.vcol or {}
+      V.vcol[k3(V.pos.x, 0, V.pos.z)] = (V.vcol[k3(V.pos.x, 0, V.pos.z)] or 0) + 1
+      return move(V.pos.x, V.pos.y - 1, V.pos.z)
+    end,
     detect       = function() return solid(ahead()) ~= nil end,
     detectUp     = function() return solid(V.pos.x, V.pos.y + 1, V.pos.z) ~= nil end,
     detectDown   = function() return solid(V.pos.x, V.pos.y - 1, V.pos.z) ~= nil end,
@@ -1390,14 +1400,13 @@ world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 700,
 ok, err, log = runWorld("1")
 assert(ok, "forage run crashed: " .. tostring(err))
 assert(log:find("forage : depot is dry"), "a dry depot did not send it foraging:\n" .. log)
--- to coal country, which is anything from y=0 up -- the NEAREST such level
--- with a row left on it, not always topY. From the depot that is y=0, and it
--- is 118 blocks of climb cheaper than y=60 for the same coal.
+-- to the TOP of coal country, because coal gets commoner the higher you go.
+-- topY first; what the level chooser adds is where it goes when topY's rows
+-- are gone, which is the next level down and not topY again.
 local climbY = tonumber(log:match("climbing to y=(%-?%d+) for coal"))
-assert(climbY == 0,
-  "it climbed to y=" .. tostring(climbY) .. ", not to the nearest level coal\n"
-  .. "generates on. From a depot at y=-59 that is y=0, and it is 118 blocks of\n"
-  .. "climb cheaper than y=60 for the same coal:\n" .. log)
+assert(climbY == 60,
+  "it climbed to y=" .. tostring(climbY) .. ", not to the top of the claim\n"
+  .. "where the coal is thickest:\n" .. log)
 assert(log:find("STOPPED: out of coal"),
   "it did not stop once foraging was exhausted:\n" .. log)
 -- and it parked at the top of its own trunk, which is where a player with a
@@ -3573,14 +3582,41 @@ assert(upTank and upTank > 900,
 -- can only be nextBranch reading the levels UNDER a foraging turtle as done
 assert(not log:find("claim  : every branch in this third is mined"),
   "it called a claim with unmined levels under it finished:\n" .. log)
--- and one level is not the end of the forage: it keeps working coal country
--- for the tank, because one level's rows rarely carry fuelKeep's worth of coal
-local levelsUp = 0
-for y in log:gmatch("level  : moving to y=(%-?%d+)") do
-  if tonumber(y) >= 0 then levelsUp = levelsUp + 1 end
+-- and one level is not the end of the forage: a worked-out level steps DOWN to
+-- the next one and carries on mining for the tank, because one level's rows
+-- rarely carry fuelKeep's worth of coal. Down, not back to the same finished
+-- level -- that loop is what made three climbs in rVv2v turn round on arrival.
+local step = tonumber(log:match("y=60 is worked out, still %d+ short %-%- on to y=(%-?%d+)"))
+assert(step == 59,
+  "a worked-out level went to y=" .. tostring(step) .. ", not one level down:\n" .. log)
+
+-- 123. the way back down is the trunk it already cut ------------------------
+
+-- goTo moves y FIRST, so a level change made anywhere but the trunk column
+-- sinks a fresh shaft through solid rock. Coming back down from a forage level
+-- at y=60 the turtle cut 109 blocks of new tunnel one row over from a trunk
+-- that was standing open [user, 2026-08-29]. Every column it changes level in
+-- is recorded here; the only ones that may see a lot of it are the launch
+-- block, where the run starts, and this turtle's own trunk.
+world({ conf = "tripBlocks = 60\n" .. SECTIONS, fuel = 4000,
+        blocks = { [k3(DX, DY, DZ)] = "minecraft:chest" },
+        chests = { [k3(DX, DY, DZ)] = {} } })
+ok, err, log = runWorld("1")
+assert(ok, "trunk-route run crashed: " .. tostring(err))
+assert(log:find("forage : depot is dry %-%- climbing to y="),
+  "it never climbed, so there is no descent to check:\n" .. log)
+local strays = {}
+for col, n in pairs(V.vcol or {}) do
+  local cx, _, cz = col:match("^(%-?%d+),(%-?%d+),(%-?%d+)$")
+  -- the launch block at 137,-42 and the trunk at 136,-57 are the two columns a
+  -- run is allowed to go up and down in; a handful of moves anywhere else is
+  -- goTo stepping over a block, a hundred is a shaft
+  if not ((cx == "137" and cz == "-42") or (cx == "136" and cz == "-57")) and n > 20 then
+    strays[#strays + 1] = col .. " x" .. n
+  end
 end
-assert(levelsUp >= 2,
-  "it worked " .. levelsUp .. " level of coal country and gave up:\n" .. log)
+assert(#strays == 0,
+  "it sank a shaft outside its own trunk: " .. table.concat(strays, ", ") .. "\n" .. log)
 
 -- 122. a lava source is broadcast, because the floppy cannot share it -------
 

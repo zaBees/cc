@@ -2626,15 +2626,17 @@ end
 -- log rVv2v and two in lYwey turned round the moment they arrived, and the
 -- turtle then ground its tank down to 124 with nowhere left to go.
 --
--- Any level from y=0 up is coal country -- coal does not generate below 0 in
--- 1.21, which is why the claim floor is somewhere a turtle cannot mine its
--- way out of. So take the NEAREST such level that still has a row this turtle
--- owns: from the depot at y=-59 that is y=0, which is 118 blocks of climb
--- cheaper than y=60 as well as being somewhere there is work.
+-- Start at the top and work DOWN. Coal gets commoner the higher you go [user,
+-- 2026-08-29], so `topY` is the level worth the climb; what changed is what
+-- happens when its rows are gone -- the next level DOWN, and the one under
+-- that, rather than the same finished level over and over. The climb is paid
+-- once and the descent afterwards is free, because the turtle comes down
+-- through its own trunk.
 --
--- A claim whose top is already below y=0 has no coal country in it at all;
--- there, the top level is the best that can be offered and the old behaviour
--- is what is left.
+-- Nothing below y=0 counts as foraging: coal does not generate there in 1.21,
+-- which is why the claim floor is somewhere a turtle cannot mine its way out
+-- of. A claim whose top is already under y=0 has no coal country in it at all,
+-- and there the top level is the best that can be offered.
 local function forageLevel(conf, c)
   local lo, hi = thirdOf(c, st.index or 1, conf.turtles or 1)
   st.done = st.done or {}
@@ -2645,9 +2647,7 @@ local function forageLevel(conf, c)
       for z = lo, hi do
         if isBranch(c, y, z) and not st.done[doneKey(y, z)] then free = true break end
       end
-      if free and (not best or math.abs(y - st.y) < math.abs(best - st.y)) then
-        best = y
-      end
+      if free and (not best or y > best) then best = y end
     end
   end
   return best
@@ -3307,17 +3307,29 @@ local function runMine(conf, l, index)
       sayf("branch : y=%d z=%d, %s leg %s", st.level, st.branch, job.leg,
         job.inward and "back to the spine" or ("%d out"):format(len))
     end
-    -- Change level in the spine column, never out on a leg. goTo moves y first,
-    -- so a turtle that finished a level at the rim would climb there and then
-    -- bulldoze west along a z the new level has no row on -- the same mistake
-    -- the walk home used to make, and now possible because a leg ends at the
-    -- rim rather than back at the mouth.
-    if st.y ~= st.level and not goTo(c.spine, st.y, st.z) then
-      -- carrying on to the dock means the run has not stopped, so the reason
-      -- goTo left behind is not this run's reason to stop [goTo now names a
-      -- jam so a run that gives up on one does not print "work complete"]
-      if st.needDock then halt = nil goto nextpass end
-      break
+    -- Change level in this turtle's OWN TRUNK COLUMN, which is air already:
+    -- the first descent cut it from topY to the floor and nothing fills it in.
+    -- goTo moves y first, so a level change made anywhere else sinks a fresh
+    -- shaft through solid rock -- coming back down from a forage level at
+    -- z=724 cut 109 blocks of new tunnel one row over from a trunk that was
+    -- standing open [user, 2026-08-29]. Walking to the trunk first costs at
+    -- most the width of a third and every block of it is already cut.
+    --
+    -- It used to be `goTo(c.spine, st.y, st.z)`, the spine column at whatever
+    -- z the turtle stopped on. That fixed the older bug -- a turtle that
+    -- finished a level at the rim would climb there and bulldoze west along a
+    -- z the new level has no row on -- but the spine is only air where it has
+    -- been walked, and at a forage level 119 blocks up it has not.
+    if st.y ~= st.level then
+      local ok1 = goTo(c.spine, st.y, trunkZ)
+      if ok1 then ok1 = goTo(c.spine, st.level, trunkZ) end
+      if not ok1 then
+        -- carrying on to the dock means the run has not stopped, so the reason
+        -- goTo left behind is not this run's reason to stop [goTo now names a
+        -- jam so a run that gives up on one does not print "work complete"]
+        if st.needDock then halt = nil goto nextpass end
+        break
+      end
     end
     -- The jog between the two rows is this goTo: from the rim of one row to the
     -- rim of the other, 5 blocks of rock instead of a 24-block walk back down a

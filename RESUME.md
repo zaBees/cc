@@ -464,12 +464,92 @@ nothing.
     whatever z the turtle stopped on, which is only air where it has been
     walked, and at a forage level 119 blocks up it has not. Test 123.
 
+## What shipped on 2026-08-29, the harvest build (A, stop, C) and the B finding
+
+`HARVEST-PLAN.md` is the design note, written from the user's three complaints
+and the `jnordberg/minecraft-replicator` reference. Package A (boot) was already
+built by the session before this one but left five red tests; this session
+finished it, added a `quarry stop` command the user asked for, built package C
+(fuel), and investigated package B (routing) to a no-change conclusion. All
+three suites pass. **Unproven in-game: all of it.**
+
+**A — the boot, fully automatic (tests 124–129).** The floppy write order is the
+fix: the three tiny boot files (`startup`, `startup.lua`, `boot.lua`) and the
+`index` file go on BEFORE the 83 kB program, so the program is the only thing
+that can be squeezed off a full floppy — not the boot script, which is what left
+turtle 2 at a bare `CraftOS 1.9 >` prompt with `quarry` on its floppy and no
+`startup`. Every write is read back and compared (`writeVerified`); a write that
+lands nothing is reported by name. `fs.getFreeSpace` is printed and the payload
+is **refused** rather than written truncated if it will not fit beside the boot
+files. The drive mount is retried 20 times (`diskPathRetry`, harvested from
+replicator) probing the drive directly rather than through `diskPath()`, whose
+`fs.exists("/disk")` fallback short-circuited the retry. The floppy carries its
+own `index`, so a bare `disk/quarry` runs as the right turtle; `disk.setLabel`
+names it `quarryN`. The isOn/reboot ladder stays as a cheap backstop, demoted —
+and now waits ~2s for a freshly-on turtle to label itself before rebooting it.
+
+**`quarry stop` — park a turtle for relocation (test 131).** On the user's
+instruction. On first boot a turtle writes its own `/startup` that re-runs
+`quarry N` on every reboot, independent of the floppy — so moving it does not
+stop it, the next reboot resumes from `quarry.state`, and a pinned `startX/Y/Z`
+sends it to the OLD spot. `quarry stop` deletes `/startup` and `quarry.state`
+and comments out `startX/Y/Z/startDir` in `quarry.conf` (kept as `#` comments,
+still readable). Ctrl+T first if it is still running.
+
+**C — the fuel split (tests 132–134).** `kitWants` for `turtles = 1` no longer
+demands a drive or a floppy: a solo mine deploys nobody and shares its map with
+nobody, so the audit stopped refusing a complete solo kit. `handOver` now walks
+EVERY matching slot and counts what actually moved (via `getItemCount`), rather
+than dropping up to N out of the first slot and calling a 30-coal slot a success.
+And the coal aboard at deploy start is split evenly across every turtle the mine
+will run, the deployer included: with C coal and k still to place, each placed
+turtle gets `min(64, floor(C / (k+1)))` and the deployer keeps the rest —
+measured before `topUp` so a full 64×n kit is exactly 64 each. The worked case,
+128 coal / 3 turtles, is now 42 / 42 / 44 (deployer keeps 44) instead of the old
+64 / 64 / nothing that sent turtle 1 down 119 blocks on an empty tank. C3 (solo
+needs no ration) was already correct and is unchanged.
+
+**B — routing: no change needed, and here is why (test 135).** `HARVEST-PLAN.md`
+claimed a dock throws the pair away, so most pairs never get past their second
+leg. **That does not happen in the current code**, proven by test 135: a run with
+`tripBlocks = 8` docks three times per leg and still finishes its pairs through
+the rim jog. A normal dock preserves `st.plan`, `st.step` and `st.leg`, so the
+leg resumes exactly where it stopped; `forage` clears the plan only when it
+actually climbs to another level, which is correct. The one path that discards a
+pair is a mid-leg **jam** (another turtle in the corridor) — and that is
+deliberate and geometrically necessary: a leg that jams before reaching its rim
+never reaches the rim, so the rim-jog to the partner row is impossible, and
+re-picking from the spine is the only recovery. B1/B2/B3 as written are either
+already-handled or unsound; test 135 is the regression guard. Complaint #2's
+"sometimes returns to the spine" is that jam case, and it cannot be given the
+rim jog. **If the marginal jam-case efficiency (pair the leftover row with a
+neighbour after the interrupted leg reaches the rim, B2) is wanted, it is a
+careful change to `pairPlan` — flagged, not done.**
+
+**SETUP.md moved to `attic/SETUP.md`** on the user's instruction. No code reads
+it; only docs referenced it. The setup artifact was generated from it.
+
 ## Next action
 
-**Ask for `update`, then `quarry 1`** from the launch block. Changes 50–53 are
-in; the three suites pass.
+**Ask for `update`, then `quarry 1`** from the launch block. The harvest build
+(A, `quarry stop`, C) is in; B needed no change. The three suites pass.
 
-**What to read in the log**: `climbing to y=60` at a much healthier tank than
+**What to read in the log this time** — the harvest build is unproven in-game:
+
+- **The floppy write-back**: `deploy : wrote the boot script for turtle 2, read
+  back off the floppy: startup.lua N, startup N, boot.lua N, index N`, then
+  `the floppy has N bytes free and the stripped program is N`, then
+  `copied ... to /disk/quarry (N bytes, comments stripped, read back)`. If the
+  floppy is too small, `the program will not fit` and the boot files survive.
+  The point: turtle 2 should NOT end up at a bare `CraftOS >` prompt this time.
+- **The coal split**: `deploy : N coal aboard, K to place -- M coal each, I keep
+  the other R`. With a full kit that is 64 each; with less, the deployer keeps a
+  fair share instead of descending on an empty tank.
+- **`quarry stop`**: run it on a turtle, reboot it, confirm it stays at `>` and
+  does not resume. Move it, `quarry N`, confirm a fresh claim.
+
+**What to read in the log** (unchanged from the fuel build): `climbing to y=60`
+at a much healthier tank than
 before, then `forage : y=60 is worked out, still N short -- on to y=59` if one
 level is not enough; `forage : tank is N -- back to the schedule` when the tank
 is full; and `lavamap: turtle N found a source at ...` on a turtle that did not
@@ -570,7 +650,7 @@ lock to one item type, so a mixed dump fails on the second stack.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, the floppy found through getMountPath, a stopped turtle that parks off the shared spine, one depot per turtle so they stop funnelling into one block, and the fuel build: coal burnt on pickup to `fuelKeep`, no ration at a turtle's own box, `sharePerDock` at a shared one, and a climb into coal country launched while it can still be paid for, with the depot read through a peripheral wrap rather than sixteen sucks and the lava map shared over rednet. 197,234 bytes, fletcher32 `1713934345`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, the floppy found through getMountPath, a stopped turtle that parks off the shared spine, one depot per turtle so they stop funnelling into one block, and the fuel build: coal burnt on pickup to `fuelKeep`, no ration at a turtle's own box, `sharePerDock` at a shared one, and a climb into coal country launched while it can still be paid for, with the depot read through a peripheral wrap rather than sixteen sucks and the lava map shared over rednet. **The harvest build (2026-08-29):** the floppy writes its boot files first and reads every write back, refuses a program that will not fit, retries the mount, and carries its own turtle index; `quarry stop` parks a turtle for relocation; a solo kit needs no drive or floppy; and the coal aboard is split evenly across every turtle, the deployer included. 216,447 bytes, fletcher32 `4120463376`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. |
 | `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |
@@ -622,13 +702,13 @@ and the in-game computer running `cloud <token>`.
 | --- | --- |
 | `MASTERMINE-PLAN.md` | The design, every decision and its reasoning. Read second. Trimmed 2026-08-28: §11 is now a status table, and the rules it used to carry are in this file's Settled and Corrections lists. |
 | `quarry.lua` | **The deliverable.** ~2,430 lines, Phases 1–5. Opens `local DRY = true`; the config lowers it. |
-| `test_quarry.lua` | Five suites against stubbed CC worlds, 109 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot; 75–91 the deploy build of that night; 92 the double-fed turtle; 93 the deploy that restarted at turtle 2; 94 the position-fix order; 95 the equipped-upgrade check and the modem fit; 96-98 the mount point, the auto-reboot and the depot-sweep floor; 99-102 the three-turtle run; 103-109 the depot-funnel deadlock and the boot split. `lua5.3 test_quarry.lua` |
+| `test_quarry.lua` | Five suites against stubbed CC worlds, 135 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot; 75–91 the deploy build of that night; 92 the double-fed turtle; 93 the deploy that restarted at turtle 2; 94 the position-fix order; 95 the equipped-upgrade check and the modem fit; 96-98 the mount point, the auto-reboot and the depot-sweep floor; 99-102 the three-turtle run; 103-109 the depot-funnel deadlock and the boot split; 124-129 the harvest boot build (floppy write order, read-back, space refusal, mount retry, floppy index); 131 `quarry stop`; 132-134 the fuel split (solo kit, multi-slot hand-over, even coal split); 135 the guard that a mid-pair dock keeps the pair. `lua5.3 test_quarry.lua` |
 | `alert.lua` | For a computer: prints what the turtles broadcast on the `quarry` protocol. |
 | `update.lua` | The in-game updater: `update` replaces `quarry` and itself from GitHub. Downloaded once by hand. |
 | `test_update.lua` | Stubbed `http`/`fs` around the updater: the failed download, the HTML 404, the cache-buster, the checksum. `lua5.3 test_update.lua` |
 | `probe.lua` | The Phase 5 probe. `probe` is a dry run, `probe go` is the real one. |
 | `test_probe.lua` | Stubbed world for the probe, live and DRY paths. `lua5.3 test_probe.lua` |
-| `SETUP.md` | What the user does in-game. The setup artifact is generated from it. |
+| `attic/SETUP.md` | What the user does in-game. **Archived 2026-08-29** on the user's instruction — no code reads it; the setup artifact was generated from it. Needs the `quarry stop` command and the harvest-build log lines adding if it is ever revived. |
 | `reports/history-2026-08.md` | **Everything this file used to say.** The phase narratives, the deploy-run post-mortems, the probe findings. |
 | `reports/code-review-quarry.md` | The 2026-08-28 review. All nine findings, all fixed, each with its test. |
 | `reports/check-1-2026-08-24.txt` | The first real `--check` output, verbatim. |

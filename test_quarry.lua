@@ -134,6 +134,10 @@ local function mkenv()
     return true
   end
 
+  -- disk.setLabel names the floppy in the drive. It addresses the DRIVE by
+  -- side, so it only works where the drive is on a side of this turtle.
+  env.disk = { setLabel = function(side, name) V.diskLabel = { side = side, name = name } end }
+
   env.http = { post = function(_, body)
     W.posted = body
     return { readAll = function() return "https://paste.rs/TEST1" end, close = function() end }
@@ -554,14 +558,24 @@ local V   -- the phase 2 world
 -- program is bigger than that, so the disk has to be a real limit here or a
 -- deploy that cannot possibly fit passes the suite [paste WHYa2].
 local FLOPPY = 125000
+-- V.floppy shrinks the disk for the worlds that ask what happens when the
+-- program will not fit beside the boot files. V.dropWrites is the other
+-- failure the read-back exists for: a write that lands NOTHING and says
+-- nothing about it, which is what an fs.open("w") on a full disk looks like
+-- from the caller's side.
+local function diskUsed(skip)
+  local used = 0
+  for name, b in pairs(V.files) do
+    if name:sub(1, 5) == "/disk" and name ~= skip then used = used + #b end
+  end
+  return used
+end
+
 local function writeFile(n, body)
   body = body or ""
+  if V.dropWrites and n:find(V.dropWrites) then body = "" end
   if n:sub(1, 5) == "/disk" then
-    local used = 0
-    for name, b in pairs(V.files) do
-      if name:sub(1, 5) == "/disk" and name ~= n then used = used + #b end
-    end
-    if used + #body > FLOPPY then error("Out of space", 0) end
+    if diskUsed(n) + #body > (V.floppy or FLOPPY) then error("Out of space", 0) end
   end
   V.files[n] = body
 end
@@ -662,6 +676,11 @@ local function mkworldenv()
     delete = function(n) V.files[nn(n)] = nil end,
     move   = function(a, b) a, b = nn(a), nn(b) V.files[b], V.files[a] = V.files[a], nil end,
     copy   = function(a, b) writeFile(nn(b), V.files[nn(a)]) end,
+    getFreeSpace = function(n)
+      n = nn(n)
+      if n:sub(1, 5) ~= "/disk" then return 1000000 end
+      return math.max(0, (V.floppy or FLOPPY) - diskUsed(nil))
+    end,
     open   = function(n, m)
       n = nn(n)
       if m == "w" then
@@ -751,15 +770,46 @@ local function mkworldenv()
     call = function(side, method)
       if side == "front" and method == "turnOn" then
         V.turnedOn = (V.turnedOn or 0) + 1
+        if V.frontOn == false and not V.turnOnFails then V.frontOn = true end
         return true
       end
       if side == "front" and method == "reboot" then
         V.rebooted = (V.rebooted or 0) + 1
         return true
       end
+      if side == "front" and method == "shutdown" then
+        V.shutdowns = (V.shutdowns or 0) + 1
+        if V.frontOn == true then V.frontOn = false end
+        return true
+      end
+      -- A placed turtle answers isOn, and what it answers picks the action:
+      -- turnOn for one that is dark, reboot for one that is running and never
+      -- ran the disk startup. V.frontOn nil is a world where the peripheral
+      -- does not answer at all, which is a THIRD case and the one every test
+      -- written before this defaults to.
+      if side == "front" and method == "isOn" then return V.frontOn end
+      -- and a booted turtle labels itself quarryN in its first seconds, well
+      -- before it walks off. V.frontLabelAt is the poll it appears on.
+      if side == "front" and method == "getLabel" then
+        if V.frontLabelAt and V.sleeps >= V.frontLabelAt then return V.frontLabel end
+        return nil
+      end
       -- the drive answers where it put the floppy; V.mount lets a world put it
-      -- somewhere that is not "/disk", which is what a second drive does
-      if method == "getMountPath" then return V.disk and (V.mount or "/disk") or nil end
+      -- somewhere that is not "/disk", which is what a second drive does.
+      -- V.mountAfter models the drive that does not show up straight away --
+      -- "sometimes the disk drive won't show up" [replicator, CC:Tweaked #660].
+      if method == "getMountPath" then
+        -- An empty drive shows no mount, and that is not the drive "being slow"
+        -- -- so the lag counter only runs once a floppy is actually in, which is
+        -- what "sometimes the disk drive won't show up" describes: the tries
+        -- start at insertion, not at the deployer's earlier diskPath() probes.
+        if not V.disk then return nil end
+        if V.mountAfter then
+          V.mountTries = (V.mountTries or 0) + 1
+          if V.mountTries < V.mountAfter then return nil end
+        end
+        return V.mount or "/disk"
+      end
     end,
     -- A turtle CAN wrap the container it is facing -- confirmed in-game
     -- 2026-08-29 [logs yiALS and PwHyZ], where the depot came back as a
@@ -826,7 +876,12 @@ local function mkworldenv()
       V.handed[#V.handed + 1] = { name = it.name, count = take, into = aheadName }
       -- and a floppy in the drive is what makes /disk appear
       if aheadName:find("disk_drive") and it.name:find("disk")
-         and not it.name:find("disk_drive") then V.disk = true end
+         and not it.name:find("disk_drive") then
+        V.disk = true
+        -- the drive's lag is measured from THIS insertion, so the mountAfter
+        -- counter starts here, not from the deployer's earlier empty-drive probes
+        V.mountTries = 0
+      end
     else
       V.ground = V.ground + take                        -- junk on the tunnel floor
     end
@@ -1636,8 +1691,8 @@ assert(not V.disk, "turtle 2 placed the drive anyway")
 world({ inv = kit(), leaveAfter = nil })   -- nothing ever moves off the spot
 ok, err, log = runWorld("1", "deploy")
 assert(ok, "the stuck-turtle run crashed: " .. tostring(err))
-assert(log:find("has not moved after 90s"), "it never gave up on a stuck turtle:\n" .. log)
-assert(log:find("reboot"), "it did not tell the user how to recover a stuck turtle:\n" .. log)
+assert(log:find("has not moved after 120s"), "it never gave up on a stuck turtle:\n" .. log)
+assert(log:find("disk/quarry 2"), "it did not tell the user how to recover a stuck turtle:\n" .. log)
 assert(log:find("deploy : 0 of 2 deployed"),
   "it counted a stuck turtle as deployed:\n" .. log)
 
@@ -2607,7 +2662,7 @@ world({ inv = kit() })
 ok, err, log = runWorld("1", "deploy")
 assert(ok, "the unattended deploy crashed: " .. tostring(err))
 assert(log:find("nobody answered"), "an unattended prompt must say so:\n" .. log)
-assert(log:find("did not boot into its startup"),
+assert(log:find("did not start in 120s"),
   "unattended, it must still fall through to the old advice:\n" .. log)
 
 -- 76. pinned coordinates need no modem ---------------------------------------
@@ -3721,5 +3776,275 @@ assert(ranArgs[2] == "/disk2",
   "file it writes -- the log, the program, the config -- lands somewhere else")
 assert(ranArgs[3] == nil,
   "a third argument shifts what boot.lua reads as its mount: " .. tostring(ranArgs[3]))
+
+-- 124. reboot is never sent to a turtle that has not been confirmed ON -------
+-- reboot on a computer that is OFF is a no-op: there is nothing running to
+-- reboot. The old code fired one at 6s and again at 16s without ever asking
+-- whether the turtle had come on, so on a turtle whose turnOn did not take,
+-- both reboots did nothing and the player was asked to walk over anyway.
+-- Here the server refuses turnOn -- the turtle stays dark for the whole two
+-- minutes -- and the only thing worth sending is another turnOn.
+
+world({ inv = kit(), answers = { "q" } })          -- nothing ever walks off
+V.frontOn, V.turnOnFails = false, true
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the dark-turtle deploy crashed: " .. tostring(err))
+assert(log:find("turtle 2 isOn=false"), "it never asked whether the turtle was on:\n" .. log)
+assert(log:find("turtle 2 is off, sent turnOn"),
+  "a turtle reading isOn=false was not sent turnOn again:\n" .. log)
+assert((V.rebooted or 0) == 0,
+  "it rebooted a turtle it knew was switched off, which is a no-op: "
+    .. tostring(V.rebooted) .. "\n" .. log)
+assert((V.turnedOn or 0) > 3,
+  "turnOn was sent " .. tostring(V.turnedOn) .. " times to a turtle that stayed dark")
+
+-- 125. a turtle that IS on gets reboot, then a colder start -----------------
+-- isOn=true with no label and no floppy log is the other failure entirely:
+-- the turtle is running and the disk startup did not. turnOn does nothing for
+-- it. Two reboots, and then a shutdown and a fresh turnOn, which is colder
+-- than a reboot because it re-mounts the drive on the way up.
+
+world({ inv = kit(), answers = { "q" } })
+V.frontOn = true
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the on-but-silent deploy crashed: " .. tostring(err))
+assert(log:find("turtle 2 isOn=true"), "it never reported what isOn said:\n" .. log)
+assert(log:find("is on and has run no startup"),
+  "it did not name the failure it had just measured:\n" .. log)
+assert((V.rebooted or 0) >= 2, "it did not reboot twice: " .. tostring(V.rebooted))
+assert((V.shutdowns or 0) >= 1,
+  "two reboots changed nothing and it never tried a cold start:\n" .. log)
+local shutAt = log:find("two reboots did nothing")
+local rebAt  = log:find("sent reboot to turtle 2")
+assert(rebAt and shutAt and rebAt < shutAt,
+  "it shut the turtle down before it had tried a reboot:\n" .. log)
+
+-- 126. the turtle's own label is a liveness signal, and a fast one ----------
+-- boot.lua calls os.setComputerLabel("quarry" .. N) in its first seconds, well
+-- before the turtle walks off, and turtle 1 can read that off the peripheral.
+-- It matters because the floppy log usually CANNOT be read from here: the
+-- drive sits above the placed turtle, diagonal from the deployer, on no side
+-- of it. A turtle that has labelled itself is booting, so nothing should be
+-- rebooted and nobody should be asked to walk over.
+
+world({ inv = kit() })                             -- it never actually leaves
+V.frontOn, V.frontLabel, V.frontLabelAt = true, "quarry2", 2
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the labelled-turtle deploy crashed: " .. tostring(err))
+assert(log:find("label=quarry2"), "it never read the label off the peripheral:\n" .. log)
+assert((V.rebooted or 0) == 0,
+  "it rebooted a turtle that had already labelled itself: " .. tostring(V.rebooted))
+assert(not log:find("RIGHT%-CLICK IT"),
+  "it asked for a right-click on a turtle it could see was running:\n" .. log)
+
+-- 127. the drive is asked twenty times, not once ----------------------------
+-- Harvested from replicator, which loops on disk.getMountPath up to 20 times
+-- because "sometimes the disk drive won't show up" -- the same stale
+-- peripheral as CC:Tweaked #660. runDeploy asked once and errored out on nil,
+-- which turned half a second of the mod's own bookkeeping into a failed
+-- deployment.
+
+world({ inv = kit(), leaveAfter = 3 })
+V.mountAfter = 6                       -- the drive says nothing for five tries
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the slow-drive deploy crashed: " .. tostring(err))
+assert(log:find("the drive answered on try"),
+  "it did not retry the mount at all:\n" .. log)
+assert(not log:find("the drive mounted nothing"),
+  "it gave up on a drive that was only slow:\n" .. log)
+assert(V.files["/disk/quarry"], "nothing reached a floppy that mounted late")
+assert(log:find("deploy : 2 of 2 deployed"),
+  "a slow drive cost it the whole deployment:\n" .. log)
+
+-- 128. the floppy carries the turtle number ---------------------------------
+-- `cd disk` then `quarry` is what the user types on a turtle that did not boot
+-- itself, and main reads `index = index or 1` -- so that run is TURTLE 1's
+-- program on turtle 2's hardware: turtle 1's third, turtle 1's trunk, and a
+-- deploy that places yet another turtle.
+
+world({ inv = kit(), leaveAfter = 3 })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the deploy crashed: " .. tostring(err))
+assert(V.files["/disk/index"] == "3",
+  "the floppy does not say which turtle it was written for: "
+    .. tostring(V.files["/disk/index"]))
+
+-- and the floppy route reads it rather than defaulting to 1
+world({ inv = kit(), running = "/disk/quarry" })
+V.disk = true
+V.files["/disk/quarry"] = "-- the program, on the floppy"
+V.files["/disk/index"] = "2"
+ok, err, log = runWorld()                       -- no number typed, which is the case
+assert(ok, "the floppy run crashed: " .. tostring(err))
+assert(log:find("written for turtle 2"), "it did not read the number off the floppy:\n" .. log)
+assert(V.ran and V.ran[2] == "2",
+  "it handed the run to quarry " .. tostring(V.ran and V.ran[2]) .. ", not quarry 2")
+
+-- a number that WAS typed still wins, because somebody typing one means it
+world({ inv = kit(), running = "/disk/quarry" })
+V.disk = true
+V.files["/disk/quarry"] = "-- the program, on the floppy"
+V.files["/disk/index"] = "2"
+ok, err, log = runWorld("3")
+assert(ok, "the typed-index floppy run crashed: " .. tostring(err))
+assert(V.ran and V.ran[2] == "3" and V.ran[3] == nil,
+  "a typed index was overridden by the floppy: " .. tostring(V.ran and V.ran[2]))
+
+-- 129. the boot files go on the floppy BEFORE the program -------------------
+-- In-game 2026-08-29 turtle 2 sat at a bare `CraftOS 1.9 >` prompt: its floppy
+-- had `quarry` on it and no `startup` beside it, so nothing auto-ran and
+-- `disk/startup` was not even a file to type. The program is 106 kB and the
+-- boot files are three, and written last the boot files are what a floppy with
+-- no room left drops. This world's floppy is too small for both; the boot
+-- files must survive and the program must be the thing refused.
+
+world({ inv = kit(), leaveAfter = 3 })
+V.floppy = 40000                        -- far too small for the program
+-- the default stub program is a one-line comment that strips to nothing, so
+-- give this world a real-sized payload: ~48 kB of non-comment code, more than
+-- the floppy holds once the ~11 kB of boot files are on it. This is the
+-- 106 kB-program-vs-small-floppy case that stranded turtle 2.
+V.files["quarry"] = ("local x = 1\n"):rep(4400)
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the small-floppy deploy crashed outright: " .. tostring(err))
+assert(V.files["/disk/startup"] and #V.files["/disk/startup"] > 0,
+  "the boot script was squeezed off the floppy by the program")
+assert(V.files["/disk/startup.lua"] and #V.files["/disk/startup.lua"] > 0,
+  "the other startup name was squeezed off the floppy")
+assert(V.files["/disk/boot.lua"] and #V.files["/disk/boot.lua"] > 0,
+  "boot.lua was squeezed off the floppy")
+assert(load(V.files["/disk/boot.lua"], "boot"), "boot.lua landed truncated")
+assert(log:find("the program will not fit"),
+  "it did not say the program is what did not fit:\n" .. log)
+assert(not V.files["/disk/quarry"],
+  "it wrote a truncated program, which is a syntax error the turtle finds later")
+
+-- and the free-space line is printed either way, so one run says how close it is
+world({ inv = kit(), leaveAfter = 3 })
+ok, err, log = runWorld("1", "deploy")
+assert(log:find("the floppy has %d+ bytes free and the stripped program is %d+"),
+  "the deploy never says how much room is left on the floppy:\n" .. log)
+
+-- 130. a write is not a write until it reads back ---------------------------
+-- fs.open(name, "w") succeeds on a floppy with no room left, and the content
+-- goes nowhere. Counting handles opened is not counting files written, which
+-- is how a deploy printed "wrote the boot script for turtle 2" onto a floppy
+-- that did not have one. Here every write to boot.lua lands nothing.
+
+world({ inv = kit(), leaveAfter = 3 })
+V.dropWrites = "boot%.lua"
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the dropped-write deploy crashed: " .. tostring(err))
+assert(log:find("THE BOOT FILES DID NOT LAND"),
+  "a write that landed nothing was reported as a success:\n" .. log)
+assert(log:find("boot%.lua"), "it did not name the file that is missing:\n" .. log)
+assert(not log:find("deploy : 2 of 2 deployed"),
+  "it deployed turtles onto a floppy with no boot.lua on it:\n" .. log)
+
+-- 131. `quarry stop` parks the turtle for relocation ------------------------
+-- On first boot the turtle writes its own /startup that re-runs quarry N on
+-- every reboot, so moving it does not stop it -- the next reboot resumes from
+-- quarry.state, and a pinned startX/Y/Z sends it to the OLD spot. `quarry stop`
+-- is the one word that clears all three: the startup, the state, and the pin.
+world({})
+V.files["/startup"] = "shell.run('quarry', '2')"
+V.files["quarry.state"] = "{ index = 2 }"
+V.files["quarry.conf"] = "startX = 5\nstartY = 64\nstartZ = 9\nstartDir = 0\ndry = false\n"
+ok, err, log = runWorld("stop")
+assert(ok, "quarry stop crashed: " .. tostring(err))
+assert(not V.files["/startup"], "it did not delete the self-installed /startup")
+assert(not V.files["quarry.state"], "it did not delete quarry.state")
+-- the pin lines are commented, not deleted: the numbers stay readable
+assert(V.files["quarry.conf"]:find("# startX = 5"),
+  "startX was left pinning the old position:\n" .. V.files["quarry.conf"])
+assert(V.files["quarry.conf"]:find("# startDir = 0"),
+  "startDir was left pinning the old heading:\n" .. V.files["quarry.conf"])
+assert(V.files["quarry.conf"]:find("dry = false"),
+  "it disturbed a config line that was not a coordinate:\n" .. V.files["quarry.conf"])
+assert(log:find("I will not auto%-resume"), "it did not say it had parked:\n" .. log)
+
+-- nothing to clear says so rather than claiming it parked something
+world({})
+ok, err, log = runWorld("stop")
+assert(ok, "quarry stop on a clean turtle crashed: " .. tostring(err))
+assert(log:find("already parked"),
+  "it did not report that there was nothing to clear:\n" .. log)
+
+-- 132. a solo kit needs no drive and no floppy ------------------------------
+-- turtles = 1 deploys nobody and shares its lava map with nobody, so the drive
+-- and the floppy are dead weight -- and kitWants demanded them anyway, so the
+-- audit refused a one-turtle kit that was in fact complete [HARVEST-PLAN C1].
+world({ inv = {
+  [1] = { name = "minecraft:chest",  count = 1 },
+  [2] = { name = "minecraft:bucket", count = 1 },
+  [3] = { name = "minecraft:coal",   count = 64 },
+}, conf = "turtles = 1\nstartX = 0\nstartY = 64\nstartZ = 0\nstartDir = 0\n" })
+ok, err, log = runWorld("1", "--check")
+assert(ok, "solo --check crashed: " .. tostring(err))
+assert(log:find("nothing missing"), "a complete solo kit was refused:\n" .. log)
+assert(not log:find("disk drive.-SHORT") and not log:find("floppy.-SHORT"),
+  "the solo audit still demanded a drive or floppy:\n" .. log)
+
+-- 133. the hand-over walks every coal slot, not just the first --------------
+-- handOver("coal", n) used to drop up to n out of the FIRST coal slot and call
+-- it done, so coal spread across slots handed a fraction of what was owed
+-- [HARVEST-PLAN C2]. Three 20-stacks, two turtles: the share is 30, which only
+-- reaches the turtle if the hand-over spans two slots.
+world({ inv = kit({ [7] = { name = "minecraft:coal", count = 20 },
+                    [8] = { name = "minecraft:coal", count = 20 },
+                    [9] = { name = "minecraft:coal", count = 20 } }),
+        leaveAfter = 3, answers = { "y" }, conf = "turtles = 2\n" })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the multi-slot deploy crashed: " .. tostring(err))
+local handed = 0
+for _, h in ipairs(V.handed) do
+  if h.into:find("turtle") and h.name:find("coal") then handed = handed + h.count end
+end
+assert(handed == 30,
+  "the turtle got " .. handed .. " coal, not the 30-coal share spanning slots")
+
+-- 134. the coal is split evenly, deployer included --------------------------
+-- 128 coal, three turtles: two to place, so the divisor is three -- 42 each and
+-- the deployer keeps the 44 remainder, because the deployer is the one turtle
+-- nobody can hand coal to later. The old code gave 64, 64, and nothing to
+-- turtle 1, which then descended on an empty tank [HARVEST-PLAN C2].
+world({ inv = kit({ [7] = { name = "minecraft:coal", count = 128 } }),
+        leaveAfter = 3, answers = { "y" }, conf = "turtles = 3\n" })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the split deploy crashed: " .. tostring(err))
+local per = {}
+for _, h in ipairs(V.handed) do
+  if h.into:find("turtle") and h.name:find("coal") then per[#per + 1] = h.count end
+end
+assert(#per == 2 and per[1] == 42 and per[2] == 42,
+  "coal was not split 42/42: " .. table.concat(per, ","))
+local left = 0
+for s = 1, 16 do
+  local d = V.inv[s]
+  if d and d.name:find("coal") then left = left + d.count end
+end
+assert(left == 44, "the deployer kept " .. left .. " coal, not the 44 remainder")
+assert(log:find("128 coal aboard, 2 to place %-%- 42 coal each"),
+  "the even split was not reported:\n" .. log)
+
+-- 135. docking mid-pair does not throw the pair away ------------------------
+-- A hold that fills partway through a pair sends the turtle to the depot and
+-- back. The leg it was on and the plan both survive that dock -- st.leg names
+-- the leg, st.step the place in the pair -- so the pair finishes through the
+-- rim jog exactly as it would have with no dock, rather than the turtle
+-- re-cutting a fresh branch out of the spine [HARVEST-PLAN B, complaint 2].
+world({ conf = "topY = -59\ntripBlocks = 8\n" .. SECTIONS, fuel = 200000,
+        blocks = { [k3(BX, BY - 1, BZ)] = "minecraft:barrel" },
+        chests = { [k3(BX, BY - 1, BZ)] = { { name = "minecraft:coal", count = 64 } } } })
+ok, err, log = runWorld("1")
+assert(ok, "the frequent-dock run crashed: " .. tostring(err))
+assert(log:find("depot  : docking"),
+  "it never actually docked, so the test proves nothing:\n" .. log)
+assert(log:find("leg back to the spine"),
+  "no leg was cut inward across the docks -- a pair was thrown away on a dock:\n" .. log)
+local sv135 = load("return " .. V.files["quarry.state"])()
+local nd135 = 0
+for _ in pairs(sv135.done or {}) do nd135 = nd135 + 1 end
+assert(nd135 >= 2, "only " .. nd135 .. " row(s) finished across a docking run:\n" .. log)
 
 print("all quarry phase 5 checks passed")

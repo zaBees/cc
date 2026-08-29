@@ -540,16 +540,24 @@ end
 -- Left and right hold equipped upgrades on a turtle, never a block, so the
 -- drive can only be on the other four sides -- but asking all six costs
 -- nothing and covers a computer running this too.
-local function diskPath()
+-- The side is worth having as well as the path: disk.setLabel addresses the
+-- DRIVE, not the mount, so anything that wants to write on the floppy itself
+-- needs to know which side answered.
+local function diskDrive()
   for _, side in ipairs({ "top", "bottom", "front", "back", "left", "right" }) do
     local okt, t = pcall(peripheral.getType, side)
     if okt and t == "drive" then
       local okm, mp = pcall(peripheral.call, side, "getMountPath")
       if okm and type(mp) == "string" and mp ~= "" then
-        return (mp:sub(1, 1) == "/") and mp or ("/" .. mp)
+        return side, (mp:sub(1, 1) == "/") and mp or ("/" .. mp)
       end
     end
   end
+end
+
+local function diskPath()
+  local _, mp = diskDrive()
+  if mp then return mp end
   -- no drive answered: fall back to the conventional name if it is there
   return fs.exists("/disk") and "/disk" or nil
 end
@@ -757,6 +765,19 @@ local function pinBody(body, vals)
   return body:sub(2)
 end
 
+-- The reverse of a pin: comment out any active startX/Y/Z/startDir so they stop
+-- overriding GPS. A turtle that is picked up and put down somewhere new keeps
+-- its old pin otherwise, and mines the old claim from the new spot. The lines
+-- are commented, not deleted, so the numbers are still there to read -- and a
+-- line already commented is left alone, so this is idempotent.
+local function unpinBody(body)
+  body = "\n" .. body
+  for _, k in ipairs({ "startX", "startY", "startZ", "startDir" }) do
+    body = body:gsub("\n([ \t]*" .. k .. "[ \t]*=[^\n]*)", "\n# %1")
+  end
+  return body:sub(2)
+end
+
 -- A run that cannot find itself used to stop here, with the player standing
 -- next to a turtle that would not listen to the coordinates they could read
 -- off their own screen. Ask for them instead, and write them into quarry.conf
@@ -940,7 +961,13 @@ local KIT = {
 -- bank, so the meetings stop happening rather than being recovered from.
 local function kitWants(conf)
   local n = conf.turtles or 1
-  return { turtle = n - 1, chest = n, drive = 1, floppy = 1,
+  -- A solo mine deploys nobody and shares its lava map with nobody, so the
+  -- drive and the floppy are dead weight -- and the audit used to refuse a
+  -- one-turtle kit that was in fact complete [HARVEST-PLAN C1]. Everything else
+  -- already scales with n: turtle = 0, one container, one bucket, 64 coal.
+  local solo = n == 1
+  return { turtle = n - 1, chest = n,
+           drive = solo and 0 or 1, floppy = solo and 0 or 1,
            modem = manualFix(conf) and 0 or n, bucket = n, fuel = 64 * n }
 end
 
@@ -3770,28 +3797,50 @@ end
 -- drop lands in its slots -- which is the only channel there is, now that the
 -- peripheral route is known to be closed.
 local function handOver(pat, count, what)
-  local s = slotLike(pat)
-  if not s then sayf("deploy : no %s to hand over", what) return false end
-  turtle.select(s)
-  -- pcall prepends its own success flag, so turtle.drop's answer is the SECOND
-  -- value. Reading the first as the drop result made every failed drop look
-  -- like a success, which is how a turtle got left standing with no modem.
-  local lived, dropped = pcall(turtle.drop, count)
-  if not lived then
-    sayf("deploy : could not hand over the %s: %s", what, tostring(dropped))
-    return false
+  -- Walk EVERY matching slot, not just the first. handOver("coal", 64) used to
+  -- drop up to 64 out of the first coal slot and call it done -- so a slot
+  -- holding 30 handed over 30 and reported success, and with the coal spread
+  -- across slots a turtle got a fraction of what it was owed [HARVEST-PLAN C2].
+  -- turtle.drop returns only true/false, so the count moved is read as the drop
+  -- in the slot's stack before and after.
+  local like = (type(pat) == "function") and pat or function(n) return n:find(pat) end
+  local want, moved, saw = count, 0, false
+  for s = 1, 16 do
+    if moved >= want then break end
+    local ok, d = pcall(turtle.getItemDetail, s)
+    if ok and d and like(d.name) then
+      saw = true
+      turtle.select(s)
+      local before = d.count
+      -- pcall prepends its own success flag, so turtle.drop's answer is the
+      -- SECOND value. Reading the first as the drop result made every failed
+      -- drop look like a success, which is how a turtle got left with no modem.
+      local lived, dropped = pcall(turtle.drop, want - moved)
+      if not lived then
+        sayf("deploy : could not hand over the %s: %s", what, tostring(dropped))
+        return false
+      end
+      local after = select(2, pcall(turtle.getItemCount, s)) or before
+      moved = moved + (before - after)
+    end
   end
-  if dropped == false then
+  if not saw then sayf("deploy : no %s to hand over", what) return false end
+  if moved == 0 then
     sayf("deploy : the %s would NOT go across -- is the turtle really in front?", what)
     return false
   end
-  sayf("deploy : handed over the %s", what)
-  return true
+  if moved < want then
+    sayf("deploy : handed over %d %s -- that was all that was aboard, not the %d asked for",
+      moved, what, want)
+  else
+    sayf("deploy : handed over the %s", what)
+  end
+  return true, moved
 end
 
 -- One turtle: place it, feed it, wait for it to walk off. Returns false and a
 -- reason, never throws, because a half-deployed mine still wants its report.
-local function deployOne(conf, l, index)
+local function deployOne(conf, l, index, coalShare)
   sayf("deploy : turtle %d", index)
 
   -- What is in front is usually one of two things. Nothing, which is the happy
@@ -3834,11 +3883,14 @@ local function deployOne(conf, l, index)
     sayf("deploy : placed %s in front", tName)
   end
 
-  -- Turn it on. The probe read a nil peripheral.wrap and we took that to mean a
-  -- placed turtle self-boots; two live deploys say otherwise -- it sat there
-  -- with no label, which is a turtle that never ran anything. Known-good
-  -- replicator code calls turnOn on the side it placed into, so try that. It
-  -- costs nothing if the turtle was already running.
+  -- Turn it on, then ASK whether that worked instead of assuming it did. A
+  -- placed turtle is a peripheral on front and it carries isOn, turnOn,
+  -- reboot, shutdown and getLabel; those are the only levers there are, and
+  -- until now this code pulled two of them blind. isOn turns "it is still
+  -- switched off" from a guess into a fact, and the two failures it tells
+  -- apart want opposite actions: turnOn for a turtle that is dark, reboot for
+  -- one that is running and never ran the disk startup. Harvested from
+  -- jnordberg/minecraft-replicator, which has always asked.
   -- CC-Tweaked issue #660: a turtle's peripheral discovery goes stale, and
   -- "causing any kind of update will make turtle see peripheral again --
   -- turning turtle". The block in front was air a moment ago, so a bare
@@ -3852,13 +3904,26 @@ local function deployOne(conf, l, index)
     pcall(turtle.turnLeft)
     os.sleep(0.5)
   end
+
+  -- One door to the turtle in front, because pcall prepends its own success
+  -- flag and the answer is the SECOND value -- a mistake this file has made
+  -- four separate times [RESUME, corrections]. A FAILED pcall puts an error
+  -- STRING there, which is not false, so the two are separated here once: nil
+  -- back means the peripheral would not answer at all, which is a different
+  -- world from an honest `false`.
+  local function frontAsk(method)
+    local lived, res = pcall(peripheral.call, "front", method)
+    if not lived then return nil, tostring(res) end
+    return res
+  end
+
   if ptype then
     sayf("deploy : peripheral on front = %s", tostring(ptype))
-    local lived, res = pcall(peripheral.call, "front", "turnOn")
-    if lived then
-      sayf("deploy : turnOn sent to turtle %d", index)
+    local _, err = frontAsk("turnOn")
+    if err then
+      sayf("deploy : turnOn failed (%s) -- relying on self-boot", err)
     else
-      sayf("deploy : turnOn failed (%s) -- relying on self-boot", tostring(res))
+      sayf("deploy : turnOn sent to turtle %d", index)
     end
   else
     sayf("deploy : turtle %d is not visible as a peripheral, relying on self-boot", index)
@@ -3873,7 +3938,13 @@ local function deployOne(conf, l, index)
   if not handOver("modem", 1, "wireless modem") and not manualFix(conf) then
     return false, "the modem did not reach it -- it cannot GPS, so it will never move"
   end
-  handOver("coal", 64, "coal")
+  -- An even share of the coal aboard, not a flat 64 out of the first slot. With
+  -- 100 coal and three turtles the old code gave turtle 2 sixty-four, turtle 3
+  -- the last thirty-six, and turtle 1 -- the deployer, the one turtle nobody
+  -- can hand coal to later -- descended on whatever was left, often nothing
+  -- [HARVEST-PLAN C2]. runDeploy divides the starting coal evenly and passes
+  -- this turtle's share; a full 64*n kit still works out to 64 each.
+  handOver("coal", coalShare or 64, "coal")
   handOver("bucket", 1, "bucket")
   -- A container each, the same way the bucket is one each: with a depot under
   -- its own trunk this turtle never leaves its own third to bank, which is
@@ -3883,44 +3954,117 @@ local function deployOne(conf, l, index)
   handOver(isContainer, 1, "container")
 
   -- It leaves under its own power once quarry N calibrates. An empty block in
-  -- front is the only signal available -- there is no peripheral to ask. The
-  -- new turtle also writes its progress to the floppy, so read that back when
-  -- it is in reach: it turns a screen nobody is looking at into output here.
+  -- front is one signal; the floppy log and the turtle's own label are the
+  -- other two, and between them they say whether anything ran at all.
   local logf = ("%s/deploy%d.log"):format(diskPath() or "/disk", index)
   local said, asked = 0, false
+
+  -- The escalation ladder, and ORDER MATTERS because it used to be wrong.
+  -- reboot on a computer that is OFF is a no-op -- there is nothing running to
+  -- reboot -- and the old code fired one at 6s and again at 16s without ever
+  -- confirming the turtle had come on, so on a turtle whose turnOn did not
+  -- take, both reboots did nothing at all and the player was then asked to
+  -- walk over. Turn on, confirm with isOn, and only then reboot.
+  --
+  -- `due` is the second the next rung may fire on, so each rung gets its own
+  -- settling time rather than a fixed timetable: 2s to come on, 10s to run a
+  -- startup. The player prompt below is NOT a rung -- it is what the log says
+  -- once every rung has been tried, and the ladder starts again underneath it.
+  local due, reboots, blind, cold = 0, 0, 0, false
+  local wasOn
   sayf("deploy : waiting for turtle %d to boot and walk off (about 25s)", index)
-  for i = 1, 90 do
+  for i = 1, 120 do
     if not turtle.detect() then
       sayf("deploy : turtle %d left after %ds, its mine is its own now", index, i)
       return true
     end
-    -- Silence on the floppy after 12s means the boot script never ran, and a
-    -- turtle that has not run its boot script is one that is still switched
-    -- off. The turnOn above is sent and has worked before, but twice in-game
-    -- on 2026-08-28 the new turtle was still dark afterwards -- unlabelled,
-    -- with the program still only on /disk. A player fixes that in one click.
-    -- Ask for it rather than burning the other 78 seconds and calling it a
-    -- failure, and go back to waiting once they say they have.
-    -- turnOn wakes a turtle that is off; it does nothing to one that is ON but
-    -- never ran the disk startup, and that is the state two live deploys left
-    -- them in. reboot is the stronger action and it re-runs the disk startup,
-    -- which is exactly the "reboot it on its own screen" the player was being
-    -- sent to do by hand [user, 2026-08-29: "still had to run code in turtle
-    -- 2/3 manually"]. Try it twice before asking anyone to walk over.
-    if (i == 6 or i == 16) and not fs.exists(logf) then
-      local lived, res = pcall(peripheral.call, "front", "reboot")
-      sayf("deploy : %ds silent -- sent reboot to turtle %d (%s)", i, index,
-        lived and "ok" or tostring(res))
+
+    -- Two liveness signals, polled together. The floppy log is the detailed
+    -- one and it is often unreadable from here: the drive sits above the
+    -- PLACED turtle, so it is diagonal from this one, on no side of it, and
+    -- /disk is not mounted here at all. getLabel needs no floppy -- boot.lua
+    -- calls os.setComputerLabel("quarry" .. N) in its first seconds, well
+    -- before the turtle walks off -- so it answers "did anything run" on its
+    -- own, and it answers it fast.
+    local on = frontAsk("isOn")
+    local label = frontAsk("getLabel")
+    local ran = fs.exists(logf) or (type(label) == "string" and label ~= "")
+    if i == 1 or on ~= wasOn then
+      sayf("deploy : turtle %d isOn=%s, label=%s%s", index, tostring(on),
+        tostring(label or "none"), ran and "" or ", still no floppy log")
+      -- A turtle that is on may simply not have finished its startup yet: it
+      -- labels itself within the first seconds, so give it that window before
+      -- rebooting it as one that "has run no startup". Rebooting at 1s throws
+      -- away a startup that was about to succeed [HARVEST-PLAN A, test 126].
+      if on == true then due = math.max(due, i + 2) end
+      wasOn = on
     end
-    if not asked and i >= 24 and not fs.exists(logf) then
+
+    if not ran and i >= due then
+      if on == false then
+        -- Placed and dark. turnOn is the only lever there is, and it costs
+        -- nothing on a turtle that is already running, so it is repeated
+        -- rather than sent once and hoped over.
+        frontAsk("turnOn")
+        sayf("deploy : %ds -- turtle %d is off, sent turnOn, asking isOn again in 2s",
+          i, index)
+        due = i + 2
+      elseif on == true then
+        if reboots < 2 then
+          reboots = reboots + 1
+          local _, err = frontAsk("reboot")
+          sayf("deploy : %ds -- turtle %d is on and has run no startup, so sent reboot "
+            .. "to turtle %d (%s)", i, index, index, err or "ok")
+          due = i + 10
+        elseif not cold then
+          -- Colder than a reboot: it stops the computer and starts it again,
+          -- which re-mounts the drive on the way up. Two reboots that changed
+          -- nothing mean the disk startup is not being seen, not that the
+          -- program on it is failing -- boot.lua would have written a line.
+          cold = true
+          frontAsk("shutdown")
+          frontAsk("turnOn")
+          sayf("deploy : %ds -- two reboots did nothing, so shut turtle %d down and "
+            .. "turned it back on, which re-mounts the drive", i, index)
+          due = i + 10
+        end
+      else
+        -- isOn answered nothing at all, so this is not a computer this turtle
+        -- can talk to -- a stale peripheral, or a CC old enough not to carry
+        -- the method. Fall back to the blind sequence the deploy used before
+        -- it could ask: there is no way to tell which lever is wanted, so pull
+        -- both.
+        blind = blind + 1
+        frontAsk("turnOn")
+        local _, err = frontAsk("reboot")
+        sayf("deploy : %ds -- turtle %d will not answer isOn, so blind: turnOn, then "
+          .. "sent reboot to turtle %d (%s)", i, index, index, err or "ok")
+        due = i + 10
+      end
+    end
+
+    if not asked and i >= 24 and not ran then
       asked = true
-      sayf("deploy : nothing from turtle %d yet -- it is still switched off.", index)
-      say("         RIGHT-CLICK IT. That turns it on and the disk startup runs.")
-      say("         If its screen is already lit, type this on it:  disk/startup")
+      -- Not a step in the deploy. Everything automatic above has been tried by
+      -- now -- turnOn on a repeat, two reboots, a shutdown and a cold start --
+      -- and the ladder starts again underneath this prompt whether anyone
+      -- answers it or not [HARVEST-PLAN A2].
+      sayf("deploy : turtle %d has not started in %ds, and isOn says %s.",
+        index, i, tostring(wasOn))
+      say("         RIGHT-CLICK IT. That is the one lever I do not have.")
+      -- disk/quarry <n>, NOT disk/startup. In-game 2026-08-29 the user typed
+      -- disk/startup on turtle 2 and it was not a file: the floppy had the
+      -- program on it and no startup beside it, which is the bug the write
+      -- order above fixes. disk/quarry <n> is the line they confirmed works,
+      -- it is the one the startup would have run anyway, and it is right even
+      -- on a floppy this build did not write.
+      sayf("         If its screen is already lit, type this on it:  disk/quarry %d", index)
       local a = ask("deploy : enter = done, s = skip this turtle, q = stop deploying.", "", 60)
       if a:sub(1, 1) == "s" then return false, "skipped on your say-so" end
       if a:sub(1, 1) == "q" then return false, "stopped deploying on your say-so", "stop" end
+      due, reboots, blind, cold = i, 0, 0, false
     end
+
     if fs.exists(logf) then
       local h = fs.open(logf, "r")
       if h then
@@ -3931,19 +4075,22 @@ local function deployOne(conf, l, index)
         if #lines > said then said = #lines end
       end
     elseif i % 10 == 0 then
-      sayf("deploy : %ds, turtle %d still standing there", i, index)
+      sayf("deploy : %ds, turtle %d still standing there (isOn=%s, label=%s)", i, index,
+        tostring(on), tostring(label or "none"))
     end
     os.sleep(1)
   end
-  -- It has the drive, the program and the config; what it has not done is run
-  -- the disk startup. That is the one step nothing here can force -- a turtle
-  -- is not a peripheral to another turtle, so there is no turnOn to call.
-  sayf("deploy : turtle %d did not boot into its startup. Right-click it to turn", index)
-  say("         it on, and if its screen is already lit, on ITS screen:")
-  say("           reboot          -- re-runs the disk startup, usually enough")
-  say("           disk/startup    -- runs it by hand if reboot will not")
-  sayf("         Either one makes it label itself quarry%d and leave.", index)
-  return false, ("turtle %d has not moved after 90s -- reboot it on its own screen"):format(index)
+  -- Every lever this turtle has has now been pulled, more than once. What is
+  -- left is a hand: a turtle placed by a turtle is off, turnOn is the only way
+  -- to change that from here, and if the server refuses it then nothing in
+  -- this program can.
+  sayf("deploy : turtle %d did not start in 120s. The last isOn was %s.",
+    index, tostring(wasOn))
+  say("         I have sent turnOn, two reboots and a shutdown-and-on, and none of")
+  say("         them moved it. Right-click it, and if its screen is already lit,")
+  sayf("         type this on ITS screen:  disk/quarry %d", index)
+  return false, ("turtle %d has not moved after 120s -- right-click it, or run "
+    .. "disk/quarry %d on its own screen"):format(index, index)
 end
 
 -- Build the boot rig once, then run every remaining turtle through it. The
@@ -3962,24 +4109,146 @@ local function readAllOf(path)
   return body
 end
 
-local function copyStripped(src, dst)
+-- A floppy holds 125 kB and this program does not, so what goes on it is the
+-- source with every full-line comment dropped, every blank line dropped and
+-- every line's indentation trimmed -- whitespace only, which Lua does not care
+-- about, and 106 kB rather than 208. That margin is the whole deployment:
+-- measured 2026-08-29, comments alone left 117 kB, and 117 plus the boot
+-- files, the config and the claim anchor is over the limit -- which is how
+-- turtle 2 ended up with `quarry` on its floppy and no `startup` beside it.
+-- Anything inside a [[ long string ]] is left exactly as it is: DEFAULT_CONF
+-- is one, and its blank lines and layout ARE the config file the deployed
+-- turtle reads. Line numbers shift, so an error from a deployed turtle points
+-- into ITS copy.
+local function strippedBody(src)
   local out, long = {}, false
   for line in (readAllOf(src) .. "\n"):gmatch("([^\n]*)\n") do
     if long then
       out[#out + 1] = line
       if line:find("%]%]") then long = false end
     elseif not line:match("^%s*%-%-") then
-      out[#out + 1] = line
+      local tight = line:match("^%s*(.-)%s*$")
+      if tight ~= "" then out[#out + 1] = tight end
       if line:find("%[%[") and not line:find("%]%]") then long = true end
     end
   end
-  local body = table.concat(out, "\n") .. "\n"
-  local h = fs.open(dst, "w")
-  if not h then return false, #body end
-  local ok = pcall(h.write, body)
-  pcall(h.close)
-  if not ok then return false, #body end
+  return table.concat(out, "\n") .. "\n"
+end
+
+-- Write it, then OPEN IT AGAIN AND READ IT BACK.
+--
+-- fs.open(name, "w") succeeds on a floppy that has no room left: the failure
+-- lands on the write, or on the close, or nowhere at all -- the file is simply
+-- shorter than what went into it. So counting handles opened is not counting
+-- files written, and that is how a deploy came to print "wrote the boot script
+-- for turtle 2" onto a floppy that did not have one. In-game 2026-08-29 the
+-- user found turtle 2 sitting at a bare `CraftOS 1.9 >` prompt with `quarry`
+-- on its floppy and no `startup` beside it: nothing to auto-run, and
+-- `disk/startup` was not a file to type either.
+--
+-- A read-back is two extra file handles and it is the only thing that actually
+-- answers "is it there?".
+local function writeVerified(path, body)
+  local h = fs.open(path, "w")
+  if not h then return false, "it would not open for writing" end
+  local okw, werr = pcall(h.write, body)
+  local okc, cerr = pcall(h.close)
+  if not okw then return false, "the write failed: " .. tostring(werr) end
+  if not okc then return false, "the close failed: " .. tostring(cerr) end
+  local r = fs.open(path, "r")
+  if not r then return false, "it is not there after writing" end
+  local okr, back = pcall(r.readAll)
+  pcall(r.close)
+  if not okr or type(back) ~= "string" then return false, "it will not read back" end
+  if #back == 0 then return false, ("it read back EMPTY, %d bytes went in"):format(#body) end
+  if back ~= body then
+    return false, ("it read back %d bytes of the %d written"):format(#back, #body)
+  end
   return true, #body
+end
+
+-- What the floppy has left, where the mod will say. Older CC has no
+-- getFreeSpace and it is pcall'd like every other call out of this program, so
+-- nil back means "no idea" rather than "nothing left".
+local function freeOn(dir)
+  if not (fs and fs.getFreeSpace) then return nil end
+  local lived, n = pcall(fs.getFreeSpace, dir)
+  if lived and type(n) == "number" then return n end
+  return nil
+end
+
+-- The three tiny files a placed turtle actually needs, plus the number it is.
+-- These go on the floppy BEFORE the 83 kB program, and that ordering is the
+-- fix: they are the smallest files on the disk and the only ones that decide
+-- whether a turtle boots at all, and written last they are exactly what a
+-- floppy short of room drops. Let the program be the thing that does not fit.
+local function writeBoot(DISK, n, conf)
+  -- The startup goes on under BOTH names. Which one a disk's auto-startup
+  -- picks up is the mod's business, not ours, and getting it wrong costs an
+  -- in-game trip; writing both costs nothing and cannot pick the wrong one.
+  -- What they run is boot.lua, beside them: the startup only records that it
+  -- ran, so an empty floppy log is a disk startup that never happened and a
+  -- log with one line in it is boot.lua failing [DEADLOCK-PLAN layer 3].
+  -- The index is the turtle number, so `cd disk` then `quarry` with no number
+  -- is still THIS turtle rather than turtle 1 [HARVEST-PLAN A5].
+  local files = {
+    { DISK .. "/startup.lua", BOOTSTRAP:format(n) },
+    { DISK .. "/startup",     BOOTSTRAP:format(n) },
+    { DISK .. "/boot.lua",    BOOT:format(n, tostring(manualFix(conf))) },
+    { DISK .. "/index",       tostring(n) },
+  }
+  local sizes, bad = {}, {}
+  for _, f in ipairs(files) do
+    local okw, res = writeVerified(f[1], f[2])
+    local base = f[1]:match("[^/]+$")
+    if okw then
+      sizes[#sizes + 1] = ("%s %d"):format(base, res)
+    else
+      bad[#bad + 1] = ("%s -- %s"):format(base, tostring(res))
+    end
+  end
+  if #bad > 0 then
+    sayf("deploy : THE BOOT FILES DID NOT LAND ON THE FLOPPY for turtle %d:", n)
+    for _, b in ipairs(bad) do sayf("         %s", b) end
+    return false, table.concat(bad, "; ")
+  end
+  sayf("deploy : wrote the boot script for turtle %d, read back off the floppy: %s",
+    n, table.concat(sizes, ", "))
+  return true
+end
+
+-- The drive does not always answer the moment the floppy goes in. replicator
+-- loops on disk.getMountPath up to 20 times, half a second apart, with a move
+-- and a move back after the tenth, because "sometimes the disk drive won't
+-- show up" -- the same stale-peripheral problem as CC:Tweaked #660, which this
+-- program already has to shake off the placed turtle by turning. runDeploy
+-- asked once and errored out on nil, which turned half a second of the mod's
+-- own bookkeeping into a failed deployment and a player walking over.
+local function diskPathRetry()
+  for n = 1, 20 do
+    -- Ask the DRIVE itself, not diskPath(): the drive was just placed one up
+    -- and in front, so this is the "sometimes the disk drive won't show up"
+    -- lag we are retrying. diskPath()'s fs.exists("/disk") fallback would
+    -- short-circuit the retry the moment that name exists -- and it is the
+    -- wrong name anyway if this turtle already has a drive of its own, which
+    -- puts this floppy at /disk2.
+    local _, p = diskDrive()
+    if p then
+      if n > 1 then sayf("deploy : the drive answered on try %d, at %s", n, p) end
+      return p
+    end
+    -- the same refresh trick deployOne uses on the placed turtle: a turn is an
+    -- update, and right-then-left is a no-op for the heading tracked in st.dir.
+    if n == 10 then
+      say("deploy : the drive still says nothing -- turning to shake the peripheral")
+      pcall(turtle.turnRight)
+      pcall(turtle.turnLeft)
+    end
+    os.sleep(0.5)
+  end
+  -- twenty tries and the drive never named its mount: the conventional name is
+  -- the last resort, exactly as plain diskPath() would fall back to.
+  return fs.exists("/disk") and "/disk" or nil
 end
 
 -- With startX/Y/Z set there is no GPS to correct a copied file, so handing the
@@ -4022,6 +4291,27 @@ function runDeploy(conf, l, index)
       return
     end
     say("deploy : going on short on your say-so.")
+  end
+
+  -- The coal split, measured BEFORE topUp so a full 64*n kit divides into an
+  -- exact 64 each [HARVEST-PLAN C2]. The rule: coal aboard is divided evenly
+  -- between every turtle the mine will run, the deployer included, so with C
+  -- coal and k turtles still to place each placed turtle gets
+  -- min(64, floor(C / (k+1))) and the deployer keeps the rest -- because the
+  -- deployer is the one turtle nobody can hand coal to later. topUp then burns
+  -- at most DEPLOY_TANK/80 (~13) coal for its own ride down, out of that rest.
+  local staffed = type(st.staffed) == "table" and st.staffed or {}
+  local pending = 0
+  for n = 2, conf.turtles do if not staffed[n] then pending = pending + 1 end end
+  local coalAboard = 0
+  for s = 1, 16 do
+    local ok, d = pcall(turtle.getItemDetail, s)
+    if ok and d and d.name:find("coal") then coalAboard = coalAboard + d.count end
+  end
+  local coalShare = pending > 0 and math.min(64, math.floor(coalAboard / (pending + 1))) or 0
+  if pending > 0 then
+    sayf("deploy : %d coal aboard, %d to place -- %d coal each, I keep the other %d",
+      coalAboard, pending, coalShare, coalAboard - coalShare * pending)
   end
 
   -- Fuel before the first move, and after the audit so it still counts a whole
@@ -4094,39 +4384,44 @@ function runDeploy(conf, l, index)
     if select(2, pcall(turtle.drop)) == false then
       error("the floppy would not go into the drive", 0)
     end
-    DISK = diskPath()
+    DISK = diskPathRetry()
     sayf("deploy : floppy in the drive, mounted at %s", tostring(DISK))
   end
 
-  -- 2. the payload. The program copies ITSELF, so a deployed turtle always
-  --    runs the same build as the one that placed it -- no second wget, and no
-  --    way for the two to drift apart.
   if not DISK then
-    error("the drive mounted nothing -- is the floppy really in it?", 0)
+    error("the drive mounted nothing in 20 tries over 10s -- is the floppy really in it?", 0)
   end
-  local me = shell and shell.getRunningProgram and shell.getRunningProgram()
-  if not me or not fs.exists(me) then
-    error("cannot find my own file to copy onto the floppy", 0)
-  end
-  if fs.exists(DISK .. "/quarry") then fs.delete(DISK .. "/quarry") end
-  local wrote, size = copyStripped(me, DISK .. "/quarry")
-  if not wrote then
-    error(("the program will not fit the floppy even stripped (%d bytes); "):format(size)
-      .. "raise floppy_space_limit in the CC:Tweaked server config", 0)
-  end
-  sayf("deploy : copied %s to /disk/quarry (%d bytes, comments stripped)", me, size)
 
-  -- and the config with it. A deployed turtle that seeds its own gets
-  -- dry = true and never moves, which reads exactly like a hung deployment.
+  -- 2. the boot files, FIRST. They are about three kilobytes between them and
+  --    they are the whole of what makes a placed turtle start itself; the
+  --    program below is eighty. Written after it, they are what a floppy with
+  --    no room left silently drops, and a turtle whose floppy has `quarry` and
+  --    no `startup` boots to a bare CraftOS prompt and waits for a human --
+  --    which is exactly what the user found on turtle 2 [2026-08-29].
+  --    They are rewritten per turtle in the loop below; this pass reserves the
+  --    space for them and proves the floppy will take them at all.
+  st.staffed = type(st.staffed) == "table" and st.staffed or {}
+  local firstPending
+  for n = 2, conf.turtles do
+    if not st.staffed[n] then firstPending = n break end
+  end
+  if firstPending then
+    say("deploy : the boot files go on before the program, so the program is what")
+    say("         does not fit if anything does not fit.")
+  end
+  if firstPending and not writeBoot(DISK, firstPending, conf) then
+    error("the boot files will not stay on the floppy -- there is nothing to deploy with", 0)
+  end
+
+  -- 3. the config and the claim anchor, still ahead of the program. A deployed
+  --    turtle that seeds its own config gets dry = true and never moves, which
+  --    reads exactly like a hung deployment.
   if fs.exists(CONF) then
     if fs.exists(DISK .. "/quarry.conf") then fs.delete(DISK .. "/quarry.conf") end
-    local body = readAllOf(CONF)
-    body = confForPlaced(conf, body)
-    local h = fs.open(DISK .. "/quarry.conf", "w")
-    if not h then error("cannot write " .. DISK .. "/quarry.conf", 0) end
-    h.write(body)
-    h.close()
-    sayf("deploy : copied %s to /disk/quarry.conf (dry = %s)", CONF, tostring(conf.dry))
+    local cbody = confForPlaced(conf, readAllOf(CONF))
+    local okc, whyc = writeVerified(DISK .. "/quarry.conf", cbody)
+    if not okc then error("cannot write " .. DISK .. "/quarry.conf -- " .. tostring(whyc), 0) end
+    sayf("deploy : copied %s to %s/quarry.conf (dry = %s)", CONF, DISK, tostring(conf.dry))
 
     -- The claim anchor rides with it. A placed turtle wakes one block in front
     -- of me, which is over a chunk border often enough to matter, and claimOf()
@@ -4135,10 +4430,8 @@ function runDeploy(conf, l, index)
     -- heading, so locate() still starts it on its own pin, and its own state
     -- overwrites this the moment it saves.
     if fs.exists(DISK .. "/quarry.state") then fs.delete(DISK .. "/quarry.state") end
-    local sh = fs.open(DISK .. "/quarry.state", "w")
-    if sh then
-      sh.write(textutils.serialise({ home = { x = st.home.x, y = st.home.y, z = st.home.z } }))
-      sh.close()
+    if writeVerified(DISK .. "/quarry.state",
+        textutils.serialise({ home = { x = st.home.x, y = st.home.y, z = st.home.z } })) then
       sayf("deploy : claim anchor %d,%d on the floppy, so we all mine one claim",
         st.home.x, st.home.z)
     end
@@ -4148,6 +4441,37 @@ function runDeploy(conf, l, index)
   else
     error("no " .. CONF .. " to hand on -- run --check once to seed it", 0)
   end
+
+  -- 4. the payload, LAST, because it is the only thing here that is elastic.
+  --    The program copies ITSELF, so a deployed turtle always runs the same
+  --    build as the one that placed it -- no second wget, and no way for the
+  --    two to drift apart.
+  local me = shell and shell.getRunningProgram and shell.getRunningProgram()
+  if not me or not fs.exists(me) then
+    error("cannot find my own file to copy onto the floppy", 0)
+  end
+  if fs.exists(DISK .. "/quarry") then fs.delete(DISK .. "/quarry") end
+  local body = strippedBody(me)
+  local free = freeOn(DISK)
+  sayf("deploy : the floppy has %s bytes free and the stripped program is %d",
+    tostring(free or "an unknown number of"), #body)
+  -- A truncated program is worse than no program: it is a syntax error the
+  -- deployed turtle only finds out about after it has been fed and switched
+  -- on. Refuse the copy rather than write half of one.
+  if free and free < #body then
+    error(("the program will not fit: %d bytes free, %d needed. The boot files are "):format(
+      free, #body) .. "on the floppy and intact; raise floppy_space_limit in the "
+      .. "CC:Tweaked server config, or take a floppy with less on it", 0)
+  end
+  local wrote, why = writeVerified(DISK .. "/quarry", body)
+  if not wrote then
+    pcall(fs.delete, DISK .. "/quarry")
+    error(("the program did not land on the floppy (%d bytes stripped) -- %s"):format(
+      #body, tostring(why)), 0)
+  end
+  sayf("deploy : copied %s to %s/quarry (%d bytes, comments stripped, read back)",
+    me, DISK, #body)
+
 
   if not stepDown() then error("cannot move back down after loading the floppy", 0) end
 
@@ -4162,7 +4486,6 @@ function runDeploy(conf, l, index)
   -- the abandoned one-shot boolean [test 72], and a state file written by an
   -- older build still carries it.
   local done, failed = 0, {}
-  st.staffed = type(st.staffed) == "table" and st.staffed or {}
   for n = 2, conf.turtles do
     if st.staffed[n] then
       sayf("deploy : turtle %d is already out at its own trunk -- not placing", n)
@@ -4170,30 +4493,30 @@ function runDeploy(conf, l, index)
       done = done + 1
       goto next
     end
-    -- The startup goes on under BOTH names. Which one a disk's auto-startup
-    -- picks up is the mod's business, not ours, and getting it wrong costs an
-    -- in-game trip; writing both costs nothing and cannot pick the wrong one.
-    -- What they run is boot.lua, beside them: the startup only records that it
-    -- ran, so an empty floppy log is a disk startup that never happened and a
-    -- log with one line in it is boot.lua failing [DEADLOCK-PLAN layer 3].
-    local wrote = 0
-    for _, name in ipairs({ DISK .. "/startup.lua", DISK .. "/startup" }) do
-      local h = fs.open(name, "w")
-      if h then
-        h.write(BOOTSTRAP:format(n))
-        h.close()
-        wrote = wrote + 1
-      end
+    -- Rewritten for this turtle, and read back off the floppy every time. The
+    -- space for them was taken above, before the program went on, so this is
+    -- an overwrite of files that already exist at almost exactly this size.
+    local okb, whyb = writeBoot(DISK, n, conf)
+    if not okb then
+      failed[#failed + 1] = ("turtle %d: %s"):format(n, tostring(whyb))
+      sayf("deploy : turtle %d gets no boot files, so placing it would only strand", n)
+      say("         it at a CraftOS prompt. Not placing it.")
+      break
     end
-    if wrote == 0 then error("cannot write the boot script to " .. DISK, 0) end
-    local hb = fs.open(DISK .. "/boot.lua", "w")
-    if not hb then error("cannot write boot.lua to " .. DISK, 0) end
-    hb.write(BOOT:format(n, tostring(manualFix(conf))))
-    hb.close()
-    sayf("deploy : wrote the boot script for turtle %d (%d startup names + boot.lua)",
-      n, wrote)
 
-    local okn, why, stop = deployOne(conf, l, n)
+    -- And the disk itself says who it is for, harvested from replicator, which
+    -- names each floppy after the baby it is for. Best effort: disk.setLabel
+    -- addresses the DRIVE, and from where this turtle stands to place turtles
+    -- the drive is one up and one forward -- diagonal, on no side of it -- so
+    -- there is usually nothing to address. It costs one line and it is free
+    -- when the player has put the drive somewhere this turtle can see.
+    local dside = diskDrive()
+    if dside and disk and disk.setLabel then
+      local lived = pcall(disk.setLabel, dside, "quarry" .. n)
+      if lived then sayf("deploy : labelled the floppy quarry%d", n) end
+    end
+
+    local okn, why, stop = deployOne(conf, l, n, coalShare)
     if okn then
       done = done + 1
       st.staffed[n] = true
@@ -4211,7 +4534,7 @@ function runDeploy(conf, l, index)
       if turtle.detect() and frontType() == "turtle" then
         sayf("deploy : turtle %d is still standing in the only spot I can place", n)
         say("         into, so there is nowhere to put the next one. Get it moving")
-        say("         first -- right-click it, or on its screen: reboot -- then")
+        sayf("         first -- right-click it, or on its screen: disk/quarry %d -- then", n)
         say("         `quarry 1 deploy` again to carry on from here.")
         stop = true
       end
@@ -4294,6 +4617,23 @@ if onFloppy then
     fs.copy(DISK .. "/quarry.state", STATE)
     say("startup: took the deployer's claim anchor")
   end
+  -- Which turtle is this? `cd disk` then `quarry`, with no number, is what the
+  -- user actually types [2026-08-29], and the parse below reads `index or 1`,
+  -- so that run mines turtle 1's third out of turtle 1's trunk and deploys yet
+  -- another turtle. The deploy that wrote this floppy knew the answer and left
+  -- it beside boot.lua; a number typed on the command line still wins, because
+  -- somebody typing one means it.
+  local typed = false
+  for _, a in ipairs(args) do if tonumber(a) then typed = true end end
+  if not typed and fs.exists(DISK .. "/index") then
+    local h = fs.open(DISK .. "/index", "r")
+    local n = h and tonumber(((h.readAll() or ""):match("%d+")))
+    if h then h.close() end
+    if n then
+      args[#args + 1] = tostring(n)
+      sayf("startup: the floppy was written for turtle %d, so that is what I run as", n)
+    end
+  end
   say("startup: installed as /quarry.lua -- `quarry <n>` from now on")
   return shell.run("/quarry.lua", table.unpack(args))
 end
@@ -4302,8 +4642,49 @@ for _, a in ipairs(args) do
   if a == "--check" then mode = "check"
   elseif a == "recall" then mode = "recall"
   elseif a == "deploy" then mode = "deploy"
+  elseif a == "stop" then mode = "stop"
   elseif tonumber(a) then index = tonumber(a)
-  else error("usage: quarry <1|2|3> [--check|recall|deploy]", 0) end
+  else error("usage: quarry <1|2|3> [--check|recall|deploy|stop]", 0) end
+end
+
+-- `quarry stop` parks the turtle before it is picked up and moved. On first
+-- boot the turtle writes its OWN /startup that re-runs `quarry N` on every
+-- reboot or chunk reload, independent of the floppy -- so moving it does not
+-- stop it, the next reboot resumes from quarry.state. This is the one-word form
+-- of `delete startup` + `delete quarry.state`: no config, no position fix, no
+-- modem needed, so it runs before any of that is loaded. Ctrl+T first if the
+-- mine is still running.
+if mode == "stop" then
+  local gone = {}
+  for _, f in ipairs({ "/startup", STATE }) do
+    if fs.exists(f) then fs.delete(f) gone[#gone + 1] = f end
+  end
+  -- Also drop the pinned coordinates, so a turtle carried somewhere new does not
+  -- re-pin to where it used to stand [user, 2026-08-29]. Commented, not deleted.
+  local unpinned = false
+  if fs.exists(CONF) then
+    local h = fs.open(CONF, "r")
+    local body = h and h.readAll() or ""
+    if h then h.close() end
+    local cleaned = unpinBody(body)
+    if cleaned ~= body then
+      local w = fs.open(CONF, "w")
+      if w then w.write(cleaned) w.close() unpinned = true end
+    end
+  end
+  if #gone > 0 or unpinned then
+    if #gone > 0 then
+      sayf("stopped: deleted %s -- I will not auto-resume.", table.concat(gone, " and "))
+    end
+    if unpinned then
+      say("stopped: commented out startX/Y/Z/startDir in quarry.conf, so my old pin")
+      say("         will not follow me if you move me.")
+    end
+    say("         `quarry <n>` starts a fresh claim wherever I am then.")
+  else
+    say("stopped: no /startup, quarry.state or pinned coords to clear -- already parked.")
+  end
+  return
 end
 
 local seeded = not fs.exists(CONF)

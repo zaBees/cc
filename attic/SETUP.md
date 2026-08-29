@@ -572,19 +572,34 @@ the floppy, and for each of the other turtles: places it on the ground under
 the drive, hands it a wireless modem, 64 coal and a bucket, and waits for it to
 walk off to its own trunk.
 
-**Be ready to right-click each new turtle.** Deploy sends it a `turnOn`, and
-that has worked, but twice in-game the new turtle was still dark afterwards —
-unlabelled, program still only on the floppy. One right-click always fixes it:
-that turns it on and the disk startup runs, which labels it, takes the program,
-the config and the claim anchor off the floppy, equips the modem on whichever
-side is not its pickaxe, burns the coal and sends it to its own trunk. Deploy
-asks for the click by name after twelve seconds of silence, and waits:
+**You should not have to touch the new turtles.** Deploy asks the placed turtle
+whether it is on and acts on the answer, over two minutes: `turnOn` while it
+reads `isOn=false`, then a reboot once it is confirmed on and still has not run
+the disk startup, then a second reboot, then a shutdown and a fresh `turnOn`,
+which re-mounts the drive. It reads the turtle's own label as well as the
+floppy log, because a booted turtle names itself `quarry2` within seconds. The
+log says which of those it took:
 
 ```
-deploy : nothing from turtle 2 yet -- it is still switched off.
-         RIGHT-CLICK IT. That turns it on and the disk startup runs.
+deploy : turtle 2 isOn=false, label=none, still no floppy log
+deploy : 1s -- turtle 2 is off, sent turnOn, asking isOn again in 2s
+deploy : turtle 2 isOn=true, label=none, still no floppy log
+deploy : 3s -- turtle 2 is on and has run no startup, so sent reboot to turtle 2 (ok)
+```
+
+**If it still has not started after twenty-four seconds it asks for a hand** —
+and goes on trying underneath the question, so a click at any point is enough:
+
+```
+deploy : turtle 2 has not started in 24s, and isOn says false.
+         RIGHT-CLICK IT. That is the one lever I do not have.
+         If its screen is already lit, type this on it:  disk/quarry 2
 deploy : enter = done, s = skip this turtle, q = stop deploying.
 ```
+
+The click turns it on and the disk startup runs, which labels it, takes the
+program, the config and the claim anchor off the floppy, equips the modem on
+whichever side is not its pickaxe, burns the coal and sends it to its own trunk.
 
 Enter when you have clicked it, `s` to leave that one in the hold and go on to
 the next, `q` to stop deploying altogether. Say nothing for sixty seconds and it
@@ -635,14 +650,14 @@ program — the other two ride in turtle 1's inventory as items.
 | It prints the route and stops | `dry = true` in `quarry.conf`. Set it false to mine. |
 | `no http, report not uploaded` | HTTP is off for that computer. Read the numbers off the screen and tell me the ones you can. |
 | A turtle sitting there saying nothing | Run `quarry 2 --check` on it. The `last   :` line is why its previous run stopped — the reason is kept in `quarry.state`, so it survives the reboot and the scrollback. |
-| A deployed turtle never moved | It is switched off. Right-click it. If its screen is already lit, type `disk/startup` on it. |
+| A deployed turtle never moved | It is switched off. Right-click it. If its screen is already lit, type `disk/quarry <n>` on it — **not** `disk/startup`: on a floppy written before 2026-08-29 the startup file is missing altogether, which is why the turtle sat at a bare `CraftOS 1.9 >` prompt. |
 | `something is in front of me, and it is not a turtle` | The deploy spot is blocked by your build or by terrain. It asks: `d` digs it out, enter says you have cleared it, `s` skips that turtle, `q` stops. Unattended it refuses rather than digging. |
 | `a turtle is already standing here -- adopting it` | A turtle from an earlier deploy never booted and is still in the spot. It is not in the way, it *is* that turtle: the deploy switches it on and feeds it where it stands, rather than refusing. |
 | `the drive from the last run is still here -- reusing it` | Normal on every deploy after the first. The drive and floppy are told to stay put, so the next deploy picks them up again instead of failing. |
 | `I cannot read "..."` after typing a heading | Type any of `0`/`+z`/`south`, `1`/`-x`/`west`, `2`/`-z`/`north`, `3`/`+x`/`east`. It asks again for just that one answer and keeps the coordinates you already typed. Enter on its own still gives up. |
 | `giveway: turtle 2 waiting, another one is in the way` | Two turtles met in a corridor or stacked in the depot column. They sort it out themselves — the lower index holds the way, the higher one waits and then steps aside. Only if it never clears does the run stop. |
 | Two turtles standing on the depot, both saying `stopped` | Fixed: a turtle above or below is now waited for. If you still see it, send the log. |
-| You have to `cd disk` to find `quarry` on a deployed turtle | It never ran its boot script, so nothing was copied to the turtle itself. Run `disk/startup` instead — that does the whole job. If you do start it off the floppy, it now installs itself onto the turtle and restarts from there; otherwise its config, its state and its `/startup` all live on a floppy it walks away from. |
+| You have to `cd disk` to find `quarry` on a deployed turtle | It never ran its boot script, so nothing was copied to the turtle itself. Run `disk/quarry <n>` instead — that does the whole job, and unlike `disk/startup` it is there even on a floppy that ran out of room. If you do start it off the floppy, it now installs itself onto the turtle and restarts from there, and it takes its turtle number off the floppy rather than assuming it is turtle 1; otherwise its config, its state and its `/startup` all live on a floppy it walks away from. |
 | `turtles = 1 in quarry.conf, so there is nobody to deploy` | You lowered `turtles`. Raise it, or just run `quarry 1` and mine the whole claim with one. |
 
 ---

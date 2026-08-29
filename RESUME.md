@@ -330,7 +330,7 @@ lock to one item type, so a mixed dump fails on the second stack.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, one depot at the middle trunk, and the floppy found through getMountPath. 167497 bytes, fletcher32 `1293994432`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, one depot at the middle trunk, and the floppy found through getMountPath. 167,497 bytes, fletcher32 `1293994432`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. |
 | `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |

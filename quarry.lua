@@ -1390,6 +1390,14 @@ local function turtleAhead() return turtleAt(turtle.detect, turtle.inspect) end
 function giveWay(detect, inspect)
   detect, inspect = detect or turtle.detect, inspect or turtle.inspect
   if not turtleAt(detect, inspect) then return true end
+  -- Which side is blocked, so the jam message can name the turtle on it: an
+  -- adjacent turtle is a peripheral, and a booted one has labelled itself
+  -- quarryN, so its label and its cell turn "another turtle" into "quarry3 at
+  -- x,y,z" -- and the three turtles' logs together then say who deadlocked whom
+  -- [in-game 2026-08-29, log jGC2X: turtle 2 stopped one block from its own
+  -- trunk against an unnamed turtle sitting on its spine].
+  local side = (detect == turtle.detectUp and "top")
+            or (detect == turtle.detectDown and "bottom") or "front"
   local idx = st.index or 1
   -- Waiting alone cannot resolve a head-on meeting in a 1-wide corridor:
   -- both turtles wait, neither moves, and both give up [in-game 2026-08-29,
@@ -1413,9 +1421,18 @@ function giveWay(detect, inspect)
   -- way up knew what had stopped it.
   local okj, hitj, dj = pcall(inspect)
   local what = (okj and hitj and dj and tostring(dj.name)) or "another turtle"
+  -- Read the blocker's own label and work out which cell it is in, so the log
+  -- says WHICH turtle and WHERE rather than only that one was there.
+  local label = select(2, pcall(peripheral.call, side, "getLabel"))
+  local who = (type(label) == "string" and label ~= "") and label or "unlabelled"
+  local bx, by, bz = st.x, st.y, st.z
+  if side == "top" then by = by + 1
+  elseif side == "bottom" then by = by - 1
+  else local d = DIRS[st.dir]; bx, bz = st.x + d[1], st.z + d[2] end
   jammed = true
-  jamWhy = ("%s would not move out of the way at %d,%d,%d after %d tries -- it is "
-    .. "another turtle, not a block I may dig"):format(what, st.x, st.y, st.z, tries)
+  jamWhy = ("%s (%s) at %d,%d,%d would not move out of the way after %d tries -- it "
+    .. "is another turtle, not a block I may dig; I am at %d,%d,%d")
+    :format(what, who, bx, by, bz, tries, st.x, st.y, st.z)
   return false
 end
 

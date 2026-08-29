@@ -3419,11 +3419,14 @@ assert(ok, "the jammed run crashed: " .. tostring(err))
 assert(not log:find("work complete"),
   "a run that could not get past another turtle called itself finished:\n" .. log)
 assert(log:find("STOPPED: "), "it stopped and gave no reason at all:\n" .. log)
--- and the reason names the block, where it was, and that it is another turtle
-assert(log:find("STOPPED: computercraft:turtle_advanced would not move"),
+-- and the reason names the block, which turtle it was, where it was, how long
+-- it waited, and that it is another turtle
+assert(log:find("STOPPED: computercraft:turtle_advanced %("),
   "the stop does not name what was in the way:\n" .. log)
-assert(log:find("at %-?%d+,%-?%d+,%-?%d+ after %d+ tries"),
-  "the stop does not say where it was or how long it waited:\n" .. log)
+assert(log:find("%(unlabelled%)"),
+  "the stop does not name (or fail to name) which turtle was blocking:\n" .. log)
+assert(log:find("at %-?%d+,%-?%d+,%-?%d+ would not move out of the way after %d+ tries"),
+  "the stop does not say where the blocker was or how long it waited:\n" .. log)
 assert(log:find("another turtle, not a block I may dig"),
   "the stop does not say it was a turtle rather than rock:\n" .. log)
 -- and it outlives the run, because "why are you stopped" is asked hours later

@@ -522,6 +522,29 @@ local function hasWiredModem()
   return (e.left == "wired modem") or (e.right == "wired modem")
 end
 
+-- Where the floppy is actually mounted. "/disk" is only the FIRST drive's
+-- mount: a second one anywhere on the turtle mounts at "/disk2", "/disk3" and
+-- so on, and every hard-coded /disk path then silently misses -- the deployer
+-- writes a boot script the new turtle cannot see, and a turtle started off the
+-- floppy does not recognise that it is on one. The drive answers this itself,
+-- through getMountPath, so ask it rather than guessing the name.
+-- Left and right hold equipped upgrades on a turtle, never a block, so the
+-- drive can only be on the other four sides -- but asking all six costs
+-- nothing and covers a computer running this too.
+local function diskPath()
+  for _, side in ipairs({ "top", "bottom", "front", "back", "left", "right" }) do
+    local okt, t = pcall(peripheral.getType, side)
+    if okt and t == "drive" then
+      local okm, mp = pcall(peripheral.call, side, "getMountPath")
+      if okm and type(mp) == "string" and mp ~= "" then
+        return (mp:sub(1, 1) == "/") and mp or ("/" .. mp)
+      end
+    end
+  end
+  -- no drive answered: fall back to the conventional name if it is there
+  return fs.exists("/disk") and "/disk" or nil
+end
+
 -- A modem sitting in a slot is not a modem on a side, and only a side answers
 -- gps.locate. If one is aboard and neither side holds it, put it on.
 --
@@ -1787,7 +1810,12 @@ end
 -- coordinates go in the state file, so the probe happens once per claim and a
 -- killed turtle picks up where it left off.
 
-local LAVAMAP   = "/disk/lava.txt"
+-- The shared lava map lives on the floppy, wherever the drive says it is
+-- mounted -- "/disk" is only the first drive's name.
+local function lavaMap()
+  local d = diskPath()
+  return d and (d .. "/lava.txt") or nil
+end
 local LAVA_KEEP = 64             -- sources held in the state file between docks
 local function isContainer(name)
   if tostring(name):find("lootr", 1, true) then return false end  -- loot, not storage
@@ -1911,7 +1939,7 @@ local function carryingTurtle()
   return false
 end
 
-local function buildDepot(l, c)
+local function buildDepot(l, c, conf)
   -- One container, in the one block beside the trunk that the mining pattern
   -- never enters.
   --
@@ -1936,6 +1964,23 @@ local function buildDepot(l, c)
     if ok and item and isContainer(item.name) then slot = sl break end
   end
   if not slot then return 0 end
+
+  -- One box for the whole mine, and it goes at the MIDDLE trunk, so every
+  -- turtle walks the same short piece of spine to it [user, 2026-08-29].
+  -- Built wherever the carrier happened to be standing it lands under turtle
+  -- 1's trunk, at one end of the claim, and the turtle at the far end walks
+  -- the whole spine on every single trip. The middle trunk is the claim's own
+  -- centre, because each turtle's trunk sits at the centre of its third.
+  local h1 = halt
+  local mid = math.ceil((conf.turtles or 1) / 2)
+  local _, _, midZ = thirdOf(c, mid, conf.turtles or 1)
+  if st.z ~= midZ then
+    sayf("depot  : the depot belongs at the middle trunk, z=%d -- walking there", midZ)
+    if not goTo(c.spine, st.y, midZ) then
+      halt = h1
+      sayf("depot  : cannot reach the middle trunk, so building here at z=%d instead", st.z)
+    end
+  end
 
   local tx, ty, tz = st.x, st.y, st.z
   local spots = { { y = ty, dir = "down" } }
@@ -2120,7 +2165,8 @@ end
 
 local function mapRead()
   local out = {}
-  if not fs.exists(LAVAMAP) then return out end
+  local LAVAMAP = lavaMap()
+  if not LAVAMAP or not fs.exists(LAVAMAP) then return out end
   local f = fs.open(LAVAMAP, "r")
   local text = f.readAll()
   f.close()
@@ -2134,6 +2180,8 @@ end
 local function mapWrite(list)
   local lines = {}
   for _, p in ipairs(list) do lines[#lines + 1] = ("%d,%d,%d"):format(p.x, p.y, p.z) end
+  local LAVAMAP = lavaMap()
+  if not LAVAMAP then return end
   local f = fs.open(LAVAMAP, "w")
   f.write(table.concat(lines, "\n") .. "\n")
   f.close()
@@ -2141,7 +2189,7 @@ end
 
 -- Merge what this trip saw into the shared map. Called only while docked.
 local function mapMerge()
-  if not fs.exists("/disk") then return 0 end
+  if not lavaMap() then return 0 end
   local have, seen, added = mapRead(), {}, 0
   for _, p in ipairs(have) do seen[("%d,%d,%d"):format(p.x, p.y, p.z)] = true end
   for _, p in ipairs(st.lava or {}) do
@@ -2162,7 +2210,7 @@ local function mapMerge()
 end
 
 local function mapDrop(x, y, z)
-  if not fs.exists("/disk") then return end
+  if not lavaMap() then return end
   local out = {}
   for _, p in ipairs(mapRead()) do
     if not (p.x == x and p.y == y and p.z == z) then out[#out + 1] = p end
@@ -2449,7 +2497,13 @@ local function findSharedDepot(c, conf, l, index, trunkZ)
       -- an upward-only sweep passes over it and sets noDepot for good.
       local y0 = st.level
       for _, off in ipairs({ 0, 1, 2, 3, -1, -2, -3 }) do
-        if goTo(c.spine, y0 + off, tz) and probeDepot(l) then
+        -- Downwards stops at bottomY. It is one level above bedrock and the
+        -- same number for all three turtles, so a neighbour's trunk floor can
+        -- never be under it -- the offsets below it buy nothing and cost a dig
+        -- into bedrock territory. In-game [log kdxS8, 2026-08-29] this walked
+        -- to y=-61 and cut an eight-block corridor around somebody's chests.
+        local y = y0 + off
+        if y >= conf.bottomY and goTo(c.spine, y, tz) and probeDepot(l) then
           local dp = st.depot
           sayf("depot  : shared depot at %d,%d,%d (dump side %s, fuel side %s)",
             dp.x, dp.y, dp.z, tostring(dp.dump), tostring(dp.fuel))
@@ -2713,7 +2767,7 @@ local function runMine(conf, l, index)
     -- build the depot, not to look for one. Placing first means probeDepot
     -- finds them on the same pass.
     if not probeDepot(l) then
-      local built = buildDepot(l, c)
+      local built = buildDepot(l, c, conf)
       if built > 0 then
         sayf("depot  : built the depot here, %d container%s", built, built == 1 and "" or "s")
       end
@@ -2978,10 +3032,25 @@ local N = %d
 local MANUAL = %s
 os.setComputerLabel("quarry" .. N)
 
+-- "/disk" is only the first drive's mount point; a second drive mounts at
+-- "/disk2" and every hard-coded path then misses. Ask the drive itself.
+local D
+for _, side in ipairs({ "top", "bottom", "front", "back", "left", "right" }) do
+  local okt, t = pcall(peripheral.getType, side)
+  if okt and t == "drive" then
+    local okm, mp = pcall(peripheral.call, side, "getMountPath")
+    if okm and type(mp) == "string" and mp ~= "" then
+      D = (mp:sub(1, 1) == "/") and mp or ("/" .. mp)
+      break
+    end
+  end
+end
+D = D or "/disk"
+
 -- Nobody is watching this screen. Every stage is written to the floppy as well,
 -- so the deployer standing behind can read back what actually happened rather
 -- than inferring it from a turtle that did not move.
-local LOG = "/disk/deploy" .. N .. ".log"
+local LOG = D .. "/deploy" .. N .. ".log"
 if fs.exists(LOG) then fs.delete(LOG) end
 local function note(msg)
   print("quarry" .. N .. ": " .. msg)
@@ -2989,13 +3058,13 @@ local function note(msg)
   if h then h.writeLine(msg) h.close() end
 end
 
-note("booted, waiting for my kit")
+note("booted, floppy is mounted at " .. D .. ", waiting for my kit")
 
 -- quarry.lua, not quarry: that is the name turtle 1 runs and the name update
 -- writes, and a turtle carrying both ends up running whichever the shell picks.
 if fs.exists("quarry") then fs.delete("quarry") end
 if fs.exists("quarry.lua") then fs.delete("quarry.lua") end
-fs.copy("/disk/quarry", "quarry.lua")
+fs.copy(D .. "/quarry", "quarry.lua")
 
 -- The config has to follow the program. Without it this turtle seeds a fresh
 -- quarry.conf off the shipped defaults -- which since 2026-08-27 mine for real
@@ -3006,8 +3075,8 @@ fs.copy("/disk/quarry", "quarry.lua")
 -- boot, so coordinates typed in by hand were wiped by the next reboot and the
 -- turtle asked for them again -- forever, for as long as it stood beside the
 -- drive [user, 2026-08-28].
-if fs.exists("/disk/quarry.conf") and not fs.exists("quarry.conf") then
-  fs.copy("/disk/quarry.conf", "quarry.conf")
+if fs.exists(D .. "/quarry.conf") and not fs.exists("quarry.conf") then
+  fs.copy(D .. "/quarry.conf", "quarry.conf")
   note("took the deployer's quarry.conf")
 elseif fs.exists("quarry.conf") then
   note("keeping my own quarry.conf")
@@ -3022,8 +3091,8 @@ end
 -- would sink a trunk in a mine of its own. The deployer's anchor is on the
 -- floppy for exactly that reason; take it, and never overwrite a state file
 -- this turtle has already written for itself.
-if fs.exists("/disk/quarry.state") and not fs.exists("quarry.state") then
-  fs.copy("/disk/quarry.state", "quarry.state")
+if fs.exists(D .. "/quarry.state") and not fs.exists("quarry.state") then
+  fs.copy(D .. "/quarry.state", "quarry.state")
   note("took the deployer's claim anchor")
 end
 
@@ -3285,7 +3354,8 @@ local function deployOne(conf, l, index)
   -- front is the only signal available -- there is no peripheral to ask. The
   -- new turtle also writes its progress to the floppy, so read that back when
   -- it is in reach: it turns a screen nobody is looking at into output here.
-  local logf, said, asked = ("/disk/deploy%d.log"):format(index), 0, false
+  local logf = ("%s/deploy%d.log"):format(diskPath() or "/disk", index)
+  local said, asked = 0, false
   sayf("deploy : waiting for turtle %d to boot and walk off (about 25s)", index)
   for i = 1, 90 do
     if not turtle.detect() then
@@ -3299,7 +3369,18 @@ local function deployOne(conf, l, index)
     -- with the program still only on /disk. A player fixes that in one click.
     -- Ask for it rather than burning the other 78 seconds and calling it a
     -- failure, and go back to waiting once they say they have.
-    if not asked and i >= 12 and not fs.exists(logf) then
+    -- turnOn wakes a turtle that is off; it does nothing to one that is ON but
+    -- never ran the disk startup, and that is the state two live deploys left
+    -- them in. reboot is the stronger action and it re-runs the disk startup,
+    -- which is exactly the "reboot it on its own screen" the player was being
+    -- sent to do by hand [user, 2026-08-29: "still had to run code in turtle
+    -- 2/3 manually"]. Try it twice before asking anyone to walk over.
+    if (i == 6 or i == 16) and not fs.exists(logf) then
+      local lived, res = pcall(peripheral.call, "front", "reboot")
+      sayf("deploy : %ds silent -- sent reboot to turtle %d (%s)", i, index,
+        lived and "ok" or tostring(res))
+    end
+    if not asked and i >= 24 and not fs.exists(logf) then
       asked = true
       sayf("deploy : nothing from turtle %d yet -- it is still switched off.", index)
       say("         RIGHT-CLICK IT. That turns it on and the disk startup runs.")
@@ -3468,31 +3549,35 @@ function runDeploy(conf, l, index)
     say("deploy : disk drive placed")
   end
 
-  -- /disk only exists when a floppy is in the drive, so it is the test for
-  -- whether the last run's floppy is still in there.
-  if fs.exists("/disk") then
-    say("deploy : the floppy from the last run is still in the drive")
+  -- A mount only exists when a floppy is in the drive, so it is the test for
+  -- whether the last run's floppy is still in there. The name is asked for,
+  -- never assumed: "/disk" is the FIRST drive's mount and this turtle may
+  -- already have one of its own, which puts this floppy at "/disk2".
+  local DISK = diskPath()
+  if DISK then
+    sayf("deploy : the floppy from the last run is still in the drive, at %s", DISK)
   else
     if not floppySlot then error("no floppy in the hold", 0) end
     turtle.select(floppySlot)
     if select(2, pcall(turtle.drop)) == false then
       error("the floppy would not go into the drive", 0)
     end
-    say("deploy : floppy in the drive")
+    DISK = diskPath()
+    sayf("deploy : floppy in the drive, mounted at %s", tostring(DISK))
   end
 
   -- 2. the payload. The program copies ITSELF, so a deployed turtle always
   --    runs the same build as the one that placed it -- no second wget, and no
   --    way for the two to drift apart.
-  if not fs.exists("/disk") then
-    error("the drive did not mount as /disk -- is the floppy in it?", 0)
+  if not DISK then
+    error("the drive mounted nothing -- is the floppy really in it?", 0)
   end
   local me = shell and shell.getRunningProgram and shell.getRunningProgram()
   if not me or not fs.exists(me) then
     error("cannot find my own file to copy onto the floppy", 0)
   end
-  if fs.exists("/disk/quarry") then fs.delete("/disk/quarry") end
-  local wrote, size = copyStripped(me, "/disk/quarry")
+  if fs.exists(DISK .. "/quarry") then fs.delete(DISK .. "/quarry") end
+  local wrote, size = copyStripped(me, DISK .. "/quarry")
   if not wrote then
     error(("the program will not fit the floppy even stripped (%d bytes); "):format(size)
       .. "raise floppy_space_limit in the CC:Tweaked server config", 0)
@@ -3502,11 +3587,11 @@ function runDeploy(conf, l, index)
   -- and the config with it. A deployed turtle that seeds its own gets
   -- dry = true and never moves, which reads exactly like a hung deployment.
   if fs.exists(CONF) then
-    if fs.exists("/disk/quarry.conf") then fs.delete("/disk/quarry.conf") end
+    if fs.exists(DISK .. "/quarry.conf") then fs.delete(DISK .. "/quarry.conf") end
     local body = readAllOf(CONF)
     body = confForPlaced(conf, body)
-    local h = fs.open("/disk/quarry.conf", "w")
-    if not h then error("cannot write /disk/quarry.conf", 0) end
+    local h = fs.open(DISK .. "/quarry.conf", "w")
+    if not h then error("cannot write " .. DISK .. "/quarry.conf", 0) end
     h.write(body)
     h.close()
     sayf("deploy : copied %s to /disk/quarry.conf (dry = %s)", CONF, tostring(conf.dry))
@@ -3517,8 +3602,8 @@ function runDeploy(conf, l, index)
     -- not a third of this one. Only the home is seeded: no position and no
     -- heading, so locate() still starts it on its own pin, and its own state
     -- overwrites this the moment it saves.
-    if fs.exists("/disk/quarry.state") then fs.delete("/disk/quarry.state") end
-    local sh = fs.open("/disk/quarry.state", "w")
+    if fs.exists(DISK .. "/quarry.state") then fs.delete(DISK .. "/quarry.state") end
+    local sh = fs.open(DISK .. "/quarry.state", "w")
     if sh then
       sh.write(textutils.serialise({ home = { x = st.home.x, y = st.home.y, z = st.home.z } }))
       sh.close()
@@ -3557,7 +3642,7 @@ function runDeploy(conf, l, index)
     -- the mod's business, not ours, and getting it wrong costs an in-game trip;
     -- writing both costs nothing and cannot pick the wrong one.
     local wrote = 0
-    for _, name in ipairs({ "/disk/startup.lua", "/disk/startup" }) do
+    for _, name in ipairs({ DISK .. "/startup.lua", DISK .. "/startup" }) do
       local h = fs.open(name, "w")
       if h then
         h.write(BOOT:format(n, tostring(manualFix(conf))))
@@ -3565,7 +3650,7 @@ function runDeploy(conf, l, index)
         wrote = wrote + 1
       end
     end
-    if wrote == 0 then error("cannot write the boot script to /disk", 0) end
+    if wrote == 0 then error("cannot write the boot script to " .. DISK, 0) end
     sayf("deploy : wrote the boot script for turtle %d (%d names)", n, wrote)
 
     local okn, why, stop = deployOne(conf, l, n)
@@ -3626,11 +3711,23 @@ local args = { ... }
 -- minus the label, the modem and the fuel.
 -- fs resolves a relative path from the root, so the copies below land on the
 -- turtle. shell.run does NOT -- it resolves against the shell's directory,
--- which is /disk on this route, so the handover has to name /quarry.lua or the
--- shell looks for it on the floppy and finds nothing.
+-- which is the floppy on this route, so the handover has to name /quarry.lua
+-- or the shell looks for it on the floppy and finds nothing.
+--
+-- The mount is asked for, not assumed to be "/disk": a turtle that already has
+-- a drive of its own mounts this floppy at "/disk2", and a prefix test against
+-- "disk/" then says this run is on the turtle when it is not -- so it installs
+-- nothing, writes its state to the floppy, and cannot be restarted once it
+-- walks away. That is the turtle you have to go and type commands into.
 local me = shell and shell.getRunningProgram and shell.getRunningProgram()
-if me and me:gsub("^/", ""):sub(1, 5) == "disk/" then
-  say("startup: I am running off the floppy, which stays here when I leave.")
+local DISK = diskPath()
+local onFloppy = false
+if me and DISK then
+  local full = (me:sub(1, 1) == "/") and me or ("/" .. me)
+  onFloppy = full:sub(1, #DISK + 1) == (DISK .. "/")
+end
+if onFloppy then
+  sayf("startup: I am running off the floppy at %s, which stays here when I leave.", DISK)
   say("         Installing to this turtle and starting that copy instead.")
   for _, n in ipairs({ "quarry", "quarry.lua" }) do
     if fs.exists(n) then fs.delete(n) end
@@ -3638,12 +3735,12 @@ if me and me:gsub("^/", ""):sub(1, 5) == "disk/" then
   fs.copy(me, "quarry.lua")
   -- Same anti-drift rules as the boot script: take the deployer's config and
   -- claim anchor, and never overwrite one this turtle already has.
-  if fs.exists("/disk/quarry.conf") and not fs.exists(CONF) then
-    fs.copy("/disk/quarry.conf", CONF)
+  if fs.exists(DISK .. "/quarry.conf") and not fs.exists(CONF) then
+    fs.copy(DISK .. "/quarry.conf", CONF)
     say("startup: took the deployer's quarry.conf")
   end
-  if fs.exists("/disk/quarry.state") and not fs.exists(STATE) then
-    fs.copy("/disk/quarry.state", STATE)
+  if fs.exists(DISK .. "/quarry.state") and not fs.exists(STATE) then
+    fs.copy(DISK .. "/quarry.state", STATE)
     say("startup: took the deployer's claim anchor")
   end
   say("startup: installed as /quarry.lua -- `quarry <n>` from now on")

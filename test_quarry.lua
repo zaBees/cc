@@ -646,11 +646,11 @@ local function mkworldenv()
   -- CC resolves an fs path from the root, so "disk/quarry" and "/disk/quarry"
   -- are the same file. The stub keys on the string, so make them the same
   -- string.
-  local function nn(n) return (n:gsub("^disk/", "/disk/")) end
+  local function nn(n) return (n:gsub("^disk", "/disk"):gsub("^//", "/")) end
   env.fs = {
     exists = function(n)
       n = nn(n)
-      if n == "/disk" then return V.disk end
+      if n == "/disk" or n == (V.mount or "/disk") then return V.disk end
       return V.files[n] ~= nil
     end,
     delete = function(n) V.files[nn(n)] = nil end,
@@ -734,6 +734,12 @@ local function mkworldenv()
         if n and n:find("turtle") then return "turtle" end
         if n and n:find("disk_drive") then return "drive" end
       end
+      -- the drive the deploy places ends up directly ABOVE the turtle, which is
+      -- the side diskPath finds it on for the rest of the run
+      if side == "top" then
+        local n = blockAt(V.pos.x, V.pos.y + 1, V.pos.z)
+        if n and n:find("disk_drive") then return "drive" end
+      end
       return V.equip[side]
     end,
     call = function(side, method)
@@ -741,6 +747,13 @@ local function mkworldenv()
         V.turnedOn = (V.turnedOn or 0) + 1
         return true
       end
+      if side == "front" and method == "reboot" then
+        V.rebooted = (V.rebooted or 0) + 1
+        return true
+      end
+      -- the drive answers where it put the floppy; V.mount lets a world put it
+      -- somewhere that is not "/disk", which is what a second drive does
+      if method == "getMountPath" then return V.disk and (V.mount or "/disk") or nil end
     end,
   }
   env.http = { post = function(_, body)
@@ -845,6 +858,7 @@ local function mkworldenv()
     if solid(nx, ny, nz) then return false end
     if V.fuel <= 0 then return false end
     V.pos.x, V.pos.y, V.pos.z = nx, ny, nz
+    if not V.minY or ny < V.minY then V.minY = ny end
     V.fuel = V.fuel - 1
     V.moves = V.moves + 1
     return true
@@ -932,6 +946,9 @@ end
 -- the claim for a turtle at 137,*,-42: x 112..159, spine 136, third 1 is
 -- z -64..-49 with its trunk at z=-57, and -57 is itself a branch row at y=-59.
 local BX, BY, BZ = 136, -59, -57
+-- the MIDDLE turtle's trunk, which is where one shared depot belongs: third 2
+-- is z -48..-33, so its trunk -- and the claim's centre -- is z=-41
+local MZ = -41
 
 -- 11. a whole branch, start to finish -------------------------------------
 
@@ -1559,14 +1576,22 @@ assert(log:find("depot  : container at %d"),
 -- is a block the pattern later walks into and refuses to dig, which ends that
 -- leg and then stops the run. Below the floor is the one neighbour it never
 -- touches, so exactly one container goes in, and it goes there.
+--
+-- And it goes under the MIDDLE trunk, not this turtle's own: one box serves
+-- all three, so it belongs where the walk to it is the same from either end
+-- [user, 2026-08-29]. Turtle 1's third is z -64..-49, turtle 2's is -48..-33
+-- with its trunk at z=-41, and that is the claim's own centre.
+assert(log:find("the depot belongs at the middle trunk, z=%-41"),
+  "it built the depot under its own trunk instead of the middle one:\n" .. log)
 local built = 0
 for key, name in pairs(V.blocks) do
   if name and (name:find("chest") or name:find("barrel")) then built = built + 1 end
 end
 assert(built == 1, "it placed " .. built .. " containers, not 1")
-assert(V.blocks[k3(BX, BY - 1, BZ)], "the container is not under the trunk floor:\n" .. log)
+assert(V.blocks[k3(BX, BY - 1, MZ)],
+  "the container is not under the middle trunk floor:\n" .. log)
 for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
-  local n = V.blocks[k3(BX + d[1], BY, BZ + d[2])]
+  local n = V.blocks[k3(BX + d[1], BY, MZ + d[2])]
   assert(not (n and (n:find("chest") or n:find("barrel"))),
     "it put a container beside the trunk floor, in the pattern's way:\n" .. log)
 end
@@ -1622,8 +1647,11 @@ assert(boot, "no boot script was written")
 assert(V.files["/disk/startup"] == boot,
   "the boot script was not written under both names, so which one the disk\n" ..
   "auto-runs decides whether deployment works at all")
-assert(boot:find("/disk/quarry.conf", 1, true),
+assert(boot:find('D .. "/quarry.conf"', 1, true),
   "the boot script never reads the config off the floppy")
+assert(boot:find("getMountPath", 1, true),
+  "the boot script hard-codes /disk instead of asking the drive where the\n" ..
+  "floppy is mounted, which is wrong the moment a second drive exists")
 
 -- a deployer still running dry says so rather than placing turtles that stall
 world({ inv = kit(), leaveAfter = 3 })
@@ -2046,8 +2074,10 @@ assert(log:find("recall : removed /startup"), "it never said so:\n" .. log)
 -- fallback is beside the trunk one level UP, on an x side: +z/-z is the spine
 -- at every level, and the east-west legs only cross the trunk's own z on the
 -- levels isBranch names, which the next level up never is.
+-- the bedrock goes under the MIDDLE trunk, because that is where the depot is
+-- built now [test 33]
 world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
-        blocks = { [k3(BX, BY - 1, BZ)] = "minecraft:bedrock" },
+        blocks = { [k3(BX, BY - 1, MZ)] = "minecraft:bedrock" },
         inv = { [1] = { name = "minecraft:chest", count = 1 },
                 [2] = { name = "minecraft:coal",  count = 64 } } })
 ok, err, log = runWorld("1")
@@ -2056,15 +2086,15 @@ assert(log:find("placed a container beside the trunk at y=" .. (BY + 1), 1, true
   "bedrock under the floor left the run with no depot at all:\n" .. log)
 local side62
 for _, dx in ipairs({ -1, 1 }) do
-  if V.blocks[k3(BX + dx, BY + 1, BZ)] then side62 = k3(BX + dx, BY + 1, BZ) end
+  if V.blocks[k3(BX + dx, BY + 1, MZ)] then side62 = k3(BX + dx, BY + 1, MZ) end
 end
 assert(side62, "no container beside the trunk one level up:\n" .. log)
 for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
-  local n = V.blocks[k3(BX + d[1], BY, BZ + d[2])]
+  local n = V.blocks[k3(BX + d[1], BY, MZ + d[2])]
   assert(not (n and (n:find("chest") or n:find("barrel"))),
     "it put a container beside the trunk FLOOR, in the pattern's way:\n" .. log)
 end
-assert(blockAt(BX, BY - 1, BZ) == "minecraft:bedrock", "it dug into bedrock")
+assert(blockAt(BX, BY - 1, MZ) == "minecraft:bedrock", "it dug into bedrock")
 assert(log:find("depot  : banked %d+ fuel into it"),
   "it placed the chest and never banked its coal for the others:\n" .. log)
 assert(log:find("depot  : dumped;"),
@@ -2515,14 +2545,14 @@ assert(anchor:find("137") and anchor:find("%-42"), "the anchor is not the deploy
 assert(not anchor:find("dir"),
   "the anchor carries a heading, so the placed turtle will skip its own pin: " .. anchor)
 local boot2 = V.files["/disk/startup.lua"]
-assert(boot2:find('fs.copy("/disk/quarry.state", "quarry.state")', 1, true),
+assert(boot2:find('fs.copy(D .. "/quarry.state", "quarry.state")', 1, true),
   "the boot script does not take the anchor")
 assert(boot2:find('not fs.exists("quarry.state")', 1, true),
   "it would overwrite a state file the turtle wrote for itself")
 
 -- 78. the program lands in root under the name everything else uses ----------
 
-assert(boot2:find('fs.copy("/disk/quarry", "quarry.lua")', 1, true),
+assert(boot2:find('fs.copy(D .. "/quarry", "quarry.lua")', 1, true),
   "the boot script still writes a second name for the same program")
 assert(boot2:find('if fs.exists("quarry") then fs.delete("quarry") end', 1, true),
   "a stale unsuffixed copy is left beside it for the shell to pick")
@@ -2936,5 +2966,68 @@ assert(bootTxt:find("not a modem %-%- not equipping"),
   "the boot script equips without reading the slot back")
 assert(bootTxt:find("getEquippedLeft"),
   "the boot script never asks which side is free")
+
+-- 96. the floppy is found where the drive says it is, not at "/disk" ---------
+-- On the user's instruction 2026-08-29. "/disk" is only the FIRST drive's
+-- mount point; a second drive anywhere puts this floppy at "/disk2", and every
+-- hard-coded path then silently misses -- the deployer writes a boot script
+-- the new turtle cannot see, and a turtle started off the floppy does not
+-- recognise it is on one, so it installs nothing, writes its state to a floppy
+-- it is about to walk away from, and cannot be restarted. That is the turtle
+-- you have to go and type commands into.
+
+world({ inv = kit(), leaveAfter = 3 })
+V.mount = "/disk2"
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the deploy crashed on a second-drive mount: " .. tostring(err))
+assert(log:find("mounted at /disk2") or log:find("still in the drive, at /disk2"),
+  "it never asked the drive where the floppy is:\n" .. log)
+assert(V.files["/disk2/quarry"], "the program did not reach the real mount point")
+assert(V.files["/disk2/startup.lua"], "the boot script did not reach the real mount point")
+assert(not V.files["/disk/quarry"], "it wrote to /disk, which is a different drive")
+assert(log:find("deploy : 2 of 2 deployed"),
+  "a floppy at /disk2 cost it the deployment:\n" .. log)
+
+-- the boot script asks the same question on the turtle it lands on
+world({ inv = kit(), leaveAfter = 3 })
+ok, err, log = runWorld("1", "deploy")
+local b96 = V.files["/disk/startup.lua"]
+assert(b96:find("getMountPath", 1, true), "the boot script hard-codes the mount")
+assert(b96:find('D .. "/quarry"', 1, true), "the boot script does not use the mount it found")
+
+-- 97. a silent turtle is rebooted before anyone is asked to walk over --------
+-- turnOn wakes a turtle that is OFF; it does nothing to one that is on and
+-- never ran the disk startup, which is the state two live deploys left them
+-- in. reboot re-runs the disk startup -- the very thing the player was being
+-- told to do by hand [user, 2026-08-29].
+
+world({ inv = kit() })                            -- nothing ever walks off
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the stuck deploy crashed: " .. tostring(err))
+assert(log:find("sent reboot to turtle 2"),
+  "it asked the player before trying a reboot itself:\n" .. log)
+assert((V.rebooted or 0) >= 2, "it only tried the reboot once: " .. tostring(V.rebooted))
+local rebootAt = log:find("sent reboot to turtle 2")
+local askAt = log:find("RIGHT%-CLICK IT")
+assert(rebootAt and askAt and rebootAt < askAt,
+  "it asked for the right-click before it tried the reboot:\n" .. log)
+
+-- 98. the shared-depot sweep never goes below the mine's own floor ----------
+-- In-game [log kdxS8, 2026-08-29] turtle 2 found nothing under its own trunk,
+-- swept the spine for the others' -- and probed DOWNWARD past bottomY to
+-- y=-61, where it cut an eight-block corridor around somebody's chests. The
+-- downward offsets exist because a neighbour's floor can be below this
+-- turtle's when bedrock stopped this one higher, but bottomY is the same
+-- number for all three, so nothing is ever under it.
+
+world({ conf = "topY = -55\ntripBlocks = 96\nbottomY = -59\n" .. SECTIONS,
+        fuel = 20000, inv = {} })
+ok, err, log = runWorld("2")
+assert(ok, "the shared-depot sweep crashed: " .. tostring(err))
+assert(log:find("looking under turtle"), "it never swept the spine:\n" .. log)
+assert(log:find("no container under any trunk floor"),
+  "the sweep found something, so this world does not test the clamp:\n" .. log)
+assert(V.minY >= -59,
+  "it went to y=" .. tostring(V.minY) .. ", below bottomY, digging into bedrock")
 
 print("all quarry phase 5 checks passed")

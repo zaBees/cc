@@ -199,6 +199,41 @@ confirmed to fail against its own unfixed code:
       wait loop saw, because the deployer is still dropping items in after that.
     Test 95, confirmed to fail against the unfixed code.
 
+## What shipped on 2026-08-29, from log kdxS8
+
+Turtle 2 ran the current build: `equipped: a modem was in a slot and not on a
+side -- fitted it on left` is item 21 working in-game. It crossed to its trunk,
+sank to y=-59, found nothing under its own trunk, swept the spine for the
+others' -- and stopped at 145 blocks with nowhere to bank them. Four changes.
+
+22. **One depot, at the MIDDLE trunk.** On the user's instruction. `buildDepot`
+    placed it wherever the carrier happened to be standing, which is turtle 1's
+    trunk -- one end of the claim -- so turtle 3 walked the whole spine on every
+    trip and turtle 2 found nothing under its own. It now walks to the middle
+    turtle's trunk first (`math.ceil(turtles / 2)`, whose trunk is the claim's
+    own z-centre) and builds there; a middle trunk it cannot reach falls back to
+    building where it stands. Tests 33 and 62 rewritten around it.
+23. **The shared-depot sweep stops at `bottomY`.** It probed `{0,1,2,3,-1,-2,-3}`
+    off `st.level`, so from a floor at y=-59 it walked to **y=-61** and cut an
+    eight-block corridor round somebody's chests. The downward offsets exist for
+    a real case -- bedrock can stop THIS turtle higher than its neighbour -- but
+    `bottomY` is the same number for all three, so nothing is ever under it.
+    Test 98.
+24. **The floppy is found where the drive says it is.** `getMountPath` on the
+    drive, everywhere `/disk` was hard-coded: the deployer's writes, the boot
+    script's reads, the lava map, and the "am I running off the floppy?" test in
+    `main`. **`/disk` is only the FIRST drive's mount** -- a second drive
+    anywhere puts this floppy at `/disk2`, and then the prefix test says a run
+    off the floppy is a run on the turtle, so it installs nothing, writes its
+    state to a floppy it walks away from, and cannot be restarted. That is a
+    turtle you have to go and type commands into. Test 96.
+25. **A silent turtle is rebooted before anyone is asked to walk over.**
+    `turnOn` wakes a turtle that is OFF and does nothing to one that is on but
+    never ran the disk startup -- which is the state two live deploys left them
+    in. `reboot` re-runs the disk startup, which is exactly what the player was
+    being told to do by hand. Sent at 6s and again at 16s; the right-click
+    question moved back to 24s. Test 97.
+
 ## Next action
 
 The code is ready. The run to ask for: **`update`, then `quarry 1`** from the
@@ -295,7 +330,7 @@ lock to one item type, so a mixed dump fails on the second stack.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, and a modem in a slot fitted to a side. 162,576 bytes, fletcher32 `373307761`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, one depot at the middle trunk, and the floppy found through getMountPath. 167497 bytes, fletcher32 `1293994432`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. |
 | `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |
@@ -347,7 +382,7 @@ and the in-game computer running `cloud <token>`.
 | --- | --- |
 | `MASTERMINE-PLAN.md` | The design, every decision and its reasoning. Read second. Trimmed 2026-08-28: §11 is now a status table, and the rules it used to carry are in this file's Settled and Corrections lists. |
 | `quarry.lua` | **The deliverable.** ~2,430 lines, Phases 1–5. Opens `local DRY = true`; the config lowers it. |
-| `test_quarry.lua` | Five suites against stubbed CC worlds, 95 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot; 75–91 the deploy build of that night; 92 the double-fed turtle; 93 the deploy that restarted at turtle 2; 94 the position-fix order; 95 the equipped-upgrade check and the modem fit. `lua5.3 test_quarry.lua` |
+| `test_quarry.lua` | Five suites against stubbed CC worlds, 98 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot; 75–91 the deploy build of that night; 92 the double-fed turtle; 93 the deploy that restarted at turtle 2; 94 the position-fix order; 95 the equipped-upgrade check and the modem fit; 96-98 the mount point, the auto-reboot and the depot-sweep floor. `lua5.3 test_quarry.lua` |
 | `alert.lua` | For a computer: prints what the turtles broadcast on the `quarry` protocol. |
 | `update.lua` | The in-game updater: `update` replaces `quarry` and itself from GitHub. Downloaded once by hand. |
 | `test_update.lua` | Stubbed `http`/`fs` around the updater: the failed download, the HTML 404, the cache-buster, the checksum. `lua5.3 test_update.lua` |
@@ -425,6 +460,16 @@ Plan section numbers in brackets.
   Drawers and bins stay off it on purpose — they lock to one item type, so a
   mixed dump fails on the second stack. Do not re-split this into per-question
   copies; there were four.
+- **The depot is built at the MIDDLE trunk**, `math.ceil(turtles / 2)`, whose
+  trunk is the claim's own z-centre -- one box serves all three, so it belongs
+  where the walk is the same from either end. Set 2026-08-29 at the user's
+  instruction. Do not go back to building it where the carrier happens to stand.
+- **Nothing hard-codes `/disk`.** `diskPath()` asks the drive through
+  `getMountPath`; `/disk` is only the first drive's mount and a second one puts
+  the floppy at `/disk2`. The boot script resolves it the same way into `D`.
+- **The shared-depot sweep never probes below `bottomY`.** It is the same
+  number for all three turtles, so no neighbour's floor is under it, and going
+  there digs into bedrock.
 - **The depot is ONE box.** Fuel and spoil share it, which is what the ration
   was written for. The kit audit asks for one.
 - **The deployment kit never goes into the depot.** `dumpLoad` and `restock`

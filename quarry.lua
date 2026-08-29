@@ -2736,7 +2736,13 @@ end
 
 -- Foraging, only when the depot is dry [plan 7]: nearest mapped lava source
 -- first, then a coal level, then park.
-function forage(conf, l, c)
+-- `z` is the trunk column this turtle will work from, and it is what the climb
+-- is priced against. It defaults to st.z because dock() calls this standing ON
+-- the trunk, where the two are the same thing. runMine's surface call is the
+-- one that must pass it: a turtle at the launch block is up to half a claim
+-- away from its own trunk in z, and pricing from st.z drops that walk from the
+-- estimate twice over -- out and back.
+function forage(conf, l, c, z)
   if conf.lava and findItem("minecraft:bucket") then
     local best, bd
     -- both maps: the floppy where there is one, and the list the broadcast
@@ -2781,7 +2787,7 @@ function forage(conf, l, c)
     -- turtle standing. Short, it stops HERE, at the depot -- somewhere the
     -- player can walk to with a stack of coal. Halfway up a one-wide trunk
     -- shaft is not.
-    local cost = branchCost(c, conf, top, st.z)
+    local cost = branchCost(c, conf, top, z or st.z)
     if fuelLevel() < cost then burnFrom(l, cost) end
     if fuelLevel() < cost then
       halt = ("depot is dry and I cannot afford the climb for coal: %d fuel, %d to work y=%d and come back")
@@ -3201,7 +3207,7 @@ local function runMine(conf, l, index)
   if fuelLevel() < need then
     sayf("fuel   : %d in the tank, %d to reach the branch and walk back -- gathering coal first",
       fuelLevel(), need)
-    if not forage(conf, l, c) then report(c, conf) return end
+    if not forage(conf, l, c, trunkZ) then report(c, conf) return end
     target = st.level or target
   end
 

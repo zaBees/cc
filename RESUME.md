@@ -575,7 +575,7 @@ day. All five suites pass. **Unproven in-game: all of it.**
     which log `jGC2X` could not, having stopped turtle 2 one block from its own
     trunk against an unnamed turtle sitting on its spine.
 
-**Two loose ends this build left, both closed the same day:**
+**Three loose ends this build left, all closed the same day:**
 
 - **`span()` now has a test (5b).** Three `--check` runs from a turtle pinned at
   `0,64,0`: `chunksX = 5` spans chunks −2..2 for an 80×48 claim, `chunksX = 4`
@@ -591,6 +591,18 @@ day. All five suites pass. **Unproven in-game: all of it.**
   (CC:Tweaked #660) reads as `(unlabelled)` rather than
   `(No peripheral attached to front side)`. Confirmed to fail against the
   unfixed line.
+- **The surface climb is priced from the trunk column now (test 137).**
+  `forage` prices with `branchCost`, which measures from a trunk column, and
+  passed `st.z` for every caller. That is right for `dock`, which calls it
+  standing on the trunk, and wrong for `runMine`'s surface call: a turtle at the
+  launch block is up to half a claim away from its own trunk in z, and the walk
+  was dropped from both halves of the estimate. **`chunksZ` is what turned this
+  from harmless into a bug** — the worst gap is 48 at the shipped 3×3, which
+  `fuelMargin` (64) swallows, but 70 at `chunksZ = 5` and 112 at `chunksZ = 9`,
+  and a turtle that commits to a climb it is 70 short of strands in its trunk.
+  `forage` now takes the column as an argument, defaulting to `st.z` so `dock`
+  is unchanged. The worked case in the test: turtle 3 starting 27 blocks off its
+  own trunk priced its climb at 206, and prices it at 260.
 
 ## Next action
 
@@ -732,7 +744,7 @@ lock to one item type, so a mixed dump fails on the second stack.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, the floppy found through getMountPath, a stopped turtle that parks off the shared spine, one depot per turtle so they stop funnelling into one block, and the fuel build: coal burnt on pickup to `fuelKeep`, no ration at a turtle's own box, `sharePerDock` at a shared one, and a climb into coal country launched while it can still be paid for, with the depot read through a peripheral wrap rather than sixteen sucks and the lava map shared over rednet. **The harvest build (2026-08-29):** the floppy writes its boot files first and reads every write back, refuses a program that will not fit, retries the mount, and carries its own turtle index; `quarry stop` parks a turtle for relocation; a solo kit needs no drive or floppy; and the coal aboard is split evenly across every turtle, the deployer included. **The claim-size build (2026-08-29):** `chunksX`/`chunksZ` size the claim, a short tank climbs for coal instead of refusing the trip, and a jam names the turtle that caused it, through a shared `periph()` that is the one door to a peripheral read. **Not pushed yet** — the URL above still serves the harvest build until it is. What will land: 220,075 bytes, fletcher32 `3775022116`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, the floppy found through getMountPath, a stopped turtle that parks off the shared spine, one depot per turtle so they stop funnelling into one block, and the fuel build: coal burnt on pickup to `fuelKeep`, no ration at a turtle's own box, `sharePerDock` at a shared one, and a climb into coal country launched while it can still be paid for, with the depot read through a peripheral wrap rather than sixteen sucks and the lava map shared over rednet. **The harvest build (2026-08-29):** the floppy writes its boot files first and reads every write back, refuses a program that will not fit, retries the mount, and carries its own turtle index; `quarry stop` parks a turtle for relocation; a solo kit needs no drive or floppy; and the coal aboard is split evenly across every turtle, the deployer included. **The claim-size build (2026-08-29):** `chunksX`/`chunksZ` size the claim, a short tank climbs for coal instead of refusing the trip, and a jam names the turtle that caused it, through a shared `periph()` that is the one door to a peripheral read, and the surface climb is priced from the trunk column it will actually walk to. **Not pushed yet** — the URL above still serves the harvest build until it is. What will land: 220,526 bytes, fletcher32 `4081775172`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. |
 | `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |
@@ -788,8 +800,8 @@ and the in-game computer running `cloud <token>`.
 two existing tests rather than adding numbered ones: the low-fuel test now
 asserts the turtle forages instead of refusing, and the jam test asserts the
 blocker is named and placed. 5b is the chunk span, odd and even; 136 is the
-jam that names its blocker, including the blocker that will not answer.
-`lua5.3 test_quarry.lua` |
+jam that names its blocker, including the blocker that will not answer; 137 the
+climb priced from the trunk column. `lua5.3 test_quarry.lua` |
 | `alert.lua` | For a computer: prints what the turtles broadcast on the `quarry` protocol. |
 | `update.lua` | The in-game updater: `update` replaces `quarry` and itself from GitHub. Downloaded once by hand. |
 | `test_update.lua` | Stubbed `http`/`fs` around the updater: the failed download, the HTML 404, the cache-buster, the checksum. `lua5.3 test_update.lua` |

@@ -2825,6 +2825,29 @@ assert(log:find("cannot afford the climb for coal"), "it did not stop on fuel:\n
 local saved = V.files["quarry.state"]
 assert(saved:find("cannot afford the climb"), "the reason died with the run: " .. tostring(saved))
 
+-- 137. the surface climb is priced from the TRUNK column, not from here -----
+
+-- forage() prices the climb with branchCost, which measures from a trunk
+-- column. dock() calls it standing ON the trunk, so passing st.z is right
+-- there. runMine's SURFACE call is not: a turtle at the launch block is up to
+-- half a claim away from its own trunk in z, and pricing from st.z drops that
+-- walk twice -- out of the estimate and back out of it again.
+--
+-- With the shipped 3x3 the gap is at most 48, which conf.fuelMargin (64)
+-- swallows. chunksZ = 5 is what makes it bite: the worst gap there is 70, and
+-- a turtle that commits to a climb it is 70 short of strands in its trunk.
+-- Turtle 3 at the default start is the concrete case -- claim z -80..-1, its
+-- third -28..-1, its trunk at z=-15, and it starts at z=-42, 27 blocks off.
+-- That 27 counts once on the way out and once on the way home: 206 -> 260.
+world({ conf = "chunksZ = 5\n", inv = kit(), fuel = 10 })
+ok, err, log = runWorld("3")
+assert(ok, "the trunk-priced climb run crashed: " .. tostring(err))
+local climb = tonumber(log:match("cannot afford the climb for coal: %d+ fuel, (%d+) to work"))
+assert(climb, "it did not price the climb at all:\n" .. log)
+assert(climb == 260,
+  ("the climb was priced at %d, not 260 -- 206 is the same trip with the 27-block "
+   .. "walk to its own trunk left out of both halves"):format(climb))
+
 reset({ state = "{x=137,y=83,z=-42,dir=0,index=1,halt=\"not enough fuel: 10 in the tank\"}" })
 ok, err, log = run("1", "--check")
 assert(ok, "--check crashed: " .. tostring(err))

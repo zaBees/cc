@@ -442,10 +442,15 @@ end
 -- for both. The pickaxe is not a peripheral, so it reads as nil here.
 -- First slot whose item id matches the pattern. Defined up here because the
 -- modem check needs it: everything from the equip dance down uses this one.
+-- A predicate is accepted as well as a pattern, for the one question a pattern
+-- cannot answer: "is this storage" is the STORAGE word list and there is only
+-- ever one of that list [RESUME, settled].
 local function slotLike(pat)
+  local like = (type(pat) == "function") and pat
+    or function(n) return n:find(pat) end
   for s = 1, 16 do
     local ok, d = pcall(turtle.getItemDetail, s)
-    if ok and d and d.name:find(pat) then return s, d.name, d.count end
+    if ok and d and like(d.name) then return s, d.name, d.count end
   end
 end
 
@@ -900,7 +905,7 @@ local KIT = {
     why = "the other turtles, placed at their own trunks" },
   { key = "chest",    label = "storage block",
     match = function(n) return hasWord(STORAGE, n) end,
-    why = "the depot: one box, for ore and for the coal we share" },
+    why = "one per turtle, under its own trunk" },
   { key = "drive",    label = "disk drive",
     match = function(n) return n:find("disk_drive") end,
     why = "the shared lava map, and the only way to hand code to a turtle" },
@@ -923,9 +928,15 @@ local KIT = {
 -- bucket it would never place, and turtles = 1 could not pass at all.
 -- Modems are the other half of it: with the position pinned by hand nothing
 -- ever calls gps.locate, so a modem is not kit, it is a spare part.
+-- A container each, not one for the mine. One box meant every dock from every
+-- turtle ended at the same block, down a spine that is one wide, so two
+-- turtles walking to it from opposite ends met head-on and neither could pass
+-- [in-game 2026-08-29, logs qhVSH and fPSF1: twelve give-ways each, then both
+-- gave up]. With a depot under its own trunk no turtle leaves its own third to
+-- bank, so the meetings stop happening rather than being recovered from.
 local function kitWants(conf)
   local n = conf.turtles or 1
-  return { turtle = n - 1, chest = 1, drive = 1, floppy = 1,
+  return { turtle = n - 1, chest = n, drive = 1, floppy = 1,
            modem = manualFix(conf) and 0 or n, bucket = n, fuel = 64 * n }
 end
 
@@ -1143,6 +1154,7 @@ local giveWay
 local halt     = nil    -- why the run stopped, the moment it must stop
 local obstacle = nil    -- a deny-list block in the way: ends a leg, not the run
 local jammed   = false  -- another turtle held the way past every retry [plan 8]
+local jamWhy   = nil    -- and what it was, for the run that gives up on it
 local claim    = nil    -- this run's claim, so the routing code can find a mouth
 local left     = {}     -- deny-list blocks refused, name -> { n, at } for report
 local rejected = {}     -- blocks passed over whose name says "ore" -- pack ids
@@ -1348,26 +1360,73 @@ function giveWay(detect, inspect)
   detect, inspect = detect or turtle.detect, inspect or turtle.inspect
   if not turtleAt(detect, inspect) then return true end
   local idx = st.index or 1
-  for try = 1, YIELD_TRIES do
+  -- Waiting alone cannot resolve a head-on meeting in a 1-wide corridor:
+  -- both turtles wait, neither moves, and both give up [in-game 2026-08-29,
+  -- logs qhVSH and fPSF1]. Somebody has to reverse, and the retreat is
+  -- goTo's job -- so what belongs here is WHEN to stop waiting and let it
+  -- happen. Nobody can read the other turtle's index, so the asymmetry has to
+  -- come from our own: index 1 waits 9 tries and effectively holds the
+  -- corridor, index 3 waits 3 and is the one that ends up moving. That is the
+  -- settled "lower wins, higher moves" rule with local knowledge only, and
+  -- the index-scaled sleep below still costs the turtle with right of way the
+  -- least.
+  local tries = math.max(1, YIELD_TRIES - 3 * idx)
+  for try = 1, tries do
     sayf("giveway: turtle %d waiting, another one is in the way (%d of %d)",
-      idx, try, YIELD_TRIES)
+      idx, try, tries)
     os.sleep(idx * 1.5)
     if not turtleAt(detect, inspect) then return true end
   end
+  -- name it now, while the block is still there to be named: "work complete"
+  -- was printed for a run that never reached its depot because nothing on the
+  -- way up knew what had stopped it.
+  local okj, hitj, dj = pcall(inspect)
+  local what = (okj and hitj and dj and tostring(dj.name)) or "another turtle"
   jammed = true
+  jamWhy = ("%s would not move out of the way at %d,%d,%d after %d tries -- it is "
+    .. "another turtle, not a block I may dig"):format(what, st.x, st.y, st.z, tries)
   return false
 end
 
 -- Pull off the corridor so the other turtle can pass. A branch mouth every 5
--- blocks along the spine is already a passing bay [plan 8]; anywhere else,
--- one block backwards is the best that a 1-wide tunnel offers.
+-- blocks along the spine is the passing bay [plan 8].
+--
+-- Stepping back ONE block was not a retreat: it left the turtle in the
+-- corridor, so two turtles meeting head-on on the spine both "moved aside"
+-- and neither could get past [in-game 2026-08-29, logs qhVSH and fPSF1].
+-- Walk backwards along the spine instead, away from the blocker, until a
+-- branch mouth is underfoot, then turn into it. Backwards rather than
+-- turning round, so we keep facing the blocker and the caller's retry sees
+-- the moment it leaves; and the mouth is a row that gets mined anyway, so the
+-- retreat costs nothing. A bay is at most 5 blocks away by construction.
+local RETREAT_MAX = 5
+
 local function stepAside()
   jammed = false
   local c = claim
-  if c and st.y == (st.level or st.y) and st.x == c.spine and isBranch(c, st.y, st.z) then
-    turnTo(1)                      -- west into the mouth: a row that gets mined anyway
-    if step() then return true end
+  if c and st.y == (st.level or st.y) and st.x == c.spine then
+    for back = 0, RETREAT_MAX do
+      if isBranch(c, st.y, st.z) then
+        turnTo(1)                  -- west into the mouth: a row that gets mined anyway
+        if step() then
+          -- only worth saying when it really reversed: a turtle already
+          -- standing on a branch row is the parking case, which says its own
+          -- line
+          if back > 0 then
+            sayf("giveway: pulled back %d blocks to the branch mouth at %d,%d,%d "
+              .. "so the other one can pass", back, st.x, st.y, st.z)
+          end
+          return true
+        end
+        break                      -- the mouth will not open either: reverse instead
+      end
+      local v = DIRS[st.dir]
+      if not turtle.back() then break end
+      st.x, st.z = st.x - v[1], st.z - v[2]
+      save()
+    end
   end
+  -- off the spine, or no bay would open: one block back is better than nothing
   local d = DIRS[st.dir]
   if turtle.back() then
     st.x, st.z = st.x - d[1], st.z - d[2]
@@ -1401,9 +1460,21 @@ end
 local function goTo(tx, ty, tz)
   local aside = 0
   local function blocked()
-    if not jammed or aside >= 3 then return true end
-    aside = aside + 1
-    return not stepAside()
+    -- stepAside() clears jammed on the way in, so read it before calling it
+    local wasJam = jammed
+    if jammed and aside < 3 then
+      aside = aside + 1
+      if stepAside() then return false end
+    end
+    -- A walk that ran out of retreats did not finish, and nothing above here
+    -- knew that: dock() handed the false up, the work loop broke with halt
+    -- unset, and report() printed "work complete" for a turtle that never
+    -- reached its depot [in-game 2026-08-29, logs qhVSH and fPSF1]. Reaching
+    -- the depot and failing is a stop, and it says what stopped it.
+    if wasJam and not halt then
+      halt = jamWhy or "another turtle held the way and would not move"
+    end
+    return true
   end
 
   local detours = 0
@@ -1970,32 +2041,33 @@ local function buildDepot(l, c, conf)
   end
   if not slot then return 0 end
 
-  -- One box for the whole mine, and it goes at the MIDDLE trunk, so every
-  -- turtle walks the same short piece of spine to it [user, 2026-08-29].
-  -- Built wherever the carrier happened to be standing it lands under turtle
-  -- 1's trunk, at one end of the claim, and the turtle at the far end walks
-  -- the whole spine on every single trip. The middle trunk is the claim's own
-  -- centre, because each turtle's trunk sits at the centre of its third.
-  -- The fallback is this turtle's OWN trunk, never wherever it happens to be
-  -- standing when the walk gave up. Every other turtle looks for the shared
-  -- depot by visiting TRUNK FLOORS -- that is all findSharedDepot knows how to
-  -- do -- so a container one block short of a trunk is a container none of them
-  -- will ever find. In-game [2026-08-29, log 9KJAs] turtle 2 was parked on the
-  -- middle trunk, turtle 1 waited out 24 give-ways one block short of it at
-  -- z=118, gave up, and built there; turtles 2 and 3 then both stopped with a
-  -- full hold and nowhere to put it.
+  -- It goes under THIS turtle's OWN trunk, one box per turtle. It used to be
+  -- one box for the whole mine, at the middle trunk -- and that made every
+  -- dock from every turtle end at the same block, down a spine that is one
+  -- block wide with a passing place only every 5. Turtle 1 walking +z and
+  -- turtle 2 walking -z met head-on, giveWay only ever waits, so both waited
+  -- and neither moved [in-game 2026-08-29, logs qhVSH and fPSF1: twelve
+  -- give-ways each and then "work complete" on a run that had banked nothing].
+  -- With a box under its own trunk no turtle has to leave its own third to
+  -- bank at all, so the meetings stop rather than being recovered from. The
+  -- kit decides: a turtle carrying a container builds one, a turtle with none
+  -- falls back to findSharedDepot and the others' boxes, which is exactly the
+  -- behaviour that was already there.
+  --
+  -- It has to be ON the trunk floor, never wherever a walk gave up:
+  -- findSharedDepot visits TRUNK FLOORS and nothing else, so a container one
+  -- block short of one is a container no other turtle will ever find -- which
+  -- is what z=118 was in log 9KJAs.
   local h1 = halt
-  local mid = math.ceil((conf.turtles or 1) / 2)
-  local _, _, midZ = thirdOf(c, mid, conf.turtles or 1)
   local _, _, ownZ = thirdOf(c, st.index or 1, conf.turtles or 1)
-  for _, tz in ipairs({ midZ, ownZ }) do
-    if st.z == tz then break end
-    sayf("depot  : the depot belongs at a trunk floor -- walking to z=%d", tz)
-    if goTo(c.spine, st.y, tz) then break end
-    halt = h1
-    sayf("depot  : cannot reach z=%d", tz)
+  if st.z ~= ownZ then
+    sayf("depot  : the depot belongs at a trunk floor -- walking to z=%d", ownZ)
+    if not goTo(c.spine, st.y, ownZ) then
+      halt = h1
+      sayf("depot  : cannot reach z=%d", ownZ)
+    end
   end
-  if st.z ~= midZ and st.z ~= ownZ then
+  if st.z ~= ownZ then
     sayf("depot  : I am at z=%d, which is not a trunk. Building here anyway, but", st.z)
     say("         the other turtles sweep trunk floors, so they will not find it.")
     say("         Move me onto a trunk and delete quarry.state to redo this.")
@@ -2042,7 +2114,11 @@ local function buildDepot(l, c, conf)
           st.depot = { x = st.x, y = st.y, z = st.z, dump = sp.dir, fuel = sp.dir }
           save()
           -- Everything burnable this turtle still carries goes in, and from
-          -- here on it rations out of it like the other two do [plan 7].
+          -- here on it rations out of it [plan 7]. With a box each a find by
+          -- turtle 1 can no longer be burnt by turtle 3, which is the accepted
+          -- cost of the per-turtle depot: the ration still rations from
+          -- whatever box this turtle is docked at, and the per-other-turtle
+          -- floor is now conservative rather than wrong.
           local banked = 0
           local drop = depotDrop(sp.dir)
           faceDepot(sp.dir)
@@ -2054,7 +2130,7 @@ local function buildDepot(l, c, conf)
             end
           end
           turtle.select(1)
-          if banked > 0 then sayf("depot  : banked %d fuel into it for all three", banked) end
+          if banked > 0 then sayf("depot  : banked %d fuel into it", banked) end
           halt = h0
           return 1
         end
@@ -2499,10 +2575,12 @@ end
 
 -- Phases 2 and 3: descend, cross to the trunk, sink it, then branch after
 -- branch with a depot trip whenever the load or the tank calls for one.
--- One depot serves all three [plan 5] and it stands at one trunk floor, so
--- two turtles out of three find nothing under their own. Rather than spend a
--- spine walk on every boot, the sweep waits until a turtle actually needs the
--- depot -- and then happens once, because the answer is saved either way.
+-- Every turtle that carries a container builds its own depot under its own
+-- trunk, so this is the FALLBACK: a turtle handed no container, or one whose
+-- own floor would not open, still has the others' boxes to bank in. Rather
+-- than spend a spine walk on every boot, the sweep waits until a turtle
+-- actually needs the depot -- and then happens once, because the answer is
+-- saved either way.
 -- Bedrock scatters over four blocks so the trunk floors are rarely the same
 -- y: probe up the column too, which is cheaper than asking the user to level
 -- three floors by hand.
@@ -2914,7 +2992,10 @@ local function runMine(conf, l, index)
     -- the walk home used to make, and now possible because a leg ends at the
     -- rim rather than back at the mouth.
     if st.y ~= st.level and not goTo(c.spine, st.y, st.z) then
-      if st.needDock then goto nextpass end
+      -- carrying on to the dock means the run has not stopped, so the reason
+      -- goTo left behind is not this run's reason to stop [goTo now names a
+      -- jam so a run that gives up on one does not print "work complete"]
+      if st.needDock then halt = nil goto nextpass end
       break
     end
     -- The jog between the two rows is this goTo: from the rim of one row to the
@@ -2922,7 +3003,7 @@ local function runMine(conf, l, index)
     -- corridor that is already air.
     local bx = c.spine + ((job.leg == "west") and -st.along or st.along)
     if not goTo(bx, st.level, st.branch) then
-      if st.needDock then goto nextpass end
+      if st.needDock then halt = nil goto nextpass end
       break
     end
 
@@ -3070,210 +3151,255 @@ end
 -- its claim wherever it wakes, and the launch block is in the centre chunk, so
 -- all three agree on the same claim anyway.
 
+-- The disk's startup does ONE thing and cannot fail quietly: it writes a line
+-- saying it ran, then hands over to boot.lua on the same floppy. Split out on
+-- 2026-08-29 because "reboot works, running the actual code doesn't" [user]
+-- and one file could not tell those two apart -- an empty floppy log now means
+-- the disk startup never ran at all (a CC-side problem: shell.allow_disk_startup,
+-- or the drive not being seen), and "startup ran" with nothing after it means
+-- boot.lua threw, and the line after that says where.
+--
+-- No peripheral calls here, and no loops: the path this program was started
+-- from is the floppy it is sitting on, so nothing has to be asked for.
+local BOOTSTRAP = [==[
+-- written by quarry deploy. Runs on a freshly placed turtle and does nothing
+-- but leave a trace and hand over, so that a trace always exists.
+local N = %d
+local D = fs.getDir(shell.getRunningProgram())
+if not D or D == "" or D == "." then D = "disk" end
+if D:sub(1, 1) ~= "/" then D = "/" .. D end
+local h = fs.open(D .. "/deploy" .. N .. ".log", "w")
+if h then
+  h.writeLine("startup ran off " .. D .. ", handing over to boot.lua")
+  h.close()
+end
+shell.run(D .. "/boot.lua", D)
+]==]
+
 local BOOT = [==[
--- written by quarry deploy. Runs on a freshly placed turtle: no label, no
--- fuel, no modem, and an inventory its deployer is still filling.
+-- written by quarry deploy, and run by the tiny startup on the same floppy.
+-- Everything a freshly placed turtle needs doing is here: no label, no fuel,
+-- no modem, and an inventory its deployer is still filling.
 local N = %d
 -- true when quarry.conf pins the position by hand: nothing on this turtle then
 -- calls gps.locate, so it needs no modem and must not stop for the want of one.
 local MANUAL = %s
 os.setComputerLabel("quarry" .. N)
 
--- "/disk" is only the first drive's mount point; a second drive mounts at
--- "/disk2" and every hard-coded path then misses. Ask the drive itself.
-local D
-for _, side in ipairs({ "top", "bottom", "front", "back", "left", "right" }) do
-  local okt, t = pcall(peripheral.getType, side)
-  if okt and t == "drive" then
-    local okm, mp = pcall(peripheral.call, side, "getMountPath")
-    if okm and type(mp) == "string" and mp ~= "" then
-      D = (mp:sub(1, 1) == "/") and mp or ("/" .. mp)
-      break
+-- The startup that ran us knows the floppy it was running off and hands it
+-- over as its one argument -- N is already baked in above, so nothing else is
+-- passed and this is it. Run by hand with no argument, ask the drive: "/disk"
+-- is only the FIRST drive's mount point, and a second drive anywhere puts this
+-- floppy at "/disk2".
+local D = ...
+if type(D) ~= "string" or D == "" then
+  for _, side in ipairs({ "top", "bottom", "front", "back", "left", "right" }) do
+    local okt, t = pcall(peripheral.getType, side)
+    if okt and t == "drive" then
+      local okm, mp = pcall(peripheral.call, side, "getMountPath")
+      if okm and type(mp) == "string" and mp ~= "" then
+        D = (mp:sub(1, 1) == "/") and mp or ("/" .. mp)
+        break
+      end
     end
   end
 end
-D = D or "/disk"
+if type(D) ~= "string" or D == "" then D = "/disk" end
 
 -- Nobody is watching this screen. Every stage is written to the floppy as well,
 -- so the deployer standing behind can read back what actually happened rather
--- than inferring it from a turtle that did not move.
+-- than inferring it from a turtle that did not move. Appended, never truncated:
+-- the startup wrote the first line of this file and that line is the whole
+-- point of the split -- lose it and a disk startup that never ran looks exactly
+-- like one that ran and threw.
 local LOG = D .. "/deploy" .. N .. ".log"
-if fs.exists(LOG) then fs.delete(LOG) end
 local function note(msg)
   print("quarry" .. N .. ": " .. msg)
   local h = fs.open(LOG, "a")
   if h then h.writeLine(msg) h.close() end
 end
 
-note("booted, floppy is mounted at " .. D .. ", waiting for my kit")
+note("boot.lua running, floppy is mounted at " .. D .. ", waiting for my kit")
 
--- quarry.lua, not quarry: that is the name turtle 1 runs and the name update
--- writes, and a turtle carrying both ends up running whichever the shell picks.
-if fs.exists("quarry") then fs.delete("quarry") end
-if fs.exists("quarry.lua") then fs.delete("quarry.lua") end
-fs.copy(D .. "/quarry", "quarry.lua")
+-- Wrapped, so a fault lands in the floppy log the deployer is already tailing
+-- rather than only on a screen nobody is reading. Every `return` below is a
+-- deliberate stop that has already said why on its way out; anything that
+-- reaches the handler is a real crash, and now it names itself.
+local function main()
 
--- The config has to follow the program. Without it this turtle seeds a fresh
--- quarry.conf off the shipped defaults -- which since 2026-08-27 mine for real
--- -- so it goes live on settings its deployer never chose: veinMax, tripBlocks,
--- the ore names and the fuel sections all revert. Same anti-drift rule as the
--- program itself: take the deployer's file, do not re-derive one.
--- Only when this turtle has none of its own. It used to overwrite on every
--- boot, so coordinates typed in by hand were wiped by the next reboot and the
--- turtle asked for them again -- forever, for as long as it stood beside the
--- drive [user, 2026-08-28].
-if fs.exists(D .. "/quarry.conf") and not fs.exists("quarry.conf") then
-  fs.copy(D .. "/quarry.conf", "quarry.conf")
-  note("took the deployer's quarry.conf")
-elseif fs.exists("quarry.conf") then
-  note("keeping my own quarry.conf")
-else
-  note("WARNING: no quarry.conf on the floppy -- seeding one from the defaults;")
-  note("         it MINES, but on default settings, not the deployer's")
-end
+  -- quarry.lua, not quarry: that is the name turtle 1 runs and the name update
+  -- writes, and a turtle carrying both ends up running whichever the shell picks.
+  if fs.exists("quarry") then fs.delete("quarry") end
+  if fs.exists("quarry.lua") then fs.delete("quarry.lua") end
+  fs.copy(D .. "/quarry", "quarry.lua")
 
--- The claim is anchored on the block a turtle wakes on, and this turtle wakes
--- one block in front of its deployer -- which is over a chunk border often
--- enough to matter. claimOf() would then hand it a different 3x3 region and it
--- would sink a trunk in a mine of its own. The deployer's anchor is on the
--- floppy for exactly that reason; take it, and never overwrite a state file
--- this turtle has already written for itself.
-if fs.exists(D .. "/quarry.state") and not fs.exists("quarry.state") then
-  fs.copy(D .. "/quarry.state", "quarry.state")
-  note("took the deployer's claim anchor")
-end
-
-local function slotLike(pat)
-  for s = 1, 16 do
-    local d = turtle.getItemDetail(s)
-    if d and d.name:find(pat) then return s, d end
-  end
-end
-
--- The deployer drops the kit in AFTER placing this turtle, so the boot beats
--- the coal. Wait for it rather than racing it. 60 x 1s, then give up and say so.
-local modemSlot
-for _ = 1, 60 do
-  modemSlot = slotLike("modem")
-  if (modemSlot or MANUAL) and slotLike("coal") then break end
-  os.sleep(1)
-end
-if not modemSlot then
-  if not MANUAL then
-    note("no modem arrived in 60s -- cannot GPS, stopping")
-    return
-  end
-  note("no modem, and none needed: quarry.conf pins my position")
-end
-if not slotLike("coal") then
-  note("no coal arrived -- carrying on anyway, will stop on fuel 0")
-end
-
--- Equip the modem on whichever side is not holding the pickaxe. Guessing wrong
--- disarms the turtle: equip swaps the SELECTED slot with that side's upgrade,
--- so equipping off the wrong slot puts the pickaxe in the inventory and this
--- turtle cannot dig. Two guards. Re-find the slot rather than trusting the one
--- the wait loop saw, because the deployer was still dropping items in after
--- that; and read the slot back after selecting it, so nothing is equipped until
--- the modem is confirmed to be under the hand.
-if modemSlot then
-  modemSlot = slotLike("wireless_modem") or slotLike("ender_modem") or modemSlot
-  turtle.select(modemSlot)
-  local held = turtle.getItemDetail()
-  if not held or not held.name:find("modem") then
-    note("slot " .. tostring(modemSlot) .. " holds " ..
-      tostring(held and held.name or "nothing") .. ", not a modem -- not equipping,")
-    note("because that would swap my pickaxe out instead")
-    modemSlot = nil
-  end
-end
-if modemSlot then
-  -- getEquippedLeft/Right name the upgrade, so the free side is known outright.
-  -- Without them a pickaxe and an empty side both read as nil under
-  -- peripheral.getType, and the only way to find out is to equip and look at
-  -- what came off in the hand.
-  local function equippedName(side)
-    local fn = turtle[side == "left" and "getEquippedLeft" or "getEquippedRight"]
-    if not fn then return nil, false end
-    local ok, d = pcall(fn)
-    if not ok then return nil, false end
-    if type(d) == "table" then return d.name, true end
-    return (type(d) == "string" and d or nil), true
-  end
-  local leftName, named = equippedName("left")
-  if named then
-    local rightName = equippedName("right")
-    local side = (leftName == nil and "left") or (rightName == nil and "right")
-      or (not tostring(leftName):find("pickaxe") and "left") or "right"
-    local ok = side == "left" and turtle.equipLeft() or turtle.equipRight()
-    note("left=" .. tostring(leftName or "empty") .. " right=" .. tostring(rightName or "empty")
-      .. ", equip" .. side .. " " .. tostring(ok))
+  -- The config has to follow the program. Without it this turtle seeds a fresh
+  -- quarry.conf off the shipped defaults -- which since 2026-08-27 mine for real
+  -- -- so it goes live on settings its deployer never chose: veinMax, tripBlocks,
+  -- the ore names and the fuel sections all revert. Same anti-drift rule as the
+  -- program itself: take the deployer's file, do not re-derive one.
+  -- Only when this turtle has none of its own. It used to overwrite on every
+  -- boot, so coordinates typed in by hand were wiped by the next reboot and the
+  -- turtle asked for them again -- forever, for as long as it stood beside the
+  -- drive [user, 2026-08-28].
+  if fs.exists(D .. "/quarry.conf") and not fs.exists("quarry.conf") then
+    fs.copy(D .. "/quarry.conf", "quarry.conf")
+    note("took the deployer's quarry.conf")
+  elseif fs.exists("quarry.conf") then
+    note("keeping my own quarry.conf")
   else
-    local okR = turtle.equipRight()
-    local came = turtle.getItemDetail()
-    if came and came.name:find("pickaxe") then
-      turtle.equipRight()             -- pickaxe back on the right, modem back in hand
-      local okL = turtle.equipLeft()  -- modem goes left instead
-      note("equipRight " .. tostring(okR) .. ", pickaxe came off, equipLeft " .. tostring(okL))
-    else
-      note("equipRight " .. tostring(okR) .. ", nothing came off")
+    note("WARNING: no quarry.conf on the floppy -- seeding one from the defaults;")
+    note("         it MINES, but on default settings, not the deployer's")
+  end
+
+  -- The claim is anchored on the block a turtle wakes on, and this turtle wakes
+  -- one block in front of its deployer -- which is over a chunk border often
+  -- enough to matter. claimOf() would then hand it a different 3x3 region and it
+  -- would sink a trunk in a mine of its own. The deployer's anchor is on the
+  -- floppy for exactly that reason; take it, and never overwrite a state file
+  -- this turtle has already written for itself.
+  if fs.exists(D .. "/quarry.state") and not fs.exists("quarry.state") then
+    fs.copy(D .. "/quarry.state", "quarry.state")
+    note("took the deployer's claim anchor")
+  end
+
+  local function slotLike(pat)
+    for s = 1, 16 do
+      local d = turtle.getItemDetail(s)
+      if d and d.name:find(pat) then return s, d end
     end
   end
 
-  -- Do not trust the swap. Ask the peripheral API which side actually holds a
-  -- modem: on a turtle, left and right report the EQUIPPED upgrade, so this is
-  -- a direct answer rather than an inference from what came off in the hand.
-  local modemSide
-  for _, sd in ipairs({ "left", "right" }) do
-    local okp, t = pcall(peripheral.getType, sd)
-    if okp and t and tostring(t):find("modem") then modemSide = sd end
+  -- The deployer drops the kit in AFTER placing this turtle, so the boot beats
+  -- the coal. Wait for it rather than racing it. 60 x 1s, then give up and say so.
+  local modemSlot
+  for _ = 1, 60 do
+    modemSlot = slotLike("modem")
+    if (modemSlot or MANUAL) and slotLike("coal") then break end
+    os.sleep(1)
   end
-  if modemSide then
-    note("modem confirmed equipped on " .. modemSide)
-  elseif not MANUAL then
-    note("STOPPED: no modem on either side after equipping. Without one there is")
-    note("no GPS, so I cannot find myself. Equip it by hand and reboot me.")
+  if not modemSlot then
+    if not MANUAL then
+      note("no modem arrived in 60s -- cannot GPS, stopping")
+      return
+    end
+    note("no modem, and none needed: quarry.conf pins my position")
+  end
+  if not slotLike("coal") then
+    note("no coal arrived -- carrying on anyway, will stop on fuel 0")
+  end
+
+  -- Equip the modem on whichever side is not holding the pickaxe. Guessing wrong
+  -- disarms the turtle: equip swaps the SELECTED slot with that side's upgrade,
+  -- so equipping off the wrong slot puts the pickaxe in the inventory and this
+  -- turtle cannot dig. Two guards. Re-find the slot rather than trusting the one
+  -- the wait loop saw, because the deployer was still dropping items in after
+  -- that; and read the slot back after selecting it, so nothing is equipped until
+  -- the modem is confirmed to be under the hand.
+  if modemSlot then
+    modemSlot = slotLike("wireless_modem") or slotLike("ender_modem") or modemSlot
+    turtle.select(modemSlot)
+    local held = turtle.getItemDetail()
+    if not held or not held.name:find("modem") then
+      note("slot " .. tostring(modemSlot) .. " holds " ..
+        tostring(held and held.name or "nothing") .. ", not a modem -- not equipping,")
+      note("because that would swap my pickaxe out instead")
+      modemSlot = nil
+    end
+  end
+  if modemSlot then
+    -- getEquippedLeft/Right name the upgrade, so the free side is known outright.
+    -- Without them a pickaxe and an empty side both read as nil under
+    -- peripheral.getType, and the only way to find out is to equip and look at
+    -- what came off in the hand.
+    local function equippedName(side)
+      local fn = turtle[side == "left" and "getEquippedLeft" or "getEquippedRight"]
+      if not fn then return nil, false end
+      local ok, d = pcall(fn)
+      if not ok then return nil, false end
+      if type(d) == "table" then return d.name, true end
+      return (type(d) == "string" and d or nil), true
+    end
+    local leftName, named = equippedName("left")
+    if named then
+      local rightName = equippedName("right")
+      local side = (leftName == nil and "left") or (rightName == nil and "right")
+        or (not tostring(leftName):find("pickaxe") and "left") or "right"
+      local ok = side == "left" and turtle.equipLeft() or turtle.equipRight()
+      note("left=" .. tostring(leftName or "empty") .. " right=" .. tostring(rightName or "empty")
+        .. ", equip" .. side .. " " .. tostring(ok))
+    else
+      local okR = turtle.equipRight()
+      local came = turtle.getItemDetail()
+      if came and came.name:find("pickaxe") then
+        turtle.equipRight()             -- pickaxe back on the right, modem back in hand
+        local okL = turtle.equipLeft()  -- modem goes left instead
+        note("equipRight " .. tostring(okR) .. ", pickaxe came off, equipLeft " .. tostring(okL))
+      else
+        note("equipRight " .. tostring(okR) .. ", nothing came off")
+      end
+    end
+
+    -- Do not trust the swap. Ask the peripheral API which side actually holds a
+    -- modem: on a turtle, left and right report the EQUIPPED upgrade, so this is
+    -- a direct answer rather than an inference from what came off in the hand.
+    local modemSide
     for _, sd in ipairs({ "left", "right" }) do
       local okp, t = pcall(peripheral.getType, sd)
-      note("  " .. sd .. " holds " .. tostring((okp and t) or "nothing"))
+      if okp and t and tostring(t):find("modem") then modemSide = sd end
     end
+    if modemSide then
+      note("modem confirmed equipped on " .. modemSide)
+    elseif not MANUAL then
+      note("STOPPED: no modem on either side after equipping. Without one there is")
+      note("no GPS, so I cannot find myself. Equip it by hand and reboot me.")
+      for _, sd in ipairs({ "left", "right" }) do
+        local okp, t = pcall(peripheral.getType, sd)
+        note("  " .. sd .. " holds " .. tostring((okp and t) or "nothing"))
+      end
+      return
+    else
+      note("the modem would not equip, but my position is pinned, so I carry on")
+    end
+  end
+
+  -- Burn everything it was handed. It carries no fuel items to the depot; the
+  -- depot is what it rations from after that [plan 7].
+  for s = 1, 16 do
+    local d = turtle.getItemDetail(s)
+    if d and (d.name:find("coal") or d.name:find("charcoal")) then
+      turtle.select(s)
+      turtle.refuel()
+    end
+  end
+  turtle.select(1)
+
+  -- Install a local startup so this turtle comes back on its own after a reboot,
+  -- a chunk reload, or a server restart. The floppy is one block above the spot
+  -- it launches from and it does not carry the drive with it, so the disk cannot
+  -- be what restarts it. quarry resumes from its own state file.
+  local fuel = turtle.getFuelLevel()
+  if fuel ~= "unlimited" and fuel < 1 then
+    note("STOPPED: fuel is 0. No coal reached me, and quarry can only spin on an")
+    note("empty tank. Put coal in me and reboot.")
     return
-  else
-    note("the modem would not equip, but my position is pinned, so I carry on")
   end
-end
 
--- Burn everything it was handed. It carries no fuel items to the depot; the
--- depot is what it rations from after that [plan 7].
-for s = 1, 16 do
-  local d = turtle.getItemDetail(s)
-  if d and (d.name:find("coal") or d.name:find("charcoal")) then
-    turtle.select(s)
-    turtle.refuel()
+  local h = fs.open("/startup", "w")
+  if h then
+    h.writeLine("shell.run('quarry', '" .. N .. "')")
+    h.close()
+    note("installed /startup so I come back after a reboot")
   end
-end
-turtle.select(1)
 
--- Install a local startup so this turtle comes back on its own after a reboot,
--- a chunk reload, or a server restart. The floppy is one block above the spot
--- it launches from and it does not carry the drive with it, so the disk cannot
--- be what restarts it. quarry resumes from its own state file.
-local fuel = turtle.getFuelLevel()
-if fuel ~= "unlimited" and fuel < 1 then
-  note("STOPPED: fuel is 0. No coal reached me, and quarry can only spin on an")
-  note("empty tank. Put coal in me and reboot.")
-  return
+  note("fuel " .. tostring(turtle.getFuelLevel()) .. ", starting quarry " .. N)
+  shell.run("quarry", tostring(N))
 end
 
-local h = fs.open("/startup", "w")
-if h then
-  h.writeLine("shell.run('quarry', '" .. N .. "')")
-  h.close()
-  note("installed /startup so I come back after a reboot")
+local lived, why = pcall(main)
+if not lived then
+  note("STOPPED: boot.lua crashed -- " .. tostring(why))
 end
-
-note("fuel " .. tostring(turtle.getFuelLevel()) .. ", starting quarry " .. N)
-shell.run("quarry", tostring(N))
 ]==]
 
 -- What block is in front, by peripheral type. A block that has just appeared
@@ -3396,6 +3522,12 @@ local function deployOne(conf, l, index)
   end
   handOver("coal", 64, "coal")
   handOver("bucket", 1, "bucket")
+  -- A container each, the same way the bucket is one each: with a depot under
+  -- its own trunk this turtle never leaves its own third to bank, which is
+  -- what stops the head-on meetings on the one-wide spine [in-game 2026-08-29,
+  -- logs qhVSH and fPSF1]. Matched with the STORAGE word list, not a pattern
+  -- of its own -- there is one answer to "what is storage" [RESUME, settled].
+  handOver(isContainer, 1, "container")
 
   -- It leaves under its own power once quarry N calibrates. An empty block in
   -- front is the only signal available -- there is no peripheral to ask. The
@@ -3685,20 +3817,28 @@ function runDeploy(conf, l, index)
       done = done + 1
       goto next
     end
-    -- Written under BOTH names. Which one a disk's auto-startup picks up is
-    -- the mod's business, not ours, and getting it wrong costs an in-game trip;
-    -- writing both costs nothing and cannot pick the wrong one.
+    -- The startup goes on under BOTH names. Which one a disk's auto-startup
+    -- picks up is the mod's business, not ours, and getting it wrong costs an
+    -- in-game trip; writing both costs nothing and cannot pick the wrong one.
+    -- What they run is boot.lua, beside them: the startup only records that it
+    -- ran, so an empty floppy log is a disk startup that never happened and a
+    -- log with one line in it is boot.lua failing [DEADLOCK-PLAN layer 3].
     local wrote = 0
     for _, name in ipairs({ DISK .. "/startup.lua", DISK .. "/startup" }) do
       local h = fs.open(name, "w")
       if h then
-        h.write(BOOT:format(n, tostring(manualFix(conf))))
+        h.write(BOOTSTRAP:format(n))
         h.close()
         wrote = wrote + 1
       end
     end
     if wrote == 0 then error("cannot write the boot script to " .. DISK, 0) end
-    sayf("deploy : wrote the boot script for turtle %d (%d names)", n, wrote)
+    local hb = fs.open(DISK .. "/boot.lua", "w")
+    if not hb then error("cannot write boot.lua to " .. DISK, 0) end
+    hb.write(BOOT:format(n, tostring(manualFix(conf))))
+    hb.close()
+    sayf("deploy : wrote the boot script for turtle %d (%d startup names + boot.lua)",
+      n, wrote)
 
     local okn, why, stop = deployOne(conf, l, n)
     if okn then

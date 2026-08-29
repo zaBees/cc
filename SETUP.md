@@ -27,7 +27,7 @@ yourself.
 | --- | --- | --- |
 | Mining Turtle | 3 | one to run the program, two as *items in its inventory* for it to place later |
 | Coal or charcoal | 192 (3 stacks) | a stack per turtle. The whole claim wants about 3,300. |
-| Storage block | 1 | the depot: one box, for ore and for the coal all three share. A chest, a vanilla barrel, a Sophisticated Storage barrel or chest of any tier, an Iron Chest, a shulker box or a Create item vault all count. Bigger is better — a Sophisticated barrel is the best of these. A full depot no longer stops the run (the junk goes on the tunnel floor and the turtle calls home), but everything it digs after that is lost. |
+| Storage block | 3 | **one per turtle**, under its own trunk floor. It used to be one box for the whole mine, and that funnelled every trip from all three turtles into a single block down a one-wide corridor, where they met head-on and jammed. With a box each, no turtle leaves its own third to bank at all. A chest, a vanilla barrel, a Sophisticated Storage barrel or chest of any tier, an Iron Chest, a shulker box or a Create item vault all count. Bigger is better — a Sophisticated barrel is the best of these. A full depot no longer stops the run (the junk goes on the tunnel floor and the turtle calls home), but everything it digs after that is lost. |
 | Disk Drive | 1 | the lava map, and the only way one turtle can hand code to another |
 | Floppy Disk | 1 | goes in the drive |
 | Wireless Modem | 3 | GPS. Turtle 1 is already wearing one, so 2 spares in the inventory. |
@@ -293,16 +293,19 @@ level, with a trip to the depot whenever the hold fills up.
 2. **Coal in that barrel.** Every turtle takes what its trip needs and stops at
    a floor held back for the others (`fuelFloor`, 8 each by default), so three
    turtles share it without any coordination.
-3. **Or hand the container to the turtle.** Run `quarry 1` with a barrel or a
-   chest in its inventory and it digs out the block under the trunk floor,
-   places the container there itself and banks its own coal into it.
+3. **Or hand the containers to the turtle.** Run `quarry 1` with three barrels
+   or chests in its inventory: it hands one to each turtle as it deploys them,
+   and each one digs out the block under its own trunk floor, places its
+   container there and banks its own coal into it. One container is still
+   enough to run on -- a turtle with none walks the spine and shares the
+   others' -- but that is the arrangement that jams, so give it three.
 4. **Optional: a disk drive with a floppy**, beside the trunk floor. That is
    the shared lava map: every source a turtle walks past gets written to
    `/disk/lava.txt`, and any turtle can go and fetch one when the coal runs out.
    A drive on a side does get mined out eventually, which costs the map and
    nothing else.
 
-One container does both jobs: the spoil goes in and the fuel comes out of the
+One container does both jobs for the turtle it belongs to: the spoil goes in and the fuel comes out of the
 same box. That is the case the ration is written for — it sucks the lot, keeps
 its share of the coal and puts everything else straight back.
 

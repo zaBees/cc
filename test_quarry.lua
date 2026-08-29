@@ -339,7 +339,7 @@ assert(log:find("full lava_bucket is in slot 3"), "a full bucket was not caught:
 
 reset({ inv = {
   [1] = { name = "computercraft:turtle_normal", count = 2 },
-  [2] = { name = "minecraft:chest",             count = 2 },
+  [2] = { name = "minecraft:chest",             count = 3 },
   [3] = { name = "computercraft:disk_drive",    count = 1 },
   [4] = { name = "computercraft:disk",          count = 1 },
   [5] = { name = "minecraft:bucket",            count = 3 },
@@ -361,7 +361,7 @@ reset({ inv = {
 } })
 ok, err, log = run("1", "--check")
 assert(ok, "short-kit --check crashed: " .. tostring(err))
-assert(log:find("MISSING: 1 mining turtle, 1 storage block, 1 disk drive, 1 floppy disk, 2 wireless modem, 3 empty bucket, 128 coal"),
+assert(log:find("MISSING: 1 mining turtle, 3 storage block, 1 disk drive, 1 floppy disk, 2 wireless modem, 3 empty bucket, 128 coal"),
   "the shortfall list is wrong:\n" .. log)
 -- an item the audit does not know must be surfaced, never silently dropped
 assert(log:find("not recognised: minecraft:torch x64"),
@@ -588,6 +588,7 @@ local function world(o)
     -- keyboard, which is the /startup case and must never hang the mine.
     answers = o.answers or {}, asked = {},
     running = o.running,             -- what shell.getRunningProgram() reports
+    watchY  = o.watchY,              -- record the z range of moves at this y
   }
   V.files["quarry.conf"] = (o.conf or "") .. "dry = false\n"
   V.files["quarry"] = "-- the program itself, so deploy has something to copy"
@@ -859,6 +860,13 @@ local function mkworldenv()
     if V.fuel <= 0 then return false end
     V.pos.x, V.pos.y, V.pos.z = nx, ny, nz
     if not V.minY or ny < V.minY then V.minY = ny end
+    -- how far along z this turtle ranged at its working level: the spine
+    -- between thirds is used once on the way in, and after that a turtle with
+    -- its own depot has no reason to leave its third at all
+    if V.watchY and ny == V.watchY then
+      if not V.zMin or nz < V.zMin then V.zMin = nz end
+      if not V.zMax or nz > V.zMax then V.zMax = nz end
+    end
     V.fuel = V.fuel - 1
     V.moves = V.moves + 1
     return true
@@ -1468,7 +1476,7 @@ local KIT5 = {
   [2] = { name = "computercraft:disk_drive",      count = 1 },
   [3] = { name = "computercraft:disk",            count = 1 },
   [4] = { name = "computercraft:wireless_modem_advanced", count = 3 },
-  [5] = { name = "minecraft:chest",               count = 2 },
+  [5] = { name = "minecraft:chest",               count = 3 },
   [6] = { name = "minecraft:bucket",              count = 3 },
   [7] = { name = "minecraft:coal",                count = 192 },
 }
@@ -1488,13 +1496,17 @@ assert(ok, "deploy crashed: " .. tostring(err))
 assert(log:find("disk drive placed"), "it never placed the drive:\n" .. log)
 assert(log:find("floppy in the drive"), "it never loaded the floppy:\n" .. log)
 assert(V.files["/disk/quarry"], "it never copied the program onto the floppy")
-assert(V.files["/disk/startup.lua"], "it never wrote the boot script")
+assert(V.files["/disk/startup.lua"], "it never wrote the disk startup")
+assert(V.files["/disk/boot.lua"], "it never wrote boot.lua beside the startup")
 assert(log:find("deploy : 2 of 2 deployed"), "it did not deploy both turtles:\n" .. log)
 
--- the boot script is valid Lua and carries the right index for the LAST turtle
-assert(load(V.files["/disk/startup.lua"], "boot"), "the boot script is not valid Lua")
+-- both halves are valid Lua and carry the right index for the LAST turtle
+assert(load(V.files["/disk/startup.lua"], "startup"), "the disk startup is not valid Lua")
+assert(load(V.files["/disk/boot.lua"], "boot"), "boot.lua is not valid Lua")
 assert(V.files["/disk/startup.lua"]:find("local N = 3"),
-  "the last boot script was not written for turtle 3")
+  "the last disk startup was not written for turtle 3")
+assert(V.files["/disk/boot.lua"]:find("local N = 3"),
+  "the last boot.lua was not written for turtle 3")
 
 -- each deployed turtle got a modem, coal and a bucket, or it cannot work
 local got = { modem = 0, coal = 0, bucket = 0 }
@@ -1522,6 +1534,7 @@ assert(log:find("STOPPED. Fill the gaps"),
 assert(log:find("nobody answered"),
   "an unattended short kit must take the safe answer and say so:\n" .. log)
 assert(not V.files["/disk/startup.lua"], "a short kit still wrote to a floppy")
+assert(not V.files["/disk/boot.lua"], "a short kit still wrote boot.lua to a floppy")
 assert(not V.disk, "a short kit still placed the drive")
 
 -- 30. only turtle 1 deploys ------------------------------------------------
@@ -1577,21 +1590,25 @@ assert(log:find("depot  : container at %d"),
 -- leg and then stops the run. Below the floor is the one neighbour it never
 -- touches, so exactly one container goes in, and it goes there.
 --
--- And it goes under the MIDDLE trunk, not this turtle's own: one box serves
--- all three, so it belongs where the walk to it is the same from either end
--- [user, 2026-08-29]. Turtle 1's third is z -64..-49, turtle 2's is -48..-33
--- with its trunk at z=-41, and that is the claim's own centre.
-assert(log:find("the depot belongs at a trunk floor %-%- walking to z=%-41"),
-  "it built the depot under its own trunk instead of the middle one:\n" .. log)
+-- And it goes under THIS turtle's OWN trunk, one box per turtle. One box at
+-- the middle trunk funnelled every dock from every turtle to a single block
+-- down a spine that is one wide, and two turtles walking to it from opposite
+-- ends met head-on and both gave up [in-game 2026-08-29, logs qhVSH and
+-- fPSF1]. Turtle 1's third is z -64..-49, so its own trunk is z=-57 = BZ; the
+-- middle trunk at z=-41 is turtle 2's and this run must not go near it.
+assert(not log:find("walking to z=%-41"),
+  "it still walks to the middle trunk, which is the funnel:\n" .. log)
 local built = 0
 for key, name in pairs(V.blocks) do
   if name and (name:find("chest") or name:find("barrel")) then built = built + 1 end
 end
 assert(built == 1, "it placed " .. built .. " containers, not 1")
-assert(V.blocks[k3(BX, BY - 1, MZ)],
-  "the container is not under the middle trunk floor:\n" .. log)
+assert(V.blocks[k3(BX, BY - 1, BZ)],
+  "the container is not under this turtle's OWN trunk floor:\n" .. log)
+assert(not V.blocks[k3(BX, BY - 1, MZ)],
+  "it built under the middle trunk, in another turtle's third:\n" .. log)
 for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
-  local n = V.blocks[k3(BX + d[1], BY, MZ + d[2])]
+  local n = V.blocks[k3(BX + d[1], BY, BZ + d[2])]
   assert(not (n and (n:find("chest") or n:find("barrel"))),
     "it put a container beside the trunk floor, in the pattern's way:\n" .. log)
 end
@@ -1642,10 +1659,10 @@ assert(V.files["/disk/quarry.conf"] == V.files["quarry.conf"],
 assert(log:find("to /disk/quarry.conf"), "it did not report copying the config:\n" .. log)
 
 -- and the boot script it writes actually installs that config
-local boot = V.files["/disk/startup.lua"]
+local boot = V.files["/disk/boot.lua"]
 assert(boot, "no boot script was written")
-assert(V.files["/disk/startup"] == boot,
-  "the boot script was not written under both names, so which one the disk\n" ..
+assert(V.files["/disk/startup"] == V.files["/disk/startup.lua"],
+  "the disk startup was not written under both names, so which one the disk\n" ..
   "auto-runs decides whether deployment works at all")
 assert(boot:find('D .. "/quarry.conf"', 1, true),
   "the boot script never reads the config off the floppy")
@@ -1676,7 +1693,7 @@ assert(not log:find("not visible as a peripheral"),
 
 -- and the boot script leaves a local startup behind, so a deployed turtle
 -- survives a reboot without the floppy it can no longer reach
-local boot2 = V.files["/disk/startup.lua"]
+local boot2 = V.files["/disk/boot.lua"]
 assert(boot2:find("fs.open(\"/startup\", \"w\")", 1, true),
   "the boot script does not install a local startup, so a rebooted turtle is dead")
 
@@ -2074,10 +2091,10 @@ assert(log:find("recall : removed /startup"), "it never said so:\n" .. log)
 -- fallback is beside the trunk one level UP, on an x side: +z/-z is the spine
 -- at every level, and the east-west legs only cross the trunk's own z on the
 -- levels isBranch names, which the next level up never is.
--- the bedrock goes under the MIDDLE trunk, because that is where the depot is
--- built now [test 33]
+-- the bedrock goes under this turtle's OWN trunk, because that is where the
+-- depot is built now: one box per turtle, under its own trunk [test 33]
 world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
-        blocks = { [k3(BX, BY - 1, MZ)] = "minecraft:bedrock" },
+        blocks = { [k3(BX, BY - 1, BZ)] = "minecraft:bedrock" },
         inv = { [1] = { name = "minecraft:chest", count = 1 },
                 [2] = { name = "minecraft:coal",  count = 64 } } })
 ok, err, log = runWorld("1")
@@ -2086,15 +2103,15 @@ assert(log:find("placed a container beside the trunk at y=" .. (BY + 1), 1, true
   "bedrock under the floor left the run with no depot at all:\n" .. log)
 local side62
 for _, dx in ipairs({ -1, 1 }) do
-  if V.blocks[k3(BX + dx, BY + 1, MZ)] then side62 = k3(BX + dx, BY + 1, MZ) end
+  if V.blocks[k3(BX + dx, BY + 1, BZ)] then side62 = k3(BX + dx, BY + 1, BZ) end
 end
 assert(side62, "no container beside the trunk one level up:\n" .. log)
 for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
-  local n = V.blocks[k3(BX + d[1], BY, MZ + d[2])]
+  local n = V.blocks[k3(BX + d[1], BY, BZ + d[2])]
   assert(not (n and (n:find("chest") or n:find("barrel"))),
     "it put a container beside the trunk FLOOR, in the pattern's way:\n" .. log)
 end
-assert(blockAt(BX, BY - 1, MZ) == "minecraft:bedrock", "it dug into bedrock")
+assert(blockAt(BX, BY - 1, BZ) == "minecraft:bedrock", "it dug into bedrock")
 assert(log:find("depot  : banked %d+ fuel into it"),
   "it placed the chest and never banked its coal for the others:\n" .. log)
 assert(log:find("depot  : dumped;"),
@@ -2518,7 +2535,7 @@ assert(ok, "a manual-GPS deploy with no modem crashed: " .. tostring(err))
 assert(log:find("wireless modem     0 of   0"),
   "the audit still wants modems on a pinned position:\n" .. log)
 assert(log:find("deploy : turtle 2"), "it never got as far as placing:\n" .. log)
-local boot = V.files["/disk/startup.lua"]
+local boot = V.files["/disk/boot.lua"]
 assert(boot, "no boot script reached the floppy")
 assert(boot:find("local MANUAL = true"), "the boot script was not told the position is pinned")
 assert(not log:find("it cannot GPS, so it will never move"),
@@ -2544,7 +2561,7 @@ assert(anchor:find("home"), "the seeded state carries no home: " .. anchor)
 assert(anchor:find("137") and anchor:find("%-42"), "the anchor is not the deployer's: " .. anchor)
 assert(not anchor:find("dir"),
   "the anchor carries a heading, so the placed turtle will skip its own pin: " .. anchor)
-local boot2 = V.files["/disk/startup.lua"]
+local boot2 = V.files["/disk/boot.lua"]
 assert(boot2:find('fs.copy(D .. "/quarry.state", "quarry.state")', 1, true),
   "the boot script does not take the anchor")
 assert(boot2:find('not fs.exists("quarry.state")', 1, true),
@@ -2807,7 +2824,7 @@ assert(log:find("descend"), "it never got past it:\n" .. log)
 world({ inv = kit(), leaveAfter = 3 })
 ok, err, log = runWorld("1", "deploy")
 assert(ok, "deploy crashed: " .. tostring(err))
-local boot90 = V.files["/disk/startup.lua"]
+local boot90 = V.files["/disk/boot.lua"]
 assert(boot90:find('not fs.exists("quarry.conf")', 1, true),
   "the boot script still overwrites a config the turtle already has:\n" .. boot90)
 assert(boot90:find("keeping my own quarry.conf", 1, true),
@@ -2959,7 +2976,7 @@ assert(W.inv[3] and W.inv[3].name == MODEM, "it consumed the spare modem in the 
 -- script is a string, so this is the only way to see them.
 world({ inv = kit(), leaveAfter = 3 })
 ok, err, log = runWorld("1", "deploy")
-local bootTxt = V.files["/disk/startup.lua"]
+local bootTxt = V.files["/disk/boot.lua"]
 assert(bootTxt, "no boot script to check")
 assert(load(bootTxt, "boot"), "the boot script is not valid Lua")
 assert(bootTxt:find("not a modem %-%- not equipping"),
@@ -2983,15 +3000,23 @@ assert(ok, "the deploy crashed on a second-drive mount: " .. tostring(err))
 assert(log:find("mounted at /disk2") or log:find("still in the drive, at /disk2"),
   "it never asked the drive where the floppy is:\n" .. log)
 assert(V.files["/disk2/quarry"], "the program did not reach the real mount point")
-assert(V.files["/disk2/startup.lua"], "the boot script did not reach the real mount point")
+assert(V.files["/disk2/startup.lua"], "the disk startup did not reach the real mount point")
+assert(V.files["/disk2/boot.lua"], "boot.lua did not reach the real mount point")
 assert(not V.files["/disk/quarry"], "it wrote to /disk, which is a different drive")
 assert(log:find("deploy : 2 of 2 deployed"),
   "a floppy at /disk2 cost it the deployment:\n" .. log)
 
--- the boot script asks the same question on the turtle it lands on
+-- both halves ask the same question on the turtle they land on. The startup
+-- takes it off the path it was itself started from -- it is sitting on the
+-- floppy, so nothing has to be asked -- and boot.lua is handed that answer,
+-- with getMountPath as the fallback for a run by hand [DEADLOCK-PLAN layer 3].
 world({ inv = kit(), leaveAfter = 3 })
 ok, err, log = runWorld("1", "deploy")
-local b96 = V.files["/disk/startup.lua"]
+local s96 = V.files["/disk/startup.lua"]
+assert(s96:find("getRunningProgram", 1, true),
+  "the disk startup does not work out which floppy it is on:\n" .. s96)
+assert(not s96:find('"/disk/', 1, true), "the disk startup hard-codes /disk:\n" .. s96)
+local b96 = V.files["/disk/boot.lua"]
 assert(b96:find("getMountPath", 1, true), "the boot script hard-codes the mount")
 assert(b96:find('D .. "/quarry"', 1, true), "the boot script does not use the mount it found")
 
@@ -3049,24 +3074,36 @@ assert(log:find("depot  : docking"),
 assert(not log:find("there is no depot to empty it into"),
   "it still stopped for want of a depot that is right there:\n" .. log)
 
--- 100. a depot that cannot go at the middle trunk goes at THIS turtle's -----
--- Every other turtle looks for the shared depot by visiting trunk floors, so a
--- container one block short of a trunk is one none of them will ever find.
--- In-game [log 9KJAs] turtle 1 could not reach the middle trunk, built where it
--- stood, and turtles 2 and 3 then both stopped with a full hold.
+-- 100. a depot always aims at a trunk floor, and says so when it misses -----
+-- Every other turtle looks for a depot by visiting trunk floors and nothing
+-- else, so a container one block short of one is a container none of them will
+-- ever find. In-game [log 9KJAs] turtle 1 built where it stood and turtles 2
+-- and 3 then both stopped with a full hold. The depot is now one box per
+-- turtle under its OWN trunk [DEADLOCK-PLAN layer 1], so the own trunk is the
+-- only candidate there is -- which makes "I could not get to it" the case that
+-- has to be loud rather than quietly built anyway.
 
--- turtle 2 is parked on the middle trunk, so the walk there cannot finish
+-- a resumed turtle already at its working level but 7 blocks short of its own
+-- trunk, with another turtle parked between it and that trunk
 world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
-        blocks = { [k3(BX, BY, MZ)] = "computercraft:turtle_advanced" },
+        at = { x = BX, y = BY, z = -50 },
+        blocks = { [k3(BX, BY, -53)] = "computercraft:turtle_advanced" },
         inv = { [1] = { name = "minecraft:chest", count = 1 },
                 [2] = { name = "minecraft:coal",  count = 64 } } })
+V.files["quarry.state"] =
+  [[{ ["index"]=1, ["level"]=-59, ["home"]={["x"]=137,["y"]=83,["z"]=-42}, ["done"]={} }]]
 ok, err, log = runWorld("1")
-assert(ok, "the blocked-middle-trunk run crashed: " .. tostring(err))
-assert(log:find("cannot reach z=%-41"), "the middle trunk was not blocked after all:\n" .. log)
-assert(V.blocks[k3(BX, BY - 1, BZ)],
-  "it did not fall back to its own trunk floor:\n" .. log)
-assert(not log:find("which is not a trunk"),
-  "it built somewhere no other turtle will look:\n" .. log)
+assert(ok, "the blocked-own-trunk run crashed: " .. tostring(err))
+-- it aims at the trunk floor rather than dropping the box where it stands
+assert(log:find("the depot belongs at a trunk floor %-%- walking to z=%-57"),
+  "it built where it stood instead of walking to its own trunk:\n" .. log)
+assert(log:find("cannot reach z=%-57"), "the trunk was not blocked after all:\n" .. log)
+-- and when it cannot get there it says so, because a box that is not on a
+-- trunk floor is one no other turtle will ever sweep up
+assert(log:find("which is not a trunk"),
+  "it built off a trunk floor and said nothing:\n" .. log)
+assert(log:find("Move me onto a trunk"),
+  "it did not tell the player how to put that right:\n" .. log)
 
 -- 101. a stopped turtle parks OFF the spine -------------------------------
 -- The spine is the one corridor all three share and every trunk floor is on
@@ -3111,5 +3148,212 @@ V.files["/disk2/quarry"] = "-- the copy on the second drive"
 ok, err, log = runWorld("2")
 assert(V.files["quarry.lua"] == "-- the copy on the second drive",
   "a floppy at /disk2 was not recognised as a floppy:\n" .. log)
+
+-- 103. a depot each, under each turtle's own trunk ---------------------------
+-- The funnel was the bug. One box meant every dock from all three turtles
+-- ended at the same block, down a spine that is one wide with a passing place
+-- only every 5 -- so turtle 1 walking +z and turtle 2 walking -z met head-on,
+-- both waited, and both gave up [in-game 2026-08-29, logs qhVSH and fPSF1].
+-- With a container each, no turtle leaves its own third to bank at all.
+-- The thirds are z -64..-49, -48..-33 and -32..-17, with trunks at -57, -41
+-- and -25.
+local THIRDS = { [1] = { -64, -49, -57 }, [2] = { -48, -33, -41 }, [3] = { -32, -17, -25 } }
+for idx = 1, 3 do
+  local lo, hi, tz = THIRDS[idx][1], THIRDS[idx][2], THIRDS[idx][3]
+  world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+          watchY = BY,
+          inv = { [1] = { name = "minecraft:chest", count = 1 },
+                  [2] = { name = "minecraft:coal",  count = 64 } } })
+  ok, err, log = runWorld(tostring(idx))
+  assert(ok, "turtle " .. idx .. "'s own-depot run crashed: " .. tostring(err))
+  assert(V.blocks[k3(BX, BY - 1, tz)],
+    "turtle " .. idx .. " did not build under its own trunk floor:\n" .. log)
+  -- and nowhere else: one box, its own
+  local built = 0
+  for _, name in pairs(V.blocks) do
+    if name and (name:find("chest") or name:find("barrel")) then built = built + 1 end
+  end
+  assert(built == 1, "turtle " .. idx .. " placed " .. built .. " containers, not 1")
+  -- it never asked another turtle for a depot, because it has one
+  assert(not log:find("looking under turtle"),
+    "turtle " .. idx .. " swept the spine for somebody else's box:\n" .. log)
+  -- and the whole shift at the working level stayed inside its own third, so
+  -- there is nothing left to meet head-on down there
+  assert(V.zMin and V.zMin >= lo and V.zMax <= hi,
+    ("turtle %d ranged z=%s..%s at y=%d, outside its third %d..%d:\n%s")
+      :format(idx, tostring(V.zMin), tostring(V.zMax), BY, lo, hi, log))
+end
+
+-- 104. the kit audit asks for one container per turtle, and says why --------
+-- It asked for exactly one however many turtles were configured, which is the
+-- kit half of the same funnel.
+reset({ inv = {
+  [1] = { name = "computercraft:turtle_advanced", count = 2 },
+  [2] = { name = "minecraft:chest",               count = 1 },
+} })
+ok, err, log = run("1", "--check")
+assert(ok, "the container audit crashed: " .. tostring(err))
+assert(log:find("storage block%s+1 of%s+3%s+SHORT 2"),
+  "a 3 turtle mine did not ask for 3 containers:\n" .. log)
+assert(log:find("one per turtle, under its own trunk"),
+  "it did not say what the containers are for:\n" .. log)
+
+-- and it follows conf.turtles, exactly as the buckets do
+reset({ conf = "turtles = 2\n", inv = {
+  [1] = { name = "minecraft:chest", count = 2 },
+} })
+ok, err, log = run("1", "--check")
+assert(ok, "the two-turtle container audit crashed: " .. tostring(err))
+assert(log:find("storage block%s+2 of%s+2%s+ok"),
+  "a 2 turtle mine did not ask for 2 containers:\n" .. log)
+
+-- 105. deploy hands a container across, like the bucket --------------------
+-- A turtle deployed without one has no depot of its own, falls back to the
+-- shared sweep, and is straight back down the shared spine.
+world({ inv = kit(), leaveAfter = 3 })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the container-handover deploy crashed: " .. tostring(err))
+local boxes = 0
+for _, h in ipairs(V.handed) do
+  if h.into:find("turtle") and (h.name:find("chest") or h.name:find("barrel")) then
+    boxes = boxes + 1
+  end
+end
+assert(boxes == 2, "handed " .. boxes .. " containers, not one per deployed turtle:\n" .. log)
+assert(log:find("handed over the container"),
+  "it did not report handing the container across:\n" .. log)
+
+-- 106. a blocked turtle retreats to a passing bay, not one block back -------
+-- stepAside() used to step back exactly one block, which leaves the turtle
+-- still in the corridor: both of two turtles meeting head-on "moved aside"
+-- and neither could pass [in-game 2026-08-29, logs qhVSH and fPSF1]. The
+-- retreat now walks back along the spine to a branch mouth and turns into it.
+--
+-- The cross to the trunk runs -z along the spine at y=-55, and a turtle
+-- parked at z=-48 stops it at z=-47. Branch rows at y=-55 are z = -49, -44,
+-- -39 ... so the nearest bay behind is z=-44, three blocks back.
+world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+        blocks = { [k3(BX, -55, -48)] = "computercraft:turtle_advanced" } })
+ok, err, log = runWorld("1")
+assert(ok, "the head-on run crashed: " .. tostring(err))
+local back, bx = log:match("pulled back (%d+) blocks to the branch mouth at (%-?%d+),")
+assert(back, "it never retreated to a passing bay:\n" .. log)
+assert(tonumber(back) > 1,
+  "it retreated " .. back .. " block, which leaves it in the corridor:\n" .. log)
+assert(tonumber(bx) ~= BX,
+  "it says it pulled into a branch mouth and is still on the spine: " .. tostring(bx))
+
+-- 107. the higher index is the one that moves ------------------------------
+-- Nobody can read the other turtle's index, so the asymmetry has to come from
+-- its own: index 1 waits longest and holds the corridor, index 3 gives up
+-- waiting soonest and is the one that retreats. Settled rule, local knowledge.
+local waited = {}
+for _, idx in ipairs({ 1, 3 }) do
+  world({ conf = "tripBlocks = 100000\n",
+          blocks = { [k3(137, 82, -42)] = "computercraft:turtle_advanced" } })
+  ok, err, log = runWorld(tostring(idx))
+  assert(ok, "the give-way run for turtle " .. idx .. " crashed: " .. tostring(err))
+  local of = log:match("turtle " .. idx .. " waiting, another one is in the way %(1 of (%d+)%)")
+  assert(of, "turtle " .. idx .. " never waited for the turtle below it:\n" .. log)
+  waited[idx] = tonumber(of)
+end
+assert(waited[1] == 9 and waited[3] == 3,
+  ("turtle 1 waited %d tries and turtle 3 waited %d; the rule is 12 - 3 * index")
+    :format(waited[1], waited[3]))
+assert(waited[3] < waited[1],
+  "the higher index does not give up waiting sooner, so nobody ever reverses")
+
+-- 108. a run that gives up on a jam is a STOP, not "work complete" ----------
+-- In-game [logs qhVSH and fPSF1] both turtles printed twelve give-ways, then
+-- "work complete" -- for a run that never reached its depot and banked
+-- nothing. goTo handed the false up, the loop broke with no reason set, and
+-- report() had nothing to print but success.
+world({ conf = "topY = -55\ntripBlocks = 200\n" .. SECTIONS, fuel = 20000,
+        blocks = { [k3(BX, -55, -48)] = "computercraft:turtle_advanced" } })
+ok, err, log = runWorld("1")
+assert(ok, "the jammed run crashed: " .. tostring(err))
+assert(not log:find("work complete"),
+  "a run that could not get past another turtle called itself finished:\n" .. log)
+assert(log:find("STOPPED: "), "it stopped and gave no reason at all:\n" .. log)
+-- and the reason names the block, where it was, and that it is another turtle
+assert(log:find("STOPPED: computercraft:turtle_advanced would not move"),
+  "the stop does not name what was in the way:\n" .. log)
+assert(log:find("at %-?%d+,%-?%d+,%-?%d+ after %d+ tries"),
+  "the stop does not say where it was or how long it waited:\n" .. log)
+assert(log:find("another turtle, not a block I may dig"),
+  "the stop does not say it was a turtle rather than rock:\n" .. log)
+-- and it outlives the run, because "why are you stopped" is asked hours later
+local sv108 = load("return " .. V.files["quarry.state"])()
+assert(sv108.halt and sv108.halt:find("would not move"),
+  "the jam did not reach the state file: " .. tostring(sv108.halt))
+
+-- 109. the disk startup is a bootstrap that logs before it runs anything ----
+-- "reboot works, running the actual code doesn't" [user, 2026-08-29]. With one
+-- file on the floppy there was no way to tell a disk startup that never ran
+-- from one that ran and threw, and both look like a turtle standing still.
+-- Split them: the startup writes one line and hands over, so an empty floppy
+-- log is a CC-side problem and a one-line log is boot.lua failing.
+world({ inv = kit(), leaveAfter = 3 })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the split-boot deploy crashed: " .. tostring(err))
+local boots = V.files["/disk/startup.lua"]
+assert(boots, "no disk startup was written")
+assert(boots == V.files["/disk/startup"], "the two startup names differ")
+assert(load(boots, "startup"), "the disk startup is not valid Lua")
+-- tiny, and nothing in it can throw before it has left a trace
+assert(#boots < 1000, "the disk startup is " .. #boots .. " bytes, so it is not a bootstrap")
+assert(not boots:find("peripheral", 1, true),
+  "the bootstrap makes peripheral calls, which can fail before it logs:\n" .. boots)
+local logAt, runAt = boots:find("deploy\" .. N .. \".log", 1, true), boots:find("shell.run", 1, true)
+assert(logAt and runAt, "the bootstrap does not both log and hand over:\n" .. boots)
+assert(logAt < runAt,
+  "it hands over BEFORE it records that it ran, so a crash still leaves no trace")
+-- the real logic is a separate file beside it, and a crash in it is logged
+local bootl = V.files["/disk/boot.lua"]
+assert(bootl, "the real boot logic never reached the floppy")
+assert(load(bootl, "boot"), "boot.lua is not valid Lua")
+assert(boots:find("boot.lua", 1, true), "the bootstrap never runs boot.lua:\n" .. boots)
+assert(bootl:find("pcall(main)", 1, true),
+  "boot.lua is not wrapped, so a fault only reaches a screen nobody reads")
+assert(bootl:find("STOPPED: boot.lua crashed", 1, true),
+  "a crash in boot.lua is not written to the floppy log")
+-- and boot.lua appends, so the startup's own line survives to be read
+assert(bootl:find('fs.open(LOG, "a")', 1, true),
+  "boot.lua truncates the log, losing the one line that says the startup ran")
+assert(bootl:find("local D = ...", 1, true),
+  "boot.lua does not take the mount point the startup hands it")
+
+-- and the handover really works: run the bootstrap itself against a stub and
+-- watch what it writes and what it passes on. boot.lua reads its FIRST
+-- argument as the mount, so anything passed in front of it -- the turtle index,
+-- say -- becomes the path boot.lua writes every one of its files to.
+local wroteTo, wroteLine, ranArgs
+local benv = setmetatable({
+  fs = {
+    getDir = function(n) return (n:gsub("/?[^/]+$", "")) end,
+    open = function(n)
+      wroteTo = n
+      return { writeLine = function(txt) wroteLine = txt end, close = function() end }
+    end,
+  },
+  shell = {
+    getRunningProgram = function() return "disk2/startup" end,
+    run = function(...) ranArgs = { ... } return true end,
+  },
+}, { __index = _G })
+local bs = assert(load(boots, "bootstrap", "t", benv))
+bs()
+-- the floppy carries the LAST turtle's startup, which is turtle 3
+assert(wroteTo == "/disk2/deploy3.log",
+  "the bootstrap logged to " .. tostring(wroteTo) .. ", not the floppy it started from")
+assert(wroteLine and wroteLine:find("startup ran"),
+  "it did not record that it ran: " .. tostring(wroteLine))
+assert(ranArgs and ranArgs[1] == "/disk2/boot.lua",
+  "it ran " .. tostring(ranArgs and ranArgs[1]) .. ", not boot.lua on its own floppy")
+assert(ranArgs[2] == "/disk2",
+  "boot.lua is handed " .. tostring(ranArgs[2]) .. " as its mount point, so every\n" ..
+  "file it writes -- the log, the program, the config -- lands somewhere else")
+assert(ranArgs[3] == nil,
+  "a third argument shifts what boot.lua reads as its mount: " .. tostring(ranArgs[3]))
 
 print("all quarry phase 5 checks passed")

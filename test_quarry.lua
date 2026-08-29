@@ -1154,14 +1154,18 @@ assert(ok, "full-inventory run crashed: " .. tostring(err))
 assert(log:find("STOPPED: inventory full"), "a full turtle kept digging:\n" .. log)
 assert(V.lost == 0, "it destroyed " .. V.lost .. " drops")
 
--- 15. low fuel stops it while it can still walk home, and it resumes -------
+-- 15. low fuel gathers coal before descending, instead of refusing ---------
 
--- too little to get there and back: it refuses at the surface, undug
+-- Too little to get there and back: rather than refuse the trip undug, it
+-- gathers coal from the top level first. This world holds no coal, so the
+-- forage finds none and it stops out of coal at the top -- not stranded down
+-- a trunk it could not pay the walk back from.
 world({ fuel = 300 })
 ok, err, log = runWorld("1")
 assert(ok, "no-fuel run crashed: " .. tostring(err))
-assert(log:find("STOPPED: not enough fuel"), "it set off on a trip it could not pay for:\n" .. log)
-assert(V.pos.y == 83, "it started descending anyway, ending at y=" .. V.pos.y)
+assert(log:find("gathering coal first"), "it did not forage first:\n" .. log)
+assert(not log:find("STOPPED: not enough fuel"), "it still refused the trip:\n" .. log)
+assert(log:find("STOPPED: out of coal"), "the forage did not conclude:\n" .. log)
 
 -- a trip's worth of blocks, and nowhere to put them: it stops part-way down
 -- the leg, which is what makes the resume below a real mid-branch resume.
@@ -2761,9 +2765,10 @@ assert(not log:find("trunk  : down to"), "q stopped it and it descended anyway:\
 world({ inv = kit(), fuel = 10 })
 ok, err, log = runWorld("1")
 assert(ok, "the out-of-fuel run crashed: " .. tostring(err))
-assert(log:find("not enough fuel"), "it did not stop on fuel:\n" .. log)
+assert(log:find("gathering coal first"), "it did not try to forage first:\n" .. log)
+assert(log:find("cannot afford the climb for coal"), "it did not stop on fuel:\n" .. log)
 local saved = V.files["quarry.state"]
-assert(saved:find("not enough fuel"), "the reason died with the run: " .. tostring(saved))
+assert(saved:find("cannot afford the climb"), "the reason died with the run: " .. tostring(saved))
 
 reset({ state = "{x=137,y=83,z=-42,dir=0,index=1,halt=\"not enough fuel: 10 in the tank\"}" })
 ok, err, log = run("1", "--check")

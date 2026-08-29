@@ -3151,19 +3151,21 @@ local function runMine(conf, l, index)
     save()
   end
 
-  -- Refuse the trip it cannot pay for, while still at the surface where the
-  -- user can reach it. The reserve inside the branch is what stops it later;
-  -- this is what stops it stranding itself 119 blocks down before it starts.
+  -- Stop before it strands itself 119 blocks down. But rather than wait at the
+  -- surface for a human, gather coal from the top level first: from here the
+  -- climb to coal country is a few blocks, not the 119-block round trip the
+  -- tank could not pay for. forage() commits to mining coal until the tank
+  -- reaches fuelKeep, and the schedule then resumes as usual.
   local travelY = math.min(st.y, conf.topY)
   local target  = st.level or (conf.deepestFirst and conf.bottomY or conf.topY)
   local trip = (st.y - travelY) + math.abs(c.spine - st.x) + math.abs(trunkZ - st.z)
              + math.max(travelY - target, 0)
   local need = 2 * trip + conf.fuelMargin
   if fuelLevel() < need then
-    halt = ("not enough fuel: %d in the tank, %d to reach the branch and walk back")
-      :format(fuelLevel(), need)
-    report(c, conf)
-    return
+    sayf("fuel   : %d in the tank, %d to reach the branch and walk back -- gathering coal first",
+      fuelLevel(), need)
+    if not forage(conf, l, c) then report(c, conf) return end
+    target = st.level or target
   end
 
   -- 1. straight down to travel height, so the walk to the trunk happens below

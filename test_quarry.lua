@@ -2413,10 +2413,22 @@ assert(not log:find("boot script for turtle 3"),
 assert(log:find("turtle 3 onwards is still in the hold"),
   "it did not say what is left aboard:\n" .. log)
 
--- s skips this one and moves on
+-- s skips this one -- but a skipped turtle is still standing in the only spot
+-- the next one can be placed into, so the run stops there rather than adopting
+-- it as turtle 3 [test 92]
 world({ inv = kit(), answers = { "s" } })
 ok, err, log = runWorld("1", "deploy")
 assert(ok, "the skipped deploy crashed: " .. tostring(err))
+assert(log:find("skipped on your say%-so"), "s did not skip:\n" .. log)
+assert(not log:find("boot script for turtle 3"),
+  "it went on to turtle 3 with turtle 2 still blocking the spot:\n" .. log)
+
+-- with the way clear it does move on: what is skipped here is a stone block,
+-- not a turtle, so nothing has been stranded and turtle 3 is still tried
+world({ inv = kit(), leaveAfter = 3, answers = { "s" },
+        blocks = { [k3(137, 83, -41)] = "minecraft:stone" } })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the skipped-obstruction deploy crashed: " .. tostring(err))
 assert(log:find("skipped on your say%-so"), "s did not skip:\n" .. log)
 assert(log:find("boot script for turtle 3"),
   "s stopped the whole run instead of one turtle:\n" .. log)
@@ -2751,5 +2763,23 @@ assert(log:find("RIGHT%-CLICK IT"), "it never asked for the right-click:\n" .. l
 assert(log:find("60s of silence"),
   "it gave the player 10s to walk over and click a turtle:\n" .. log)
 
+
+-- 92. a turtle this run stranded is not adopted as the next one --------------
+-- In-game the player found turtle 2 holding both buckets and both modems. The
+-- loop placed turtle 2, it never booted, and the next pass saw a turtle in
+-- front and adopted it as turtle 3: a second kit into the same turtle, a boot
+-- script rewritten to quarry 3, and turtle 3 still in the hold.
+
+world({ inv = kit() })                            -- nothing ever walks off
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the stranded-turtle deploy crashed: " .. tostring(err))
+assert(log:find("adopting it as turtle 3") == nil,
+  "it adopted the turtle it had just stranded and fed it twice:\n" .. log)
+assert(log:find("still standing in the only spot"),
+  "it did not say why it could not go on:\n" .. log)
+assert(log:find("wrote the boot script for turtle 3") == nil,
+  "it rewrote the floppy, so turtle 2 would wake up as turtle 3:\n" .. log)
+assert(log:find("turtle 3 onwards is still in the hold"),
+  "it did not say turtle 3 is still aboard:\n" .. log)
 
 print("all quarry phase 5 checks passed")

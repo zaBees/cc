@@ -133,6 +133,21 @@ confirmed to fail against its own unfixed code:
     to go and do something -- right-click a turtle, clear a blocked spot --
     pass their own 60s. Test 91.
 
+18. **A turtle this run stranded is not adopted as the next one.** `deployOne`
+    adopts a turtle standing in front, which is right for one a PREVIOUS run
+    left there -- and wrong inside the deploy loop. Turtle 2 was placed, never
+    booted, and the next pass round the loop saw a turtle in front and adopted
+    it as turtle 3: a second modem, a second bucket and a second 64 coal into
+    the same turtle, the floppy's boot script rewritten to `quarry 3` so the
+    player's eventual right-click would wake it as the wrong turtle, and turtle
+    3 still sitting in the hold. In-game the player found both buckets and both
+    modems on turtle 2 [2026-08-29]. A failed `deployOne` that leaves a turtle
+    standing in the placement spot now stops the loop and says the spot has to
+    be cleared first. `s = skip this turtle` stops there too -- skipping does
+    not move the turtle out of the way. A non-turtle obstruction that is
+    skipped still moves on, because nothing was stranded. Test 92, and test
+    76's skip case rewritten; both confirmed to fail against the unfixed code.
+
 ## Next action
 
 The code is ready. The run to ask for: **`update`, then `quarry 1`** from the
@@ -229,7 +244,7 @@ lock to one item type, so a mixed dump fails on the second stack.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-28, last.** Auto-deploy from a plain `quarry 1`, and a full depot that drops junk and calls home instead of stopping. 123,516 bytes, fletcher32 `522321319`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, and a deploy that stops rather than feeding two kits to one turtle. 153,532 bytes, fletcher32 `1631593240`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. |
 | `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |
@@ -281,7 +296,7 @@ and the in-game computer running `cloud <token>`.
 | --- | --- |
 | `MASTERMINE-PLAN.md` | The design, every decision and its reasoning. Read second. Trimmed 2026-08-28: §11 is now a status table, and the rules it used to carry are in this file's Settled and Corrections lists. |
 | `quarry.lua` | **The deliverable.** ~2,430 lines, Phases 1–5. Opens `local DRY = true`; the config lowers it. |
-| `test_quarry.lua` | Five suites against stubbed CC worlds, 66 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot. `lua5.3 test_quarry.lua` |
+| `test_quarry.lua` | Five suites against stubbed CC worlds, 92 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot; 75–91 the deploy build of that night; 92 the double-fed turtle. `lua5.3 test_quarry.lua` |
 | `alert.lua` | For a computer: prints what the turtles broadcast on the `quarry` protocol. |
 | `update.lua` | The in-game updater: `update` replaces `quarry` and itself from GitHub. Downloaded once by hand. |
 | `test_update.lua` | Stubbed `http`/`fs` around the updater: the failed download, the HTML 404, the cache-buster, the checksum. `lua5.3 test_update.lua` |
@@ -517,6 +532,12 @@ a dry run write `dry = true` into the stub config explicitly.
 - **The vein sweep must be absolute.** `goTo` faces the direction it travels,
   so `st.dir` after a chase is the walk home's heading, not the cell's. Anchor
   the four-way sweep to a `d0` captured on entry. Test 43.
+- **Adoption is for a turtle a PREVIOUS run stranded, never one this run just
+  stranded.** `deployOne` treats a turtle standing in the placement spot as
+  itself, already placed. Inside the loop that means a turtle that failed to
+  boot gets adopted as the next index and fed a second kit, and the boot script
+  on the floppy is rewritten under the wrong number. The loop now stops when a
+  failed `deployOne` leaves a turtle standing there. Test 92.
 - **Probe for the shared depot in both directions.** Bedrock scatters over four
   blocks either way, so a neighbour's floor can be below this turtle's, not
   only above. Test 47.

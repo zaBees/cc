@@ -3404,6 +3404,20 @@ function runDeploy(conf, l, index)
     if okn then done = done + 1 else
       failed[#failed + 1] = ("turtle %d: %s"):format(n, tostring(why))
       sayf("deploy : turtle %d did not deploy -- %s", n, tostring(why))
+      -- It is still standing in the one block a turtle can be placed into, so
+      -- the next pass round this loop would adopt it as turtle n+1 -- switch it
+      -- on again, hand it a SECOND modem, coal and bucket, and overwrite its
+      -- boot script so that when the player finally right-clicks it, it wakes
+      -- up as the wrong turtle. That is what "both buckets and modems ended up
+      -- on turtle 2" was. Adoption is for a turtle a PREVIOUS run stranded;
+      -- one this run just stranded is a spot that has to be cleared first.
+      if turtle.detect() and frontType() == "turtle" then
+        sayf("deploy : turtle %d is still standing in the only spot I can place", n)
+        say("         into, so there is nowhere to put the next one. Get it moving")
+        say("         first -- right-click it, or on its screen: reboot -- then")
+        say("         `quarry 1 deploy` again to carry on from here.")
+        stop = true
+      end
     end
     if stop then
       if n < conf.turtles then

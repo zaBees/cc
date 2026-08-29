@@ -385,16 +385,43 @@ Change 35 keeps the tank topped from what the turtle digs, so it rarely needs to
 go looking; change 47 is the instrument that says whether the residual costs
 anything.
 
+## What shipped on 2026-08-29, from logs yiALS and PwHyZ
+
+The first live run of the fuel build. Deployment, the depot, the burn on pickup
+and the notify all worked. **Change 47 answered its question: a turtle CAN wrap
+the container it is facing, and the user's depot came back as a 132-slot box**
+holding 38 and 64 coal. The 16-stack read cap is therefore no longer a wall for
+*reading*; the take is still `turtle.suck`, which only ever pulls the first
+slot.
+
+Both turtles then climbed to y=60 on their second dock with a full depot under
+them, worked out the top level, and called the mine complete after four
+branches with fuel still in the tank. Two bugs, both in the new code:
+
+48. **`dry` means the BOX has nothing, not that this trip asked for nothing.**
+    It was read off what the dock TOOK, and a turtle whose tank already covers
+    four branches takes 0 from a box holding 38 coal. It is now read off the
+    wrap where there is one, and off `restock`'s count where there is not.
+    Test 119.
+49. **A worked-out top level is not a finished claim.** `nextBranch` searches
+    from `st.level` onward, so a foraging turtle sitting at `topY` reads a claim
+    with unmined levels UNDER it as finished. When the top level runs out and
+    the tank never reached `fuelKeep`, the turtle now drops `st.foraging`,
+    clears `st.level` and goes back to the schedule. Test 120.
+
+`boxRead` is the wrap, `pcall`-wrapped and read-only; `depotProbe` is the
+once-per-run printout on top of it. **A world with no wrap is still the
+fallback everywhere** — every test but 119 leaves `chestSize` nil.
+
 ## Next action
 
-**Ask for `update`, then `quarry 1`** from the launch block. Changes 35–47 are
-in and the three suites pass; what they need now is a run in-game.
+**Ask for `update`, then `quarry 1`** from the launch block. Changes 48–49 fix
+what the first live run of the fuel build showed; the three suites pass.
 
-**What to read in the log**: the `depot  : wrapped` or `depot  : the box cannot
-be wrapped` line (change 47 — this is the one new fact a run can return),
-whether a dry dock produces `forage : depot is dry -- climbing to y=60`, and
-whether the turtle comes back down with `forage : tank is N -- back to the
-schedule at the deepest level left` rather than parking.
+**What to read in the log**: that a climb only ever follows a dock reporting
+`chest held 0 fuel items`, and that a turtle which does climb comes back with
+`forage : tank is N -- back to the schedule` or `forage : the top level is
+worked out`, rather than `claim  : every branch in this third is mined`.
 
 The code is ready. The run to ask for: **`update`, then `quarry 1`** from the
 launch block, carrying a barrel, turtles 2 and 3, the drive and the floppy.
@@ -491,7 +518,7 @@ lock to one item type, so a mixed dump fails on the second stack.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, the floppy found through getMountPath, a stopped turtle that parks off the shared spine, one depot per turtle so they stop funnelling into one block, and the fuel build: coal burnt on pickup to `fuelKeep`, no ration at a turtle's own box, `sharePerDock` at a shared one, and a climb to `topY` launched while it can still be paid for. 188,734 bytes, fletcher32 `2137187411`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, the floppy found through getMountPath, a stopped turtle that parks off the shared spine, one depot per turtle so they stop funnelling into one block, and the fuel build: coal burnt on pickup to `fuelKeep`, no ration at a turtle's own box, `sharePerDock` at a shared one, and a climb to `topY` launched while it can still be paid for, with the depot read through a peripheral wrap rather than sixteen sucks. 190,608 bytes, fletcher32 `414108213`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. |
 | `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |

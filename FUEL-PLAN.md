@@ -200,9 +200,14 @@ A `pcall`-wrapped `peripheral.wrap` on the depot side, using `size` and `list`.
 Read-only: the run is unchanged when the wrap returns nothing, and `restock`'s
 suck path is untouched.
 
-This does two jobs. It confirms or refutes the user's observation that coal is
-sitting in the box unseen, and it settles whether a turtle can wrap an adjacent
-inventory at all — which cannot be checked from the sandbox, because the
+**ANSWERED in-game 2026-08-29 [logs `yiALS`, `PwHyZ`]: a turtle CAN wrap the
+container it is facing. The depot is a 132-slot box.** The read is now used for
+the dryness decision at every dock (change 48), which is what the 16-stack cap
+was actually costing. Taking is still `turtle.suck` and still first-slot-only.
+
+Originally this did two jobs. It confirms or refutes the user's observation that
+coal is sitting in the box unseen, and it settles whether a turtle can wrap an
+adjacent inventory at all — which cannot be checked from the sandbox, because the
 peripherals dump in the skill's references was taken from a **computer**
 (`RESUME.md:721`). The `inventory` type and its `size`/`list`/`getItemDetail`/
 `getItemLimit`/`pushItems`/`pullItems` methods are confirmed on

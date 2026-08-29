@@ -2309,29 +2309,41 @@ end
 -- What this settles is whether the read is available at all: the peripherals
 -- dump this pack is written against was taken from a COMPUTER, and a turtle's
 -- own sides are its upgrades. Once per run, costing nothing when it fails.
+-- ANSWERED in-game 2026-08-29 [logs yiALS and PwHyZ]: a turtle CAN wrap the
+-- container it is facing. The user's depot came back as a 132-slot box, and
+-- this is the only way a turtle sees past the first sixteen stacks of it.
+-- Still read-only -- the take is `turtle.suck`, which only ever pulls the
+-- first slot -- but "is the box dry" is a READ, and this is the answer to it.
+-- Returns coal, slots used, size; nil when there is no wrap to be had.
+local function boxRead(l)
+  if type(peripheral) ~= "table" or not peripheral.wrap or not st.depot then return end
+  local dir = st.depot.fuel
+  faceDepot(dir)
+  local ok, inv = pcall(peripheral.wrap, (dir == "down") and "bottom" or "front")
+  if not (ok and type(inv) == "table" and inv.list) then return end
+  local okl, items = pcall(inv.list)
+  if not (okl and type(items) == "table") then return end
+  local coal, used = 0, 0
+  for _, it in pairs(items) do
+    used = used + 1
+    if it and isCoalish(l, it.name) then coal = coal + (it.count or 0) end
+  end
+  local oks, size = pcall(inv.size)
+  return coal, used, oks and size or nil
+end
+
 local probed = false
 local function depotProbe(l)
   if probed or not st.depot then return end
   probed = true
-  if type(peripheral) ~= "table" or not peripheral.wrap then return end
-  local dir = st.depot.fuel
-  faceDepot(dir)
-  local ok, inv = pcall(peripheral.wrap, (dir == "down") and "bottom" or "front")
-  if not (ok and type(inv) == "table" and inv.list) then
+  local coal, used, size = boxRead(l)
+  if not coal then
     say("depot  : the box cannot be wrapped from a turtle -- the 16-stack suck is")
     say("         all the turtle can see of it")
     return
   end
-  local okl, items = pcall(inv.list)
-  if not (okl and type(items) == "table") then return end
-  local coal, held = 0, 0
-  for _, it in pairs(items) do
-    held = held + 1
-    if it and isCoalish(l, it.name) then coal = coal + (it.count or 0) end
-  end
-  local oks, size = pcall(inv.size)
   sayf("depot  : wrapped -- %s slots, %d of them used, %d coal in the box",
-    (oks and size) and tostring(size) or "?", held, coal)
+    size and tostring(size) or "?", used, coal)
 end
 
 -- the lava map -------------------------------------------------------------
@@ -2652,8 +2664,15 @@ function dock(c, conf, l, want)
   -- for it means only ever trying the climb once the tank cannot pay for it.
   -- A dock the depot could not feed is the real signal, and it lands several
   -- trips earlier: on log E5wWw at the tank-413 dock rather than at 93.
+  -- Dry means the BOX has nothing, never that this trip asked for nothing. A
+  -- turtle whose tank is already over four branches takes 0 from a box holding
+  -- 38 coal, and reading that as dry sent both turtles up to y=60 on their
+  -- second dock with a full depot underneath them [in-game 2026-08-29, logs
+  -- yiALS and PwHyZ]. The wrap answers it properly on a box too big for the
+  -- suck to read; `avail` is the fallback where there is no wrap.
+  local seen  = boxRead(l)
   local climb = branchCost(c, conf, conf.topY, st.z)
-  local early = (got or 0) <= 0 and conf.forageCoal and fuelLevel() >= want
+  local early = (seen or avail or 0) <= 0 and conf.forageCoal and fuelLevel() >= want
                 and fuelLevel() < 2 * climb
   if fuelLevel() < want or early then
     if not forage(conf, l, c) then
@@ -3073,6 +3092,21 @@ local function runMine(conf, l, index)
     end
     if not st.plan then
       local by, bz = nextBranch(conf, c, lo, hi, trunkZ)
+      if not by and st.foraging then
+        -- The top level is worked out and the tank never reached fuelKeep, so
+        -- whatever coal was up here is all there is. nextBranch searches from
+        -- st.level onward, so a foraging turtle sitting at topY reads a claim
+        -- with unmined levels UNDER it as finished -- and both turtles called
+        -- the mine complete after four branches, parked at y=60, with fuel in
+        -- the tank [in-game 2026-08-29, logs yiALS and PwHyZ].
+        st.foraging = nil
+        st.level, st.branch, st.leg, st.along = nil, nil, nil, 0
+        st.plan, st.step = nil, nil
+        save()
+        sayf("forage : the top level is worked out -- back to the schedule on %d fuel",
+          fuelLevel())
+        goto nextpass
+      end
       if not by then
         say("claim  : every branch in this third is mined -- stopping and idling [plan 12]")
         break

@@ -589,6 +589,7 @@ local function world(o)
     answers = o.answers or {}, asked = {},
     running = o.running,             -- what shell.getRunningProgram() reports
     watchY  = o.watchY,              -- record the z range of moves at this y
+    chestSize = o.chestSize,         -- slots the wrapped depot reports; nil = no wrap
   }
   V.files["quarry.conf"] = (o.conf or "") .. "dry = false\n"
   V.files["quarry"] = "-- the program itself, so deploy has something to copy"
@@ -759,6 +760,28 @@ local function mkworldenv()
       -- the drive answers where it put the floppy; V.mount lets a world put it
       -- somewhere that is not "/disk", which is what a second drive does
       if method == "getMountPath" then return V.disk and (V.mount or "/disk") or nil end
+    end,
+    -- A turtle CAN wrap the container it is facing -- confirmed in-game
+    -- 2026-08-29 [logs yiALS and PwHyZ], where the depot came back as a
+    -- 132-slot box. V.chestSize is what the stub reports; leaving it nil is a
+    -- world where there is no wrap to be had, which is the other half of the
+    -- code path and what every other test here runs against.
+    wrap = function(side)
+      if not V.chestSize then return nil end
+      local x, y, z = V.pos.x, V.pos.y, V.pos.z
+      if side == "front" then x, y, z = ahead()
+      elseif side == "bottom" then y = y - 1
+      else return nil end
+      local c = V.chests[k3(x, y, z)]
+      if not c then return nil end
+      return {
+        size = function() return V.chestSize end,
+        list = function()
+          local out = {}
+          for i, it in ipairs(c) do out[i] = { name = it.name, count = it.count } end
+          return out
+        end,
+      }
     end,
   }
   env.http = { post = function(_, body)
@@ -3479,6 +3502,57 @@ assert(log:find("forageCoal is off"),
   "it stopped without naming the switch that stopped it:\n" .. log)
 assert(not log:find("climbing to y="),
   "forageCoal = false and it climbed anyway:\n" .. log)
+
+-- 119. a dock that ASKED for nothing is not a dry depot ---------------------
+
+-- The first live run of the fuel build sent both turtles to y=60 on their
+-- second dock with 38 and 64 coal in the box under them [2026-08-29, logs
+-- yiALS and PwHyZ]. `dry` was read off what the dock TOOK, and a turtle whose
+-- tank already covers four branches takes nothing from a full box.
+-- a short trip so the docks come often enough for one to land in the window
+-- the bug needs: a tank already over four branches (so the dock takes nothing)
+-- and under twice the climb (so the climb is considered)
+world({ conf = "tripBlocks = 24\n" .. SECTIONS, fuel = 1040,
+        chestSize = 132,
+        blocks = { [k3(DX, DY, DZ)] = "minecraft:chest" },
+        chests = coalChest(38) })
+ok, err, log = runWorld("1")
+assert(ok, "took-nothing run crashed: " .. tostring(err))
+assert(log:find("chest held %d+ fuel items, took 0 fuel"),
+  "no dock took nothing, so the case is not covered:\n" .. log)
+-- and the box is read through the wrap, which is where the answer comes from
+-- on a container too big for sixteen sucks to see. Every other world here
+-- leaves chestSize nil, which is the no-wrap fallback.
+assert(log:find("wrapped %-%- 132 slots"),
+  "the box was never read through the wrap:\n" .. log)
+-- the invariant, whatever the run does with the rest of its shift: the dock
+-- that launches a climb is a dock that found an EMPTY box
+local climbAt = log:find("forage : depot is dry")
+if climbAt then
+  local held
+  for h in log:sub(1, climbAt):gmatch("chest held (%d+) fuel items") do held = h end
+  assert(tonumber(held) == 0,
+    "it climbed straight after a dock that reported " .. tostring(held)
+    .. " coal in the box:\n" .. log)
+end
+
+-- 120. the top level running out is not the claim running out ---------------
+
+-- nextBranch searches from st.level ONWARD, so a foraging turtle parked at
+-- topY reads a claim with unmined levels under it as finished. Both turtles
+-- called the mine complete after four branches, parked at y=60, with fuel
+-- still in the tank.
+world({ conf = "tripBlocks = 60\n" .. SECTIONS, fuel = 1500,
+        blocks = { [k3(DX, DY, DZ)] = "minecraft:chest" },
+        chests = { [k3(DX, DY, DZ)] = {} } })
+ok, err, log = runWorld("1")
+assert(ok, "worked-out-top run crashed: " .. tostring(err))
+assert(log:find("climbing to y=60"), "a dry box did not send it up:\n" .. log)
+local out = log:find("the top level is worked out %-%- back to the schedule")
+assert(out, "it treated the worked-out top level as a finished claim:\n" .. log)
+local deeper = tonumber(log:match("level  : moving to y=(%-?%d+)", out))
+assert(deeper and deeper < -55,
+  "it came back to y=" .. tostring(deeper) .. ", not to a level below the top:\n" .. log)
 
 -- 109. the disk startup is a bootstrap that logs before it runs anything ----
 -- "reboot works, running the actual code doesn't" [user, 2026-08-29]. With one

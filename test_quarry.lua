@@ -592,6 +592,10 @@ local function world(o)
   }
   V.files["quarry.conf"] = (o.conf or "") .. "dry = false\n"
   V.files["quarry"] = "-- the program itself, so deploy has something to copy"
+  -- a state file the run starts from, for the cases that cannot be reached by
+  -- running the world forwards -- an old file missing a field, or a depot that
+  -- belongs to another turtle
+  if o.state then V.files["quarry.state"] = o.state end
 end
 
 local function k3(x, y, z) return x .. "," .. y .. "," .. z end
@@ -1155,6 +1159,15 @@ local function chestItems()
   for _, it in ipairs(c or {}) do n = n + it.count end
   return c or {}, n
 end
+-- the same count, at a box that is not the shared-test chest: a turtle that
+-- builds its own depot puts it UNDER the trunk floor
+local function coalAt(x, y, z)
+  local n = 0
+  for _, it in ipairs(V.chests[k3(x, y, z)] or {}) do
+    if it.name == "minecraft:coal" then n = n + it.count end
+  end
+  return n
+end
 local function coalLeft()
   local n = 0
   for _, it in ipairs(select(1, chestItems())) do
@@ -1190,42 +1203,67 @@ local sv18 = load("return " .. V.files["quarry.state"])()
 assert((sv18.trips or 0) >= 1, "the state file counted no depot trips")
 assert((sv18.hauled or 0) > 100, "the state file counted no haul")
 
--- 18b. the ration is a floor, not a fraction ------------------------------
+-- 18b. a turtle's own box is not rationed -------------------------------
 
--- 51. The old rule took floor(total/3) of whatever was in the chest, so three
--- dockers took 100, 66 then 44 of a 300-coal chest and the shares were never
--- equal. Now a turtle takes what the trip needs down to a floor held back for
--- the others: conf.fuelFloor (8) per OTHER turtle, so 16 of 20 with three
--- turtles running. The chest must come to rest on exactly that floor -- the
--- old code walks it down past 16 towards 3.
+-- 110. There used to be a floor of conf.fuelFloor per OTHER turtle held back
+-- in the chest -- written when the mine had one shared depot and the first
+-- turtle to dock could starve the other two. Change 30 gave every turtle a box
+-- under its own trunk, and the floor then reserved 16 coal in a container no
+-- other turtle ever opens: both turtles stopped dead on 93 fuel with those 16
+-- one block away [in-game 2026-08-29, logs E5wWw and hkgWh]. At its own box a
+-- turtle holds nothing back. The old code comes to rest on exactly 16.
 world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 2000,
         blocks = { [k3(DX, DY, DZ)] = "minecraft:chest" },
         chests = coalChest(20) })
 ok, err, log = runWorld("1")
-assert(ok, "ration-floor run crashed: " .. tostring(err))
+assert(ok, "own-box ration run crashed: " .. tostring(err))
 assert(log:find("depot  : docking"), "it never docked:\n" .. log)
-assert(coalLeft() == 16,
-  "the floor is 8 per other turtle, so 16 should be left, not " .. coalLeft() .. ":\n" .. log)
+assert(coalLeft() < 16,
+  "its own box was rationed as if somebody else drew on it: " .. coalLeft()
+  .. " coal left:\n" .. log)
 
--- 52. and the floor follows conf.turtles, which the old literal 3 ignored:
--- two turtles reserve for one other, so 8 of the same 20 stay in the chest.
--- Two turtles split the claim in halves, so turtle 1's trunk moves z -57 -> -53.
-local HZ = -53
--- 10 coal, not 20: the ceiling almost never binds (a trip wants only 4-6
--- coal), so the floor is the only term that shows, and it only shows once the
--- chest is low enough to reach it. The old rule walks this chest down to 3.
-world({ conf = "tripBlocks = 200\nturtles = 2\n" .. SECTIONS, fuel = 2000,
-        blocks = { [k3(BX - 1, BY, HZ)] = "minecraft:chest" },
-        chests = { [k3(BX - 1, BY, HZ)] = { { name = "minecraft:coal", count = 10 } } } })
+-- 111. and an old quarry.state, written before the depot carried an `own`
+-- field at all, reads as private -- every turtle in the world when this
+-- shipped had built or probed its own box. The test is `own ~= false` for
+-- exactly this reason; a truthiness test would read every one of those files
+-- as somebody else's box and keep the floor.
+local OLDSTATE = ('{["home"]={["x"]=137,["y"]=83,["z"]=-42},'
+  .. '["depot"]={["x"]=%d,["y"]=%d,["z"]=%d,["dump"]=1,["fuel"]=1}}')
+  :format(BX, BY, BZ)
+world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 2000,
+        state = OLDSTATE,
+        blocks = { [k3(DX, DY, DZ)] = "minecraft:chest" },
+        chests = coalChest(20) })
 ok, err, log = runWorld("1")
-assert(ok, "two-turtle ration run crashed: " .. tostring(err))
-assert(log:find("depot  : docking"), "the two-turtle run never docked:\n" .. log)
-local twoLeft = 0
-for _, it in ipairs(V.chests[k3(BX - 1, BY, HZ)] or {}) do
-  if it.name == "minecraft:coal" then twoLeft = twoLeft + it.count end
+assert(ok, "old-state run crashed: " .. tostring(err))
+assert(log:find("depot  : docking"), "the old-state run never docked:\n" .. log)
+assert(coalLeft() < 16,
+  "a state file with no `own` was read as somebody else's box: " .. coalLeft()
+  .. " coal left:\n" .. log)
+
+-- 112. a SHARED box is still rationed, by a per-dock cap and not a floor ----
+
+-- A cap divides the box across visits without stranding any of it, which is
+-- what the floor did. sharePerDock is in coal, so 2 is 160 fuel: no single
+-- dock may take more than that however much the trip wants. The old code has
+-- no cap at all and takes the whole `want`.
+local SHARED = ('{["home"]={["x"]=137,["y"]=83,["z"]=-42},'
+  .. '["depot"]={["x"]=%d,["y"]=%d,["z"]=%d,["dump"]=1,["fuel"]=1,["own"]=false}}')
+  :format(BX, BY, BZ)
+world({ conf = "tripBlocks = 60\nsharePerDock = 2\n" .. SECTIONS, fuel = 600,
+        state = SHARED,
+        blocks = { [k3(DX, DY, DZ)] = "minecraft:chest" },
+        chests = coalChest(200) })
+ok, err, log = runWorld("1")
+assert(ok, "shared-cap run crashed: " .. tostring(err))
+local docks, most = 0, 0
+for took in log:gmatch("took (%d+) fuel") do
+  docks = docks + 1
+  if tonumber(took) > most then most = tonumber(took) end
 end
-assert(twoLeft == 8,
-  "with turtles = 2 the floor is 8, not " .. twoLeft .. ":\n" .. log)
+assert(docks > 1, "the shared-cap run docked " .. docks .. " times:\n" .. log)
+assert(most <= 160,
+  "a single dock took " .. most .. " fuel from a shared box, and the cap is 2 coal:\n" .. log)
 
 -- 18c. startX/Y/Z cannot calibrate, and must say so --------------------------
 
@@ -1329,9 +1367,14 @@ world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 700,
 ok, err, log = runWorld("1")
 assert(ok, "forage run crashed: " .. tostring(err))
 assert(log:find("forage : depot is dry"), "a dry depot did not send it foraging:\n" .. log)
-assert(log:find("y=60"), "it did not head for the top level where the coal is:\n" .. log)
-assert(log:find("STOPPED: depot is dry and there is nothing to forage"),
+assert(log:find("climbing to y=60"), "it did not head for the top level where the coal is:\n" .. log)
+assert(log:find("STOPPED: out of coal"),
   "it did not stop once foraging was exhausted:\n" .. log)
+-- and it parked at the top of its own trunk, which is where a player with a
+-- stack of coal can reach it -- not at the depot 119 blocks down, and not at
+-- the rim of whatever leg the tank ran out on
+assert(log:find("park   : out of coal, parked at 136,60,%-57"),
+  "it did not park at the top of its own trunk:\n" .. log)
 
 -- 22. coal in the hold is fuel, not cargo ---------------------------------
 
@@ -1348,7 +1391,10 @@ assert(log:find("fuel   : burnt %d+ coal from the hold"),
 
 -- 23. a fuel find is banked for the other two ------------------------------
 
+-- a SHARED box: fuelShare is "the other two could burn some of this", which is
+-- only true of a container somebody else opens. Its own box is test 114.
 world({ conf = "topY = -55\ntripBlocks = 100000\nfuelShare = 8\n" .. SECTIONS, fuel = 20000,
+        state = SHARED,
         blocks = (function()
           local b = { [k3(DX, DY, DZ)] = "minecraft:chest" }
           -- east leg: the chest at 135 blocks the west one at the floor level
@@ -1725,6 +1771,10 @@ assert(not log:find("boxed in on all four sides"),
 local prog = io.open(PROG):read("a")
 assert(prog:find("dry%s+= false"), "the seeded config no longer ships dry = false")
 assert(prog:find("lava%s+= true"), "the seeded config no longer ships lava = true")
+-- forageCoal off means a dry depot stops the turtle where it stands rather
+-- than climbing for coal, which is a mine that halts on its own fuel
+assert(prog:find("forageCoal%s+= true"),
+  "the seeded config no longer ships forageCoal = true")
 
 world({ inv = kit(), leaveAfter = 3 })
 V.files["quarry.conf"] = nil          -- no config: the turtle seeds its own
@@ -3286,6 +3336,149 @@ assert(log:find("another turtle, not a block I may dig"),
 local sv108 = load("return " .. V.files["quarry.state"])()
 assert(sv108.halt and sv108.halt:find("would not move"),
   "the jam did not reach the state file: " .. tostring(sv108.halt))
+
+-- 113. coal is burnt on pickup, up to conf.fuelKeep ------------------------
+
+-- Coal a turtle dug is worth more in its tank than in a box only that same
+-- turtle can open, so at its own depot the tank is topped to conf.fuelKeep at
+-- the end of every leg -- not carried home first and rationed back out. The
+-- old code burnt from the hold only when the walk-home reserve had already
+-- failed, which is far too late to be the answer to a dry box.
+world({ conf = "topY = -55\ntripBlocks = 60\nfuelKeep = 400\nfuelShare = 100000\n" .. SECTIONS,
+        fuel = 500,
+        blocks = (function()
+          local b = {}
+          -- on the WEST leg, which is the first one cut, so the burn lands
+          -- before the first dock and not after it
+          for x = 126, 135 do b[k3(x, BY, BZ)] = "minecraft:coal" end
+          return b
+        end)(),
+        inv = { [1] = { name = "minecraft:chest", count = 1 } } })
+ok, err, log = runWorld("1")
+assert(ok, "burn-on-pickup run crashed: " .. tostring(err))
+-- The tank it burns UP TO is the tell. Every other caller of burnFrom aims at
+-- the walk home plus a margin, about 90 here, or at one branch, about 160 --
+-- so a burn that lands the tank on conf.fuelKeep can only be this one.
+local burnTank = tonumber(log:match("burnt %d+ coal from the hold, tank (%d+)"))
+assert(burnTank, "it never burnt the coal it dug:\n" .. log)
+assert(burnTank >= 400,
+  "the burn stopped at " .. burnTank .. ", which is a walk-home top-up and not fuelKeep:\n" .. log)
+-- and the overflow above fuelKeep is still banked rather than hoarded: a later
+-- dock finds coal in a box that started empty, and it can only have come from
+-- the hold
+assert(log:find("chest held [1-9]%d* fuel items"),
+  "nothing above fuelKeep reached the box:\n" .. log)
+
+-- 114. a fuel find does not send a turtle home to its OWN box ---------------
+
+-- fuelShare exists to put a find where the other turtles can burn it. At a box
+-- under this turtle's own trunk there are no others, so the trip only moves
+-- coal into a container the same turtle draws it back out of. The old code
+-- docked on the find with two or three slots used.
+world({ conf = "topY = -55\ntripBlocks = 100000\nfuelShare = 8\n" .. SECTIONS,
+        fuel = 20000,
+        blocks = (function()
+          local b = {}
+          for x = 137, 146 do b[k3(x, BY, BZ)] = "minecraft:coal" end
+          return b
+        end)(),
+        inv = { [1] = { name = "minecraft:chest", count = 1 } } })
+ok, err, log = runWorld("1")
+assert(ok, "own-box fuel-share run crashed: " .. tostring(err))
+local firstSlots = tonumber(log:match("depot  : docking with (%d+) slots used"))
+assert(firstSlots, "it never docked at all:\n" .. log)
+assert(firstSlots > 8,
+  "a fuel find sent it home to its own box with " .. firstSlots
+  .. " slots used:\n" .. log)
+
+-- 115. the climb is launched while it can still be paid for -----------------
+
+-- forage used to be reached only from `fuelLevel() < want`, one branch's
+-- worth -- and the climb costs four. So the turtle could only ever try the
+-- climb once it could no longer afford it, and the feature had never once
+-- worked in-game [2026-08-29, logs E5wWw and hkgWh]. A dock the box could not
+-- feed is the signal now, and it lands several trips earlier.
+world({ conf = "tripBlocks = 200\n" .. SECTIONS, fuel = 900,
+        blocks = { [k3(DX, DY, DZ)] = "minecraft:chest" },
+        chests = { [k3(DX, DY, DZ)] = {} } })
+ok, err, log = runWorld("1")
+assert(ok, "early-climb run crashed: " .. tostring(err))
+local climbTank = tonumber(log:match("climbing to y=60 for coal, (%d+) fuel"))
+assert(climbTank, "a dry box did not launch the climb:\n" .. log)
+-- one branch at the working level costs about 160 and the climb about 400: a
+-- turtle that waited for `fuelLevel() < want` would be starting on under 160
+assert(climbTank > 400,
+  "it only climbed once it was down to " .. climbTank
+  .. " fuel, which is the bug:\n" .. log)
+
+-- 116. a climb it cannot pay for stops AT the depot -------------------------
+
+-- Somewhere the player can walk to with a stack of coal. Halfway up a one-wide
+-- trunk shaft is not, and it is where the old half-committed forage left it:
+-- st.level was set to the top, the next pass priced that branch against a tank
+-- that could not reach it, and the run halted wherever it stood.
+world({ conf = "topY = -55\ntripBlocks = 100000\n" .. SECTIONS, fuel = 800,
+        blocks = { [k3(DX, DY, DZ)] = "minecraft:chest" },
+        chests = { [k3(DX, DY, DZ)] = {} } })
+ok, err, log = runWorld("1")
+assert(ok, "unaffordable-climb run crashed: " .. tostring(err))
+assert(log:find("cannot afford the climb for coal"),
+  "it did not name the climb it could not pay for:\n" .. log)
+-- at the depot's own level, not partway up a one-wide trunk shaft. The park
+-- rule may still step it one block off the spine, which is the block beside
+-- the depot and still somewhere a player can walk to.
+local px, py, pz = log:match("at     : (%-?%d+),(%-?%d+),(%-?%d+)")
+assert(py == "-59" and pz == "-57" and (px == "136" or px == "137"),
+  "it stopped at " .. tostring(px) .. "," .. tostring(py) .. "," .. tostring(pz)
+  .. ", which is not the depot:\n" .. log)
+
+-- 117. foraging runs until the tank is full, then goes back to the deep -----
+
+-- Not one branch and back: it works the top level until the tank reaches
+-- fuelKeep. Then it re-enters the schedule at the DEEPEST unfinished level --
+-- leaving the forage level as the schedule position silently reverses
+-- deepestFirst, and with every level below already done the turtle calls the
+-- claim exhausted and stops, which was the second half of the same bug.
+world({ conf = "topY = -55\ntripBlocks = 60\nfuelKeep = 700\n" .. SECTIONS,
+        fuel = 1000,
+        blocks = (function()
+          local b = { [k3(DX, DY, DZ)] = "minecraft:chest" }
+          -- coal on the top level and nowhere else, so the only way the tank
+          -- comes back up is the climb
+          for x = 113, 158 do b[k3(x, -55, -59)] = "minecraft:coal" end
+          return b
+        end)(),
+        chests = { [k3(DX, DY, DZ)] = {} } })
+ok, err, log = runWorld("1")
+assert(ok, "forage-and-return run crashed: " .. tostring(err))
+assert(log:find("climbing to y=%-55 for coal"), "it never climbed:\n" .. log)
+local back, backTank = log:match("()forage : tank is (%d+) %-%- back to the schedule")
+assert(back, "it foraged and never came back to the schedule:\n" .. log)
+-- it stayed up top until the tank reached fuelKeep, not for one branch
+assert(tonumber(backTank) >= 700,
+  "it came back down on " .. backTank .. " fuel, short of fuelKeep:\n" .. log)
+-- and it resumed BELOW the level it foraged on. Leaving y=-55 as the schedule
+-- position reverses deepestFirst, and every level under it is already done, so
+-- the turtle reads the claim as exhausted and stops.
+local nextY = tonumber(log:match("level  : moving to y=(%-?%d+)", back))
+assert(nextY and nextY < -55,
+  "it resumed at y=" .. tostring(nextY) .. ", not below the level it foraged on:\n" .. log)
+
+-- 118. forageCoal = false stops instead of climbing -------------------------
+
+-- The switch is the whole point of the config: a player who does not want
+-- turtles cutting rows at y=60 gets a turtle that stops at its depot and says
+-- why, rather than one that quietly mines the surface layer for coal.
+world({ conf = "topY = -55\ntripBlocks = 100000\nforageCoal = false\n" .. SECTIONS,
+        fuel = 800,
+        blocks = { [k3(DX, DY, DZ)] = "minecraft:chest" },
+        chests = { [k3(DX, DY, DZ)] = {} } })
+ok, err, log = runWorld("1")
+assert(ok, "forageCoal-off run crashed: " .. tostring(err))
+assert(log:find("forageCoal is off"),
+  "it stopped without naming the switch that stopped it:\n" .. log)
+assert(not log:find("climbing to y="),
+  "forageCoal = false and it climbed anyway:\n" .. log)
 
 -- 109. the disk startup is a bootstrap that logs before it runs anything ----
 -- "reboot works, running the actual code doesn't" [user, 2026-08-29]. With one

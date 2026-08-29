@@ -26,7 +26,8 @@ local NUM = {
   fuelMargin   = 64,    -- spare fuel kept on top of the walk home
   tripBlocks   = 96,    -- blocks carried before the inventory forces a depot run
   fuelShare    = 128,   -- coal in the hold that sends a turtle home to bank it
-  fuelFloor    = 8,     -- coal held back in the depot chest for each OTHER turtle
+  fuelKeep     = 2000,  -- tank level topped up from coal in the hold, at its own box
+  sharePerDock = 16,    -- coal one dock may take from a SHARED depot
   lavaFloor    = 4000,  -- scoop a passing lava source when the tank is under this
   saveSamples  = 200,   -- --check writes the state file this many times to time it
 }
@@ -36,6 +37,7 @@ local STR = {
 local BOOL = {
   deepestFirst = true,
   lava         = true,   -- the scoop was proven in-game 2026-08-27, bucket came back
+  forageCoal   = true,   -- a dry depot climbs to topY to mine coal, rather than stopping
   dry          = false,  -- set live at the user's instruction, 2026-08-27
 }
 
@@ -84,7 +86,9 @@ veinDepth    = 12      # how far a chase may wander off the branch
 fuelMargin   = 64      # spare fuel kept on top of the walk home
 tripBlocks   = 96      # blocks carried before the inventory forces a depot run
 fuelShare    = 128     # coal in the hold that sends a turtle home to bank it for the others
-fuelFloor    = 8       # coal left in the chest for each OTHER turtle; under that, forage
+fuelKeep     = 2000    # coal in the hold is burnt up to this tank level at its OWN depot
+sharePerDock = 16      # coal one dock may take from a SHARED depot; a cap, not a reserve
+forageCoal   = true    # depot dry = climb to topY and mine for coal. false = stop instead
 lava         = true    # the --check scoop was proven on this server: the bucket came back
 lavaFloor    = 4000    # scoop a source the branch passes when the tank is below this
 oreTags      = c:ores  # the 1.21.1 tag. forge:ores is gone, do not put it back
@@ -1724,6 +1728,19 @@ local function reserveOk(conf)
   return fuelLevel() >= toHome() + conf.fuelMargin + 4
 end
 
+-- Whose box is this. Change 30 gave every turtle a depot under its own trunk,
+-- so the ordinary case is a box no other turtle ever visits, and only
+-- findSharedDepot ever writes own = false.
+--
+-- The test is against false and never against truthiness: every quarry.state
+-- in the world was written before this field existed, and every one of those
+-- turtles built or probed its own box, so an old file has to fall on the
+-- private side. That is the lesson of the deployed/staffed mistake, taken the
+-- other way round.
+local function ownDepot()
+  return not st.depot or st.depot.own ~= false
+end
+
 -- Coal in the hold is fuel first and cargo second. Burn the least that reaches
 -- the target -- never the stack, or a rich find ends up in one turtle's tank
 -- instead of in the chest the other two draw from. Every place that judges the
@@ -1743,6 +1760,22 @@ local function burnFrom(l, target)
   turtle.select(1)
   if burnt > 0 then sayf("fuel   : burnt %d coal from the hold, tank %d", burnt, fuelLevel()) end
   return burnt
+end
+
+-- Coal the turtle dug is worth more in the tank than in a box only that same
+-- turtle can open. At its own depot there is nobody to save it for, so the
+-- tank is topped up to conf.fuelKeep and only the overflow is banked; at a
+-- shared box the coal still rides home unburnt, because there the sharing rule
+-- is the whole point [RESUME correction, "no burn-it-where-you-find-it"].
+--
+-- Called at the end of a leg and at a dock, never per dug block: that is a
+-- 16-slot getItemDetail scan on every one of a run's few thousand blocks, to
+-- catch a seam a leg meets once. A leg is 24 blocks, so coal never rides long.
+local function keepFuel(conf, l)
+  if not ownDepot() then return 0 end
+  local keep = conf.fuelKeep or 0
+  if fuelLevel() >= keep then return 0 end
+  return burnFrom(l, keep)
 end
 
 -- Down the trunk. Above topY there is nothing to mine, so those blocks are
@@ -1812,6 +1845,15 @@ local function mineLeg(c, conf, l, leg, inward)
   while (inward and st.along > 0) or (not inward and st.along < len) do
     if not reserveOk(conf) then burnFrom(l, toHome() + conf.fuelMargin + 4) end
     if not reserveOk(conf) then
+      -- The turtle is only up here BECAUSE the depot was dry, so spending the
+      -- last of the tank walking 119 blocks back down to it buys nothing but
+      -- the walk. Stop, and let the park walk it to the top of its own trunk
+      -- where the player can reach it.
+      if st.foraging then
+        halt = ("out of coal: %d fuel left and the depot was already dry")
+          :format(fuelLevel())
+        return false
+      end
       -- with a depot to walk to, low fuel is a trip home, not a stop; without
       -- one, stopping here is the only safe answer [plan 7, never strand]
       if st.depot then
@@ -1830,8 +1872,13 @@ local function mineLeg(c, conf, l, leg, inward)
     -- it stopped a run with a full tank and a nearly empty hold dead [in-game
     -- 2026-08-28, log Rpv9m]. The full hold and the tripBlocks trip are real
     -- either way: with nowhere to empty out, mining on only destroys the drops.
-    if not room() or (st.carried or 0) >= conf.tripBlocks
-       or (st.depot and fuelAboard(l) >= conf.fuelShare) then
+    -- Foraging at the top level, a full hold is junk to drop and not a reason
+    -- to walk 119 blocks down: the round trip costs more than the branch that
+    -- sent the turtle up here. Only ore in a hold with no room left goes home.
+    if st.foraging and not room() then makeRoom(l) end
+    if not room()
+       or (not st.foraging and (st.carried or 0) >= conf.tripBlocks)
+       or (st.depot and not ownDepot() and fuelAboard(l) >= conf.fuelShare) then
       st.needDock = true
       save()
       return false
@@ -1876,6 +1923,7 @@ local function mineLeg(c, conf, l, leg, inward)
       break
     end
   end
+  keepFuel(conf, l)
   return true
 end
 
@@ -1988,7 +2036,8 @@ function probeDepot(l)
     else dump = dump or d end
   end
   -- one chest only: it is both. Two or more: the one with coal in it feeds.
-  st.depot = { x = st.x, y = st.y, z = st.z, dump = dump or fuelDir, fuel = fuelDir or dump }
+  st.depot = { x = st.x, y = st.y, z = st.z, dump = dump or fuelDir, fuel = fuelDir or dump,
+               own = true }
   save()
   return true
 end
@@ -2111,7 +2160,7 @@ local function buildDepot(l, c, conf)
           -- probeDepot never sees this one: it looks from the trunk floor and
           -- this may be a level up. One box is both roles, which is the case
           -- restock is already written for.
-          st.depot = { x = st.x, y = st.y, z = st.z, dump = sp.dir, fuel = sp.dir }
+          st.depot = { x = st.x, y = st.y, z = st.z, dump = sp.dir, fuel = sp.dir, own = true }
           save()
           -- Everything burnable this turtle still carries goes in, and from
           -- here on it rations out of it [plan 7]. With a box each a find by
@@ -2211,18 +2260,21 @@ local function restock(conf, l, want)
     if ok and d and isCoalish(l, d.name) then total = total + d.count end
   end
 
-  -- The old rule took a third of whatever the chest happened to hold, which
-  -- made the shares unequal: on 300 coal three dockers take 100, then 66, then
-  -- 44, because each takes a third of what the last one left, and 90 sit there
-  -- for good. Take what this trip actually needs instead, down to a floor held
-  -- back for the other turtles. Above the floor every turtle gets the same
-  -- `want`; at it nobody takes anything and they forage, which is the designed
-  -- dry-depot path. The floor scales with conf.turtles -- the old literal 3
-  -- reserved for three turtles however many were actually running.
-  local others = math.max(0, math.floor(conf.turtles or 3) - 1)
-  local held   = others * math.max(0, conf.fuelFloor or 0)
-  local share  = math.max(0, total - held)
-  local keep   = math.min(share, math.max(want, 0))
+  -- Take what this trip actually needs, and at this turtle's own box hold
+  -- nothing back at all. There used to be a floor of conf.fuelFloor per OTHER
+  -- turtle, written when the mine had one shared depot and the first turtle to
+  -- dock could starve the other two. Change 30 gave every turtle a box under
+  -- its own trunk, and a reserve in a box nobody else ever opens is coal
+  -- nobody can spend: both turtles stopped dead with 16 coal one block away
+  -- and 93 fuel in the tank [in-game 2026-08-29, logs E5wWw and hkgWh].
+  --
+  -- A SHARED box is still rationed, by a per-dock cap rather than a floor. A
+  -- cap divides the box across visits without stranding any of it, and it is
+  -- in coal, the same unit `want` is in.
+  local keep = math.min(total, math.max(want, 0))
+  if not ownDepot() then
+    keep = math.min(keep, math.max(0, conf.sharePerDock or 0))
+  end
   -- Everything that came aboard goes back except the share that gets burnt --
   -- including the load just dumped, because with one chest at the depot the
   -- fuel and the spoil live in the same box and the suck cannot tell them
@@ -2245,6 +2297,41 @@ local function restock(conf, l, want)
   st.shared = (st.shared or 0) + math.max(0, aboard - burnt)
   save()
   return fuelLevel() - before, total
+end
+
+-- Change 47, a measurement and not a fix. `turtle.suck` only ever pulls the
+-- container's FIRST slot, so restock learns the chest by taking, sixteen
+-- stacks at a time -- and the user's depot is bigger than the default 27
+-- slots, which buries coal banked behind the spoil. A wrap can READ the whole
+-- box, but pushItems/pullItems address peripherals by name and a turtle has no
+-- name for itself, so it cannot TAKE from slot 40 either way.
+--
+-- What this settles is whether the read is available at all: the peripherals
+-- dump this pack is written against was taken from a COMPUTER, and a turtle's
+-- own sides are its upgrades. Once per run, costing nothing when it fails.
+local probed = false
+local function depotProbe(l)
+  if probed or not st.depot then return end
+  probed = true
+  if type(peripheral) ~= "table" or not peripheral.wrap then return end
+  local dir = st.depot.fuel
+  faceDepot(dir)
+  local ok, inv = pcall(peripheral.wrap, (dir == "down") and "bottom" or "front")
+  if not (ok and type(inv) == "table" and inv.list) then
+    say("depot  : the box cannot be wrapped from a turtle -- the 16-stack suck is")
+    say("         all the turtle can see of it")
+    return
+  end
+  local okl, items = pcall(inv.list)
+  if not (okl and type(items) == "table") then return end
+  local coal, held = 0, 0
+  for _, it in pairs(items) do
+    held = held + 1
+    if it and isCoalish(l, it.name) then coal = coal + (it.count or 0) end
+  end
+  local oks, size = pcall(inv.size)
+  sayf("depot  : wrapped -- %s slots, %d of them used, %d coal in the box",
+    (oks and size) and tostring(size) or "?", held, coal)
 end
 
 -- the lava map -------------------------------------------------------------
@@ -2479,13 +2566,45 @@ function forage(conf, l, c)
     end
   end
   local top = conf.topY
-  if st.level ~= top then
-    sayf("forage : depot is dry -- taking a branch at y=%d instead, where the coal is", top)
+  if not conf.forageCoal then
+    halt = ("depot is dry and forageCoal is off: %d fuel, and I am not to climb for coal")
+      :format(fuelLevel())
+    return false
+  end
+  if st.level ~= top and not st.foraging then
+    -- Price the climb and refuse one it cannot finish. This used to be reached
+    -- only from `fuelLevel() < want`, which is to say only once the tank was
+    -- already under the cost of one branch -- so the turtle could never afford
+    -- the climb it was being sent on, half-committed by setting st.level, and
+    -- halted on the pass after. The feature had never once worked in-game
+    -- [2026-08-29, logs E5wWw and hkgWh]. dock() now calls this while the tank
+    -- can still pay, and what is left is to say so when it cannot.
+    --
+    -- Cost is priced from the trunk column, which is where a dock leaves the
+    -- turtle standing. Short, it stops HERE, at the depot -- somewhere the
+    -- player can walk to with a stack of coal. Halfway up a one-wide trunk
+    -- shaft is not.
+    local cost = branchCost(c, conf, top, st.z)
+    if fuelLevel() < cost then burnFrom(l, cost) end
+    if fuelLevel() < cost then
+      halt = ("depot is dry and I cannot afford the climb for coal: %d fuel, %d to work y=%d and come back")
+        :format(fuelLevel(), cost, top)
+      return false
+    end
+    sayf("forage : depot is dry -- climbing to y=%d for coal, %d fuel for a %d-block trip",
+      top, fuelLevel(), cost)
+    notify("fuel", ("the depot at %d,%d,%d is dry -- climbing to y=%d to mine coal")
+      :format(st.x, st.y, st.z, top))
+    st.foraging = true
     st.level, st.branch, st.leg, st.along = top, nil, nil, 0
     st.plan, st.step = nil, nil
     save()
     return true
   end
+  -- Up top and still short. Stopping is the answer; where it stops is the park
+  -- block's business, and that is the top of this turtle's own trunk.
+  halt = ("out of coal: %d fuel, and the top level had none to give either")
+    :format(fuelLevel())
   return false
 end
 
@@ -2508,6 +2627,12 @@ function dock(c, conf, l, want)
   local okd, why = dumpLoad(l)
   if not okd then halt = why return false end
 
+  depotProbe(l)
+  -- Fuel first, cargo second: the coal this trip dug goes in the tank up to
+  -- conf.fuelKeep before the box is asked for any, so a turtle that fed itself
+  -- takes nothing and a shared box lasts three times as long.
+  keepFuel(conf, l)
+
   local added = mapMerge()
   if added > 0 then sayf("lavamap: %d new source%s on /disk", added, added == 1 and "" or "s") end
 
@@ -2522,10 +2647,25 @@ function dock(c, conf, l, want)
   st.trips = (st.trips or 0) + 1
   save()
 
-  if fuelLevel() < want then
+  -- Launch the climb while it is still affordable. `fuelLevel() < want` is one
+  -- branch's worth, and the climb to the top level costs four -- so waiting
+  -- for it means only ever trying the climb once the tank cannot pay for it.
+  -- A dock the depot could not feed is the real signal, and it lands several
+  -- trips earlier: on log E5wWw at the tank-413 dock rather than at 93.
+  local climb = branchCost(c, conf, conf.topY, st.z)
+  local early = (got or 0) <= 0 and conf.forageCoal and fuelLevel() >= want
+                and fuelLevel() < 2 * climb
+  if fuelLevel() < want or early then
     if not forage(conf, l, c) then
-      halt = ("depot is dry and there is nothing to forage: %d fuel, %d needed")
-        :format(fuelLevel(), want)
+      -- An early climb that could not be started is not a reason to stop: the
+      -- tank still covers the next branch, so mine it and ask again at the next
+      -- dry dock, by which time the answer may be the halt after all. Only a
+      -- turtle that cannot pay for the branch in front of it stops here.
+      if fuelLevel() >= want then halt = nil return true end
+      if not halt then
+        halt = ("depot is dry and there is nothing to forage: %d fuel, %d needed")
+          :format(fuelLevel(), want)
+      end
       return false
     end
   end
@@ -2537,7 +2677,8 @@ local function report(c, conf)
   sayf("depot  : %d trips, %d items hauled, %d junk dumped in the tunnel",
     st.trips or 0, st.hauled or 0, st.junked or 0)
   if (st.shared or 0) > 0 then
-    sayf("fuel   : %d coal banked in the depot chest for the other turtles",
+    sayf("fuel   : %d coal banked in the depot chest" ..
+      (ownDepot() and " above what the tank would take" or " for the other turtles"),
       st.shared)
   end
   local nb = 0
@@ -2602,6 +2743,12 @@ local function findSharedDepot(c, conf, l, index, trunkZ)
         local y = y0 + off
         if y >= conf.bottomY and goTo(c.spine, y, tz) and probeDepot(l) then
           local dp = st.depot
+          -- Somebody else's box. This is the one place own = false is written,
+          -- and it is what turns the sharing rules back on: the per-dock cap
+          -- in restock, the fuelShare trip home, and no burning of a find that
+          -- the box's owner is going to want.
+          dp.own = false
+          save()
           sayf("depot  : shared depot at %d,%d,%d (dump side %s, fuel side %s)",
             dp.x, dp.y, dp.z, tostring(dp.dump), tostring(dp.fuel))
           return true
@@ -2900,6 +3047,22 @@ local function runMine(conf, l, index)
   -- [plan 11]. One leg per pass, because a leg of the pair starts at the rim
   -- as often as at the spine and the walk to it is this loop's job.
   while true do
+    -- Foraging is over the moment the tank is full enough. The schedule then
+    -- picks up at the DEEPEST unfinished level, which clearing st.level makes
+    -- nextBranch find on its own -- it scans levelsFrom in schedule order and
+    -- only starts partway down when st.level names a level to start at.
+    -- Leaving y=60 as the schedule position instead silently reverses
+    -- deepestFirst, and with every level below it already marked done the
+    -- turtle calls the claim exhausted and stops. That was the second half of
+    -- the forage bug, and it has to go with the first.
+    if st.foraging and fuelLevel() >= (conf.fuelKeep or 0) then
+      st.foraging = nil
+      st.level, st.branch, st.leg, st.along = nil, nil, nil, 0
+      st.plan, st.step = nil, nil
+      save()
+      sayf("forage : tank is %d -- back to the schedule at the deepest level left",
+        fuelLevel())
+    end
     -- A state file written before the pair plan existed carries a half-cut row
     -- as branch/leg/along and nothing else. Rebuild the rest of that row as a
     -- plan of its own rather than throw the leg away: the turtles in the world
@@ -2931,7 +3094,11 @@ local function runMine(conf, l, index)
 
     local want = branchCost(c, conf, st.level, st.branch)
     if fuelLevel() < want then burnFrom(l, want) end
-    if st.needDock or fuelLevel() < want then
+    -- A foraging turtle is up here BECAUSE the depot was dry, so a tank under
+    -- the next branch is not a reason to walk 119 blocks down to it and 119
+    -- back: that round trip costs more than the branch that sent it up. Only a
+    -- hold with no room left in it is still worth the descent.
+    if st.needDock or (fuelLevel() < want and not st.foraging) then
       if not st.depot and not st.noDepot then findSharedDepot(c, conf, l, index, trunkZ) end
       if st.depot then
         if not dock(c, conf, l, want) then break end
@@ -3080,7 +3247,27 @@ local function runMine(conf, l, index)
   st.task = "park"
   if not halt then st.leg, st.along = nil, 0 end
   save()
-  if claim and st.x == claim.spine and stepAside() then
+  -- Out of coal parks at the TOP of this turtle's own trunk: not where the
+  -- fuel ran out, and not at the depot. Each trunk column is private to its
+  -- own third -- the only trunk block on the shared spine is the floor, and a
+  -- turtle that can still reach the floor docks rather than parks, so the
+  -- settled "park off the spine" rule cannot come into conflict here. y=topY
+  -- is also the point nearest the surface, which is where the player can most
+  -- easily bring it coal.
+  if st.foraging and claim then
+    local hp = halt
+    local _, _, ptz = thirdOf(claim, index, conf.turtles)
+    if st.x ~= claim.spine or st.y ~= conf.topY or st.z ~= ptz then
+      goTo(claim.spine, conf.topY, ptz)
+    end
+    halt = hp
+    save()
+    sayf("park   : out of coal, parked at %d,%d,%d -- the depot needs filling",
+      st.x, st.y, st.z)
+    notify("fuel", ("out of coal and parked at %d,%d,%d -- fill the depot%s and reboot me")
+      :format(st.x, st.y, st.z,
+        st.depot and (" at %d,%d,%d"):format(st.depot.x, st.depot.y, st.depot.z) or ""))
+  elseif claim and st.x == claim.spine and stepAside() then
     sayf("park   : stepped off the spine to %d,%d,%d so the others can get past",
       st.x, st.y, st.z)
     save()

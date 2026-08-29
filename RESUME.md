@@ -24,20 +24,20 @@ something settled starts misbehaving again.
 
 ## Where the work stands
 
-Last rewritten **2026-08-28, last**, after a day that shipped four builds. The
-mine is not blocked on anything: `update`, then `quarry 1` from the surface.
+Last rewritten **2026-08-29**, after the fuel build (changes 35–47). The mine
+is not blocked on anything: `update`, then `quarry 1` from the surface.
 
 | Phase | State |
 | --- | --- |
 | 1 — claim maths, iterators, `--check`, kit audit | **Done. Ran in-game 2026-08-24.** |
 | 2 — one turtle, one branch | **Done. Ran in-game 2026-08-27** (turtle 2, 177 blocks). |
-| 3 — depot cycle, fuel, the work loop | **Partly run.** Travel, fuel, the work loop, building the depot, docking and dumping all ran in-game 2026-08-28. Rationing has still never handed out coal — the tank was full every time it docked. |
+| 3 — depot cycle, fuel, the work loop | **Partly run.** Travel, fuel, the work loop, building the depot, docking and dumping all ran in-game 2026-08-28. Rationing handed out coal for the first time on 2026-08-29 (logs `E5wWw`, `hkgWh`) and then stopped both turtles for fuel; changes 35–47 are the fix and have not run in-game. |
 | 4 — three turtles | **Partly run.** Turtle 2 worked its own third correctly. Two turtles have never run at once. |
 | 5 — deployment | **Done. Ran in-game 2026-08-27** after four failed attempts; turtle 2 deployed, booted and mined. A plain `quarry 1` now deploys the others itself; that part has not run in-game. |
 | 6 — deferred (monitor, full-clear mode) | Not started. |
 
-**What is unproven in-game: rationing, two turtles at once, and the two changes
-from the last build** — the automatic deployment and the full-depot behaviour.
+**What is unproven in-game: changes 35–47, two turtles at once, and the two
+changes from the build before those** — the automatic deployment and the full-depot behaviour.
 
 The last log out of the game is `Rpv9m`. It got a fix, crossed to its trunk,
 descended to y=-59, and could not build a depot at all: **the block under the
@@ -290,9 +290,10 @@ to reverse.**
     middle-trunk walk is gone. `findSharedDepot` stays as the fallback for a
     turtle that has no container -- the kit decides, and no config key was
     added. **Accepted cost: coal sharing degrades**, because a find by turtle 1
-    can no longer be burnt by turtle 3. The ration is unchanged; it rations from
-    whatever box the turtle is docked at and the per-other-turtle floor is now
-    conservative rather than wrong. Tests 103-105, and 33/62/100 rewritten.
+    can no longer be burnt by turtle 3. Tests 103-105, and 33/62/100 rewritten.
+    **The ration was left unchanged here, and that was the bug**: a floor held
+    back for the other turtles in a box none of them visits is coal nobody can
+    spend. Changes 37-39 (2026-08-29) finish this one.
 31. **The retreat actually clears the corridor.** `stepAside` walked back one
     block, which leaves a turtle still in a 1-wide tunnel. It now reverses along
     the spine up to `RETREAT_MAX = 5` until it is on a branch row and pulls into
@@ -316,7 +317,84 @@ to reverse.**
     log with one line in it means `boot.lua` failed and the next line says
     where. Test 109.
 
+## What shipped on 2026-08-29, from logs E5wWw and hkgWh
+
+Both turtles ran well and both stopped the same way, with coal in their own
+depot: 2,751 and 1,621 blocks, 44 and 25 branches, neither crashed, both under
+160 fuel one block from a container of coal. `FUEL-PLAN.md` is the design note
+and carries the log evidence, the rejected alternatives, and the reasoning.
+
+**Three independent causes**, each of which alone produces "coal in the box,
+turtle stopped": the ration floor reserved 16 coal in a box no other turtle
+visits; `restock` cannot read past the first 16 stacks of a container bigger
+than 27 slots; and the climb to `topY` was only ever attempted once the tank
+held less than the climb costs, so it had never once worked.
+
+35. **Coal is burnt on pickup, up to `fuelKeep` (2000), at a PRIVATE depot
+    only.** `keepFuel` calls the existing `burnFrom` at the end of every leg and
+    at every dock — never per dug block, which is a 16-slot scan on every one of
+    a run's thousands of blocks. At a shared box coal still rides home unburnt.
+36. **A depot is this turtle's own unless explicitly shared.** `probeDepot` and
+    `buildDepot` write `own = true`; `findSharedDepot` writes `own = false`;
+    everything reads it as `st.depot.own ~= false`, never truthiness, so a
+    `quarry.state` written before the field existed falls on the private side —
+    which is where every turtle in the world belongs. Test 111.
+37. **`fuelFloor` is deleted**, from `NUM` and from the seeded config.
+38. **`sharePerDock = 16` caps one dock's take at a SHARED box.** A cap, not a
+    reserve: it divides the box across visits without stranding any of it.
+39. **`fuelShare`'s dock trigger fires only at a shared depot.** Its stated
+    purpose is banking a find "for the others"; at a private box the trip only
+    moves coal into a container the same turtle draws it back out of. Test 114.
+40. **`forageCoal = true` in `BOOL`**, beside `lava`, which already gates the
+    lava-scoop arm of the same `forage()`. Test 38 pins the default; test 118
+    covers the off path, which stops at the depot naming the switch.
+41. **The climb is launched while it can still be paid for.** A dock the depot
+    could not feed, with the tank under twice the top-branch cost, rather than
+    `fuelLevel() < want` — one branch's worth, when the climb costs four. On
+    log `E5wWw` that fires at the tank-413 dock instead of at 93. Test 115.
+42. **A climb it cannot afford halts AT the depot**, naming the shortfall, and
+    the cost is priced from the trunk column. Halting halfway up a one-wide
+    trunk shaft leaves the turtle somewhere the player cannot reach with coal.
+    An early climb it cannot start is not a reason to stop while the tank still
+    covers the next branch — it mines on and asks again at the next dry dock.
+    Test 116.
+43. **Up top it mines until the tank reaches `fuelKeep`**, not one branch and
+    back. A full hold drops junk through `makeRoom` and descends only holding
+    ore; a foraging turtle never walks home for fuel, because the box it would
+    walk to is the dry one that sent it up.
+44. **Then it re-enters the schedule at the deepest unfinished level**, by
+    clearing `st.level` and letting `nextBranch` find it. Leaving `topY` as the
+    schedule position silently reverses `deepestFirst`, and with every level
+    below already done the turtle calls the claim exhausted. Test 117.
+45. **A turtle that cannot reach `fuelKeep` parks at the top of its own trunk,
+    y=`topY`** — private to its own third, and the point nearest the surface.
+46. **`notify()` on both events**, the ascent and the park.
+47. **The depot's true size and coal total are printed once per run**, through a
+    `pcall`-wrapped `peripheral.wrap`. **Read-only, and a measurement rather
+    than a fix**: `pushItems`/`pullItems` address peripherals by name and a
+    turtle has no name for itself, so a wrap can read slot 40 and still not take
+    from it. **It also settles whether a turtle can wrap an adjacent inventory
+    at all** — the peripherals dump in the skill's references was taken from a
+    computer, and a turtle's own sides are its upgrades. If it comes back
+    showing a deep box full of buried coal, splitting the depot into two
+    containers (dump and fuel, which `probeDepot` already supports) is the next
+    change.
+
+**Deliberately not done: the 16-stack read cap stays**, at the user's decision.
+Change 35 keeps the tank topped from what the turtle digs, so it rarely needs to
+go looking; change 47 is the instrument that says whether the residual costs
+anything.
+
 ## Next action
+
+**Ask for `update`, then `quarry 1`** from the launch block. Changes 35–47 are
+in and the three suites pass; what they need now is a run in-game.
+
+**What to read in the log**: the `depot  : wrapped` or `depot  : the box cannot
+be wrapped` line (change 47 — this is the one new fact a run can return),
+whether a dry dock produces `forage : depot is dry -- climbing to y=60`, and
+whether the turtle comes back down with `forage : tank is N -- back to the
+schedule at the deepest level left` rather than parking.
 
 The code is ready. The run to ask for: **`update`, then `quarry 1`** from the
 launch block, carrying a barrel, turtles 2 and 3, the drive and the floppy.
@@ -367,7 +445,8 @@ findings fixed, tests 40–48. The vein-chase counter, the empty-tank guard, the
 absolute vein sweep, three `pcall` result bugs, and the lava dedupe.
 
 **Evening**, tests 49–55: the fuel ration became a floor rather than a fraction
-(`fuelFloor`, default 8); `--check` asks the turtle for its own tank limit
+(`fuelFloor`, default 8 — **deleted again on 2026-08-29, change 37**); `--check`
+asks the turtle for its own tank limit
 instead of assuming 20,000; `calibrate` refuses a config-pinned position rather
 than crashing on it; `startDir` lets a turtle mine with GPS down, at the cost
 of ever recovering from a lost state file.
@@ -477,6 +556,7 @@ and the in-game computer running `cloud <token>`.
 | `reports/mine-live-1-turtle2-2026-08-27.txt` | The 177-block in-game run. |
 | `reports/deploy-live-1..4-2026-08-27.txt` | The four failed deploy runs. |
 | `test_pattern.lua`, `test_coverage.lua` | The pattern proofs: `1,3,5,2,4`, and dug%/unseen% per candidate. |
+| `FUEL-PLAN.md` | The design note for changes 35–47, written 2026-08-29 from logs `E5wWw` and `hkgWh` and settled with the user. **Built and shipped the same day** — it survives as the reasoning behind those changes, including the rejected alternatives and the one thing deliberately left undone (the 16-stack read cap). |
 | `HANDOFF-PROMPT.md` | The pointer to paste into a fresh session. It says to read this file; it deliberately repeats nothing. |
 | `ROCKET-PLAN.md`, `spacex.lua`, `icmb.lua` | **An unrelated second thread**: a Create Aeronautics flight controller. Nine fixes planned, none implemented. Leave it alone unless the user raises it. |
 | `attic/` | Superseded and reserve work. `tunnel.lua` and its test, and the cloudcat delivery client. |
@@ -591,15 +671,17 @@ Plan section numbers in brackets.
 - **Depot-first, forage only when dry** [7]. Inventory is the trip trigger.
 - **A find is shared, not hoarded** [7]: `fuelShare` coal in the hold is a dock
   trigger, and a low tank burns the hold before it costs a trip.
-- **Depot fuel rationed by a FLOOR, not a fraction** [7]. **Learned by taking,
-  because a turtle cannot read a chest it is not wired to.** A turtle takes
-  what the trip needs (`want`) down to `fuelFloor` coal per OTHER turtle --
-  default 8, so 16 with three running -- and takes nothing at all below that,
-  which drops it into the designed forage path. Changed 2026-08-28 at the
-  user's instruction. The old rule took `floor(total / 3)` and made the shares
-  unequal: on 300 coal three dockers took 100, then 66, then 44, because each
-  took a third of what the last one left, and 90 sat in the chest for good. It
-  also divided by a literal 3 however many turtles were configured. Tests 51
+- **A turtle's OWN box is not rationed; a SHARED box is capped per dock**
+  [changed 2026-08-29, change 37/38]. **Learned by taking, because a turtle
+  cannot read a chest it is not wired to.** At its own depot a turtle takes
+  what the trip needs (`want`) and holds nothing back. `fuelFloor` is deleted:
+  it reserved `(turtles-1) * 8` coal in a box no other turtle ever opens, and
+  that is what stopped both turtles in logs `E5wWw` and `hkgWh` with 16 coal
+  one block away. At a shared box the take is capped at `sharePerDock` (16)
+  coal in one dock -- a cap divides the box across visits without stranding
+  any of it, which is what the floor did. Ownership is `st.depot.own`, tested
+  as `~= false`. Tests 110-112. The rule this replaces, and the fraction
+  before it, are in the history. Tests 51
   and 52, both confirmed to fail against the old line.
 - **Lava map shared on a depot disk drive** [7], read and written while docked.
 - **Never dig into a full inventory** [8]. `dig` succeeds and destroys the drop.
@@ -659,14 +741,19 @@ Plan section numbers in brackets.
 
 ## The defaults, changed 2026-08-27 at the user's instruction
 
-`quarry.conf` ships **`dry = false`** and **`lava = true`**.
+`quarry.conf` ships **`dry = false`**, **`lava = true`** and **`forageCoal =
+true`** (a dry depot climbs to `topY` and mines for coal rather than stopping).
+The fuel keys are `fuelKeep = 2000` (a tank LEVEL, what the hold is burnt up to
+at a private box), `sharePerDock = 16` (a COAL COUNT, the cap on one dock's
+take at a shared box) and `fuelShare = 128` (a coal count in the hold that
+sends a turtle home — at a shared box only).
 
 This overrides the old convention that the program is never handed over ready
 to mine. `local DRY = true` still opens the file and the config lowers it as it
 always did — the change is only to what the seeded config says. It matters more
 than it looks: **`deploy` copies that same file to every turtle**, so the old
 `dry = true` default is what stranded turtle 2 on the first live run. Test 38
-asserts both values so a later edit cannot revert them quietly. Tests that want
+asserts all three so a later edit cannot revert them quietly. Tests that want
 a dry run write `dry = true` into the stub config explicitly.
 
 ## Corrections already made — do not reintroduce
@@ -692,9 +779,14 @@ a dry run write `dry = true` into the stub config explicitly.
   `turtle.suck` at a Lootr container, and do not add a config switch to dig
   them: the break is cancelled server-side, and `should_drop_player_loot` is
   false by default, so a break that did land would destroy the loot.
-- **"Burn on pickup, carry no fuel items" is about depot coal, not mined coal.**
-  Coal dug on a branch rides home to the chest. Do not add a burn-it-where-you-
-  find-it rule; that is the hoarding the sharing rule exists to stop.
+- **"Burn on pickup, carry no fuel items" is about depot coal, not mined coal
+  — but only where the depot is SHARED.** At a shared box, coal dug on a branch
+  rides home unburnt; do not add a burn-it-where-you-find-it rule there, that
+  is the hoarding the sharing rule exists to stop. **At a turtle's own box the
+  rule is reversed** [change 35, 2026-08-29, confirmed with the user]: with one
+  depot per turtle there is nobody to hoard from, and coal banked in a box only
+  that turtle opens is what stranded two turtles. `keepFuel` burns the hold up
+  to `fuelKeep` at every leg end and dock, at a private depot only.
 - **A depot chest beside the trunk floor stands on a branch row.** The trunk is
   on the spine, so all four of the floor's neighbours are spine or branch, and
   a container on any of them costs a leg or the spine. This program no longer

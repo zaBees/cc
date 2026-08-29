@@ -5,6 +5,17 @@
 code. `RESUME.md` carries the list of what shipped; this file is kept for the
 reasoning behind each one.
 
+**Read the line numbers below as 2026-08-28 addresses, not current ones.**
+`quarry.lua` has grown by about a third since — the fuel build, the harvest
+build and the claim-size build all landed on top of this one — so every
+`quarry.lua:N` here points at the tree that existed when the plan was written.
+Grep the function name instead. Two items carry notes where they appear: item 5
+still holds, but `claimOf` no longer snaps to a fixed 3x3; item 8 is superseded
+by the harvest build's write-order-plus-read-back and its verified copy. `update.lua` is still `update.lua` and still pulls from
+`/main/`: it was briefly renamed to `deep.lua` on the `deepseek` branch on
+2026-08-29 and that rename was reverted before the merge, so nothing in this
+file's references to it has changed.
+
 Written from what the user reported after `quarry 1 deploy` on manual GPS:
 turtle 2 stood there, its program was only on `/disk`, no modem got equipped,
 it later dug a tunnel of its own, and both turtles ended up stacked on the
@@ -130,7 +141,9 @@ at the state's position, and one with no state file starts at the pin.
 
 **Evidence.** The user saw turtle 2 start a tunnel of its own. `runMine`
 (quarry.lua:2346) anchors the claim on `st.home`, which is wherever the turtle
-wakes, and `claimOf` (quarry.lua:256) snaps that to a 3x3 chunk region. Turtles
+wakes, and `claimOf` snaps that to a chunk region -- 3x3 when this was written,
+and since the claim-size build whatever `chunksX`/`chunksZ` say, which changes
+the size of the mistake but not the mistake. Turtles
 2 and 3 wake one block IN FRONT of turtle 1. If that block is over a chunk
 border, `claimOf` hands them a different region, and each then mines "its third"
 of a claim turtle 1 knows nothing about. The comment at quarry.lua:2661 assumes
@@ -171,8 +184,10 @@ entirely and say so.
 
 ## 8. Put the program in root under the name the rest of the world uses
 
-`BOOT` copies `/disk/quarry` to `quarry` (quarry.lua:2686) while `update.lua`
-(update.lua:13) and turtle 1 both use `quarry.lua`. Both names run under the CC
+**Superseded by the harvest build (2026-08-29)**, which writes the boot files
+first and reads every write back; the reasoning below is why the copy exists at
+all. `BOOT` copies `/disk/quarry` to `quarry` while `update.lua` (its `FILES`
+table) and turtle 1 both use `quarry.lua`. Both names run under the CC
 shell, so this did not break anything -- turtle 2's program was missing because
 `BOOT` never ran (item 1), not because of the name -- but a deployed turtle that
 is later updated ends up with two copies of the program in root, and the older

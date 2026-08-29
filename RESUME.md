@@ -24,8 +24,13 @@ something settled starts misbehaving again.
 
 ## Where the work stands
 
-Last rewritten **2026-08-29**, after the fuel build (changes 35–47). The mine
-is not blocked on anything: `update`, then `quarry 1` from the surface.
+Last rewritten **2026-08-29**, after the claim-size build (changes 56–58) was
+merged down from the `deepseek` branch. The mine is not blocked on anything:
+`update`, then `quarry 1` from the surface.
+
+**Branches: `main` is the original and the only one that ships.** `deepseek`
+was a side branch and is merged; `update.lua` pulls from `/main/` and nothing
+else ever should.
 
 | Phase | State |
 | --- | --- |
@@ -36,8 +41,10 @@ is not blocked on anything: `update`, then `quarry 1` from the surface.
 | 5 — deployment | **Done. Ran in-game 2026-08-27** after four failed attempts; turtle 2 deployed, booted and mined. A plain `quarry 1` now deploys the others itself; that part has not run in-game. |
 | 6 — deferred (monitor, full-clear mode) | Not started. |
 
-**What is unproven in-game: changes 35–47, two turtles at once, and the two
-changes from the build before those** — the automatic deployment and the full-depot behaviour.
+**What is unproven in-game: changes 35–58, two turtles at once, and the two
+changes from the build before those** — the automatic deployment and the
+full-depot behaviour. That is the fuel build, the harvest build and the
+claim-size build, none of which has run.
 
 The last log out of the game is `Rpv9m`. It got a fix, crossed to its trunk,
 descended to y=-59, and could not build a depot at all: **the block under the
@@ -529,10 +536,82 @@ careful change to `pairPlan` — flagged, not done.**
 **SETUP.md moved to `attic/SETUP.md`** on the user's instruction. No code reads
 it; only docs referenced it. The setup artifact was generated from it.
 
+## What shipped on 2026-08-29, the claim-size build (changes 56–58)
+
+Three changes, built on the `deepseek` branch and merged into `main` the same
+day. All five suites pass. **Unproven in-game: all of it.**
+
+56. **The claim is no longer fixed at 3×3 chunks.** `chunksX` and `chunksZ` are
+    config keys, defaulting to `3` and `3`, and `claimOf` takes the config and
+    spans that many chunks centred on the start chunk. An odd count centres
+    exactly; an even one leans one chunk toward `-c` so the start chunk is still
+    inside the claim. `--check` prints the real span it computed rather than the
+    hard-coded `cx-1..cx+1`. Every call site passes `conf` — the live run, the
+    recall, the dry run, the moved-turtle test and the deploy. The spans use
+    `math.floor`, not `/`: CC is Lua 5.2 and all-doubles, but the test harness
+    is 5.3, where a bare `/` makes `1.0` print as `1.0` and breaks the report.
+
+    **Both values must match on every turtle**, exactly like `topY` — the branch
+    pattern is keyed to the world, so turtles that disagree about the claim
+    compute mouths that do not line up. And the player must keep every chunk in
+    the claim loaded: 3×3 is what standing in the centre chunk holds open, and
+    anything larger needs a real loader or a branch strands.
+
+57. **A short tank gathers coal instead of refusing the trip.** `runMine`'s
+    surface fuel gate used to halt with `not enough fuel` and wait for a human.
+    It now calls `forage`, which is a few blocks' climb to coal country from the
+    surface rather than the 119-block round trip the tank could not pay for;
+    `forage` commits to mining coal until the tank reaches `fuelKeep` and the
+    schedule resumes from there. A turtle that cannot even pay for the climb
+    still stops, and stops **at the surface** where the player can reach it —
+    `depot is dry and I cannot afford the climb for coal`.
+
+58. **A jam names the turtle that caused it, and where it was.** An adjacent
+    turtle is a peripheral and a booted one has labelled itself `quarryN`, so
+    `giveWay` now reads the blocker's label off the side it is blocking and
+    works out the blocker's own cell. `computercraft:turtle_advanced (quarry3)
+    at x,y,z would not move out of the way after N tries ... I am at x,y,z`.
+    Read against the other two turtles' logs, that says who deadlocked whom —
+    which log `jGC2X` could not, having stopped turtle 2 one block from its own
+    trunk against an unnamed turtle sitting on its spine.
+
+**Two things this build left undone**, both flagged and neither blocking:
+
+- **`span()` ships without a test.** Every suite still runs the 3×3 default, so
+  the odd and even branches of the chunk span are unproven. The even case is the
+  one that bites. The check to add: `claimOf(0, 0, {chunksX=5, chunksZ=3})`
+  gives `xMin=-32, xMax=47`, and `chunksX=4` gives `xMin=-16, xMax=47`.
+- **`quarry.lua:1447` reads a label without its `ok` flag.**
+  `select(2, pcall(peripheral.call, side, "getLabel"))` drops the success
+  boolean, so when the call *errors* the error string lands in `label`, passes
+  the `type(label) == "string"` guard, and the jam log prints
+  `(No peripheral attached to front side)` where the turtle's name should be.
+  Not hypothetical here: a neighbour not yet visible as a peripheral is
+  CC:Tweaked #660, already handled elsewhere in this file. Take `okl, label`
+  from the `pcall` and require `okl`.
+
 ## Next action
 
 **Ask for `update`, then `quarry 1`** from the launch block. The harvest build
-(A, `quarry stop`, C) is in; B needed no change. The three suites pass.
+(A, `quarry stop`, C) is in; B needed no change. The claim-size build (56–58)
+is in on top of it. The five suites pass.
+
+**What to read in the log for the claim-size build:**
+
+- **`claim  : chunks A..B by C..D`** on `quarry 1 --check`. With the shipped
+  `chunksX = 3, chunksZ = 3` that is the same nine chunks as before — the point
+  is that it is now computed, not written down. Change one value in
+  `quarry.conf` on **every** turtle to widen the claim, and keep every chunk
+  loaded.
+- **`fuel   : N in the tank, M to reach the branch and walk back -- gathering
+  coal first`** instead of `STOPPED: not enough fuel`. A turtle that starts
+  short should now climb for coal rather than stand there. If it stops anyway,
+  the line to find is `cannot afford the climb for coal`, and it stops at the
+  surface.
+- **A jam, if one happens**: `... (quarry3) at x,y,z would not move out of the
+  way after N tries ... I am at x,y,z`. `(unlabelled)` means the blocker had no
+  label to give. Anything that reads like an error message in those brackets is
+  the `pcall` bug noted above, and confirms it is worth fixing.
 
 **What to read in the log this time** — the harvest build is unproven in-game:
 
@@ -650,7 +729,7 @@ lock to one item type, so a mixed dump fails on the second stack.
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, the floppy found through getMountPath, a stopped turtle that parks off the shared spine, one depot per turtle so they stop funnelling into one block, and the fuel build: coal burnt on pickup to `fuelKeep`, no ration at a turtle's own box, `sharePerDock` at a shared one, and a climb into coal country launched while it can still be paid for, with the depot read through a peripheral wrap rather than sixteen sucks and the lava map shared over rednet. **The harvest build (2026-08-29):** the floppy writes its boot files first and reads every write back, refuses a program that will not fit, retries the mount, and carries its own turtle index; `quarry stop` parks a turtle for relocation; a solo kit needs no drive or floppy; and the coal aboard is split evenly across every turtle, the deployer included. 216,447 bytes, fletcher32 `4120463376`. |
+| `quarry.lua` | `raw.githubusercontent.com/zaBees/cc/main/quarry.lua` | **CURRENT — 2026-08-29.** Auto-deploy from a plain `quarry 1`, a full depot that drops junk and calls home instead of stopping, a deploy that resumes at the turtle still in the hold instead of restarting at turtle 2, GPS asked before the config pin, a modem in a slot fitted to a side, the floppy found through getMountPath, a stopped turtle that parks off the shared spine, one depot per turtle so they stop funnelling into one block, and the fuel build: coal burnt on pickup to `fuelKeep`, no ration at a turtle's own box, `sharePerDock` at a shared one, and a climb into coal country launched while it can still be paid for, with the depot read through a peripheral wrap rather than sixteen sucks and the lava map shared over rednet. **The harvest build (2026-08-29):** the floppy writes its boot files first and reads every write back, refuses a program that will not fit, retries the mount, and carries its own turtle index; `quarry stop` parks a turtle for relocation; a solo kit needs no drive or floppy; and the coal aboard is split evenly across every turtle, the deployer included. **The claim-size build (2026-08-29):** `chunksX`/`chunksZ` size the claim, a short tank climbs for coal instead of refusing the trip, and a jam names the turtle that caused it. **Not pushed yet** — the URL above still serves the harvest build until it is. What will land: 219,112 bytes, fletcher32 `180785937`. |
 | `probe.lua` | `raw.githubusercontent.com/zaBees/cc/main/probe.lua` | The Phase 5 deployment probe. |
 | `update.lua` | `raw.githubusercontent.com/zaBees/cc/main/update.lua` | The in-game updater. Downloaded once by hand; after that `update` replaces `quarry`, `alert` and itself. |
 | `alert.lua` | `raw.githubusercontent.com/zaBees/cc/main/alert.lua` | **NEW.** For a computer, not a turtle: prints what the mine broadcasts on the `quarry` protocol. 1,379 bytes, fletcher32 `142400053`. |
@@ -702,7 +781,11 @@ and the in-game computer running `cloud <token>`.
 | --- | --- |
 | `MASTERMINE-PLAN.md` | The design, every decision and its reasoning. Read second. Trimmed 2026-08-28: §11 is now a status table, and the rules it used to carry are in this file's Settled and Corrections lists. |
 | `quarry.lua` | **The deliverable.** ~2,430 lines, Phases 1–5. Opens `local DRY = true`; the config lowers it. |
-| `test_quarry.lua` | Five suites against stubbed CC worlds, 135 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot; 75–91 the deploy build of that night; 92 the double-fed turtle; 93 the deploy that restarted at turtle 2; 94 the position-fix order; 95 the equipped-upgrade check and the modem fit; 96-98 the mount point, the auto-reboot and the depot-sweep floor; 99-102 the three-turtle run; 103-109 the depot-funnel deadlock and the boot split; 124-129 the harvest boot build (floppy write order, read-back, space refusal, mount retry, floppy index); 131 `quarry stop`; 132-134 the fuel split (solo kit, multi-slot hand-over, even coal split); 135 the guard that a mid-pair dock keeps the pair. `lua5.3 test_quarry.lua` |
+| `test_quarry.lua` | Five suites against stubbed CC worlds, 135 tests. Tests 40–48 are the 2026-08-28 review regressions; 49–55 the evening fixes; 56–60 the night ones; 62–64 the late-night ones; 65–66 the auto-deploy and the full depot; 75–91 the deploy build of that night; 92 the double-fed turtle; 93 the deploy that restarted at turtle 2; 94 the position-fix order; 95 the equipped-upgrade check and the modem fit; 96-98 the mount point, the auto-reboot and the depot-sweep floor; 99-102 the three-turtle run; 103-109 the depot-funnel deadlock and the boot split; 124-129 the harvest boot build (floppy write order, read-back, space refusal, mount retry, floppy index); 131 `quarry stop`; 132-134 the fuel split (solo kit, multi-slot hand-over, even coal split); 135 the guard that a mid-pair dock keeps the pair. The claim-size build changed
+two existing tests rather than adding numbered ones: the low-fuel test now
+asserts the turtle forages instead of refusing, and the jam test asserts the
+blocker is named and placed. `chunksX`/`chunksZ` have no test yet — see the
+claim-size build above. `lua5.3 test_quarry.lua` |
 | `alert.lua` | For a computer: prints what the turtles broadcast on the `quarry` protocol. |
 | `update.lua` | The in-game updater: `update` replaces `quarry` and itself from GitHub. Downloaded once by hand. |
 | `test_update.lua` | Stubbed `http`/`fs` around the updater: the failed download, the HTML 404, the cache-buster, the checksum. `lua5.3 test_update.lua` |
@@ -725,8 +808,10 @@ and the in-game computer running `cloud <token>`.
 
 ## The design in one paragraph
 
-Three turtles work a chunk-snapped 3×3 chunk claim (48×48) with no chunk
-loader — the player standing in the centre chunk is what keeps it loaded.
+Three turtles work a chunk-snapped claim, `chunksX` × `chunksZ` chunks centred
+on the start chunk and 3×3 (48×48) by default, with no chunk loader — the player
+standing in the centre chunk is what keeps those nine loaded, and a bigger claim
+needs a real loader.
 Branches are 1-high, 1-wide, run along x, and are sunk wherever
 `z ≡ 2y (mod 5)` **measured from the claim's own corner**; that is the user's
 `1,3,5,2,4` sequence and it reads the claim interior exactly for ~22% dug,
@@ -906,6 +991,12 @@ The fuel keys are `fuelKeep = 2000` (a tank LEVEL, what the hold is burnt up to
 at a private box), `sharePerDock = 16` (a COAL COUNT, the cap on one dock's
 take at a shared box) and `fuelShare = 128` (a coal count in the hold that
 sends a turtle home — at a shared box only).
+
+The claim keys are `chunksX = 3` and `chunksZ = 3`, the claim's width and length
+in chunks. They are a **fleet-wide** setting like `topY`: every turtle in one
+mine must carry the same two values or their branch mouths will not line up.
+`deploy` copies the deployer's config to every turtle, which is what makes that
+hold by default — an edit made on one turtle by hand does not.
 
 This overrides the old convention that the program is never handed over ready
 to mine. `local DRY = true` still opens the file and the config lowers it as it

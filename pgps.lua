@@ -5,7 +5,9 @@
 -- the same protocol on a channel of your own: only your hosts ever reply.
 --
 -- usage:  pgps channel 6500     set the channel, once per computer
---         pgps host [x y z]     coordinates are saved, later runs can omit them
+--         pgps host [x y z]     coordinates are saved, later runs can omit them.
+--                               Giving them also writes a startup file, so the
+--                               host comes back up on its own after a reboot
 --         pgps locate [timeout]
 --
 -- The channel must match on all four hosts, on every client, and in
@@ -54,6 +56,28 @@ local function privateLocate(channel, timeout)
     error("rom/apis/gps.lua no longer defines locate; patch pgps", 0)
   end
   return env.locate(timeout or 2)
+end
+
+-- A host is only useful running, and a chunk reload or a server restart stops
+-- it. Written on the setup run, when coordinates are typed. An existing startup
+-- is somebody's, so it is reported and left alone rather than replaced.
+local BOOT = 'shell.run("pgps", "host")\n'
+local function installStartup()
+  for _, name in ipairs({ "startup", "startup.lua" }) do
+    if fs.exists(name) then
+      local f = fs.open(name, "r")
+      local body = f and f.readAll() or ""
+      if f then f.close() end
+      if body:find("pgps", 1, true) then return name .. " already starts pgps" end
+      return name .. " exists and does not start pgps -- left alone. Add this line to it: "
+        .. BOOT:gsub("\n", "")
+    end
+  end
+  local f = fs.open("startup", "w")
+  if not f then return "cannot write startup -- this host will not come back after a reboot" end
+  f.write(BOOT)
+  f.close()
+  return "wrote startup: this computer hosts on boot"
 end
 
 local function host(channel, x, y, z, modem, name)
@@ -109,6 +133,7 @@ local x, y, z = tonumber(args[2]), tonumber(args[3]), tonumber(args[4])
 if x and y and z then
   cfg.x, cfg.y, cfg.z = x, y, z
   save_cfg(cfg)
+  print(installStartup())
 else
   x, y, z = cfg.x, cfg.y, cfg.z
   if not x then error("no saved position: run  pgps host <x> <y> <z>  once", 0) end

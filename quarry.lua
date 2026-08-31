@@ -305,9 +305,22 @@ end
 -- z of turtle i's third, and the trunk at its centre. The trunk sits on the
 -- spine line, so every block of it is a spine block: three trunks cost nothing.
 function Q.thirdOf(c, i, n)
+  -- Turtle 1 takes the CENTRE third, so its trunk is the launch block it is
+  -- already standing on. The others fill the outer thirds and walk away from
+  -- the launch block, never back through turtle 1 to reach a trunk that used to
+  -- sit exactly where turtle 1 deploys [user, 2026-08-31]. `slot` is the z-slice
+  -- (1..n, low to high) this index owns; the slices still tile the claim.
+  local centre = math.floor((n + 1) / 2)
+  local slot
+  if i == 1 then
+    slot = centre
+  else
+    slot = i - 1                        -- 2->1, 3->2, ...
+    if slot >= centre then slot = slot + 1 end   -- skip the centre, it is turtle 1's
+  end
   local w = math.floor(c.zLen / n)
-  local lo = c.zMin + (i - 1) * w
-  local hi = (i == n) and c.zMax or (lo + w - 1)
+  local lo = c.zMin + (slot - 1) * w
+  local hi = (slot == n) and c.zMax or (lo + w - 1)
   return lo, hi, lo + math.floor((hi - lo) / 2)
 end
 

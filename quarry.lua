@@ -56,8 +56,8 @@ local LISTS = {
   },
   -- set any entry here and ONLY these are mined, oreTags and oreNames ignored
   only = {},
-  -- junk tier: dug and carried like anything else, dumped first when a slot
-  -- is needed. Not a skip list -- a turtle cannot decline what it digs.
+  -- junk tier: never chased, and dumped first when a slot is needed. A block
+  -- named here is not ore even if the pack tags it into c:ores.
   blacklist = {
     "minecraft:stone", "minecraft:cobblestone", "minecraft:deepslate",
     "minecraft:cobbled_deepslate", "minecraft:tuff", "minecraft:granite",
@@ -1156,7 +1156,7 @@ local function check(conf, l, source, index)
   sayf("ore    : %s", only
     and ("only these " .. #l.only .. " blocks")
     or  (conf.oreTags .. " plus " .. #l.oreNames .. " named blocks"))
-  sayf("junk   : %d blacklisted blocks, dumped first when a slot is needed", #l.blacklist)
+  sayf("junk   : %d blacklisted blocks, never chased, dumped first for space", #l.blacklist)
   sayf("fuels  : %s", table.concat(l.fuel, ", "))
   say("build  : phases 1-5 -- mining, depot cycle, three turtles, deploy.")
 end
@@ -1663,12 +1663,21 @@ end
 -- whose name does contain "ore" are logged instead, and printed at the end:
 -- that is how the config learns what this pack calls things.
 
+local function isJunk(l, name)
+  for _, n in ipairs(l.blacklist) do if n == name then return true end end
+  return false
+end
+
 local function isOre(data, l, conf)
   if not data or not data.name then return false end
   if #l.only > 0 then
     for _, n in ipairs(l.only) do if n == data.name then return true end end
     return false
   end
+  -- A pack can tag junk into c:ores, and then a vein chase follows cobble
+  -- across the claim. Blacklist wins over the tag and over oreNames: it is
+  -- what the junk tier means [user, 2026-08-31]. `only` still wins over it.
+  if isJunk(l, data.name) then return false end
   for _, n in ipairs(l.oreNames) do if n == data.name then return true end end
   if data.tags then
     if data.tags[conf.oreTags] then return true end
@@ -1995,11 +2004,6 @@ end
 -- Dump the junk tier to make one slot, so a full turtle mid-vein can finish
 -- the block it is standing on instead of walking away from it [plan 6, 8].
 -- The junk lands on the tunnel floor; it is junk, and it despawns.
-local function isJunk(l, name)
-  for _, n in ipairs(l.blacklist) do if n == name then return true end end
-  return false
-end
-
 function makeRoom(l)
   for s = 1, 16 do
     local ok, d = pcall(turtle.getItemDetail, s)

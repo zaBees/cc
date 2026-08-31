@@ -653,29 +653,6 @@ end
 -- 2026-08-28: 40s a run at worst, against a trip out to the turtle.
 local GPS_TIMEOUT = 10
 
--- A private constellation answers on its own channel, so a stranger's host with
--- wrong coordinates cannot poison the fix. Same rom implementation, patched to
--- quarry.conf's gpsChannel: it is the only way to reuse its trilateration.
--- Must match the channel pgps.lua hosts on. 0 = off, public GPS only.
-local pgps
-local function privateLocate(channel)
-  if not channel or channel == 0 then return end
-  if pgps == nil then
-    pgps = false
-    local f = fs.open("rom/apis/gps.lua", "r")
-    if f then
-      local src = f.readAll()
-      f.close()
-      local env = setmetatable({}, { __index = _G })
-      local chunk = load(src:gsub("65534", tostring(channel)), "@pgps", nil, env)
-      if chunk and pcall(chunk) and type(env.locate) == "function" then pgps = env.locate end
-    end
-  end
-  if not pgps then return end
-  local ok, x, y, z = pcall(pgps, GPS_TIMEOUT)
-  if ok and x then return x, y, z end
-end
-
 -- GPS, then the config pin, then the questions -- in that order, on the user's
 -- instruction 2026-08-29. GPS goes first because it is the only thing here that
 -- LOOKS: the pin and the state file are records of where the turtle was put,
@@ -688,9 +665,27 @@ end
 -- whether a fix is POSSIBLE, not whether somebody remembered to equip it.
 local function locate(conf)
   if gps and (hasModem() or ensureModem()) then
-    local x, y, z = privateLocate(conf.gpsChannel)
+    -- A private constellation answers on its own channel, so a stranger's host
+    -- with wrong coordinates cannot poison the fix. Same rom implementation,
+    -- patched to quarry.conf's gpsChannel: the only way to reuse its
+    -- trilateration. It lives in here rather than in a function of its own
+    -- because this file is at Lua's 200-locals-per-function ceiling.
+    local ok, x, y, z
+    local ch = conf.gpsChannel
+    if ch and ch ~= 0 then
+      local f = fs.open("rom/apis/gps.lua", "r")
+      if f then
+        local src = f.readAll()
+        f.close()
+        local env = setmetatable({}, { __index = _G })
+        local chunk = load(src:gsub("65534", tostring(ch)), "@pgps", nil, env)
+        if chunk and pcall(chunk) and type(env.locate) == "function" then
+          ok, x, y, z = pcall(env.locate, GPS_TIMEOUT)
+          if not ok then x = nil end
+        end
+      end
+    end
     if x then return math.floor(x), math.floor(y), math.floor(z), "pgps" end
-    local ok
     ok, x, y, z = pcall(gps.locate, GPS_TIMEOUT)
     if ok and x then return math.floor(x), math.floor(y), math.floor(z), "gps" end
   end

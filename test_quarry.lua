@@ -1912,22 +1912,23 @@ assert(V.files["/disk/quarry.conf"] == V.files["quarry.conf"],
   "the floppy config is not the deployer's own")
 assert(log:find("to /disk/quarry.conf"), "it did not report copying the config:\n" .. log)
 
--- 35b. a GPS deploy that knows its heading pins each child's own coordinates,
--- so a modem-less child adopts the parent's fix instead of asking. The launch
--- block is 137,83,-42 facing +z (startDir 0); the placed turtle sits one block
--- +z, at 137,83,-41, and faces back at the deployer (startDir 2). The pin is off
--- the LAUNCH block (st.home), not the deployer's live y -- it has risen a block
--- to set the drive by the time the config is written, and pinning that y would
--- put the child one block too high.
+-- 35b. a GPS deploy that knows its heading faces the spine first, so the child
+-- is placed on the spine side and walks away from the deployer, never back
+-- through the launch block [user, 2026-08-31]. The launch block is 137,83,-42
+-- and the spine is at x=136 (west), so the deployer turns west and the placed
+-- turtle sits one block west, at 136,83,-42, facing back east (startDir 3). The
+-- pin is off the LAUNCH block (st.home), not the deployer's live y -- it has
+-- risen a block to set the drive by the time the config is written, and pinning
+-- that y would put the child one block too high.
 world({ inv = kit(), leaveAfter = 3, conf = "startDir = 0\n" })
 ok, err, log = runWorld("1", "deploy")
 assert(ok, "the pinned deploy crashed: " .. tostring(err))
 local fc = V.files["/disk/quarry.conf"]
 assert(fc, "no config reached the floppy:\n" .. log)
-assert(fc:find("startX = 137", 1, true) and fc:find("startY = 83", 1, true)
-   and fc:find("startZ = -41", 1, true),
-  "the floppy config does not pin the placed turtle at 137,83,-41:\n" .. fc)
-assert(fc:find("startDir = 2", 1, true),
+assert(fc:find("startX = 136", 1, true) and fc:find("startY = 83", 1, true)
+   and fc:find("startZ = -42", 1, true),
+  "the floppy config does not pin the placed turtle at 136,83,-42:\n" .. fc)
+assert(fc:find("startDir = 3", 1, true),
   "the placed turtle is not pinned facing back at the deployer:\n" .. fc)
 assert(fc ~= V.files["quarry.conf"],
   "the deployer's config was copied verbatim -- no pin was added for the child:\n" .. fc)
@@ -2733,17 +2734,19 @@ assert(log:find("comments stripped"), "it did not say what it wrote:\n" .. log)
 
 -- With startX/Y/Z set there is no GPS to correct a copied config, so copying
 -- the deployer's verbatim tells turtles 2 and 3 they are standing where turtle
--- 1 stands. They are placed one block in front of it, facing back at it.
+-- 1 stands. They are placed one block toward the spine, facing back at it: the
+-- deployer at 137,-42 faces +z (startDir 0) but the spine is at x=136, so it
+-- turns west and the child goes one block west, at 136,-42, facing east.
 world({ inv = kit(), leaveAfter = 3, at = { x = 137, y = 83, z = -42 }, dir = 0,
         conf = "startX = 137\nstartY = 83\nstartZ = -42\nstartDir = 0\n" })
 ok, err, log = runWorld("1", "deploy")
 assert(ok, "the manual-GPS deploy crashed: " .. tostring(err))
 local handed = V.files["/disk/quarry.conf"]
 assert(handed, "no config reached the floppy:\n" .. log)
-assert(handed:find("startZ = %-41"),
-  "the floppy config still says the deployer's z:\n" .. handed)
-assert(handed:find("startX = 137"), "it moved x, and only z changes here:\n" .. handed)
-assert(handed:find("startDir = 2"),
+assert(handed:find("startX = 136"),
+  "the floppy config still says the deployer's x -- it should face the spine:\n" .. handed)
+assert(handed:find("startZ = %-42"), "it moved z, and only x changes here:\n" .. handed)
+assert(handed:find("startDir = 3"),
   "the placed turtle faces back at the deployer, so startDir must flip:\n" .. handed)
 
 -- and with GPS the config still goes across untouched

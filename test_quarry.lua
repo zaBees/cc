@@ -1889,6 +1889,26 @@ assert(V.files["/disk/quarry.conf"] == V.files["quarry.conf"],
   "the floppy config is not the deployer's own")
 assert(log:find("to /disk/quarry.conf"), "it did not report copying the config:\n" .. log)
 
+-- 35b. a GPS deploy that knows its heading pins each child's own coordinates,
+-- so a modem-less child adopts the parent's fix instead of asking. The launch
+-- block is 137,83,-42 facing +z (startDir 0); the placed turtle sits one block
+-- +z, at 137,83,-41, and faces back at the deployer (startDir 2). The pin is off
+-- the LAUNCH block (st.home), not the deployer's live y -- it has risen a block
+-- to set the drive by the time the config is written, and pinning that y would
+-- put the child one block too high.
+world({ inv = kit(), leaveAfter = 3, conf = "startDir = 0\n" })
+ok, err, log = runWorld("1", "deploy")
+assert(ok, "the pinned deploy crashed: " .. tostring(err))
+local fc = V.files["/disk/quarry.conf"]
+assert(fc, "no config reached the floppy:\n" .. log)
+assert(fc:find("startX = 137", 1, true) and fc:find("startY = 83", 1, true)
+   and fc:find("startZ = -41", 1, true),
+  "the floppy config does not pin the placed turtle at 137,83,-41:\n" .. fc)
+assert(fc:find("startDir = 2", 1, true),
+  "the placed turtle is not pinned facing back at the deployer:\n" .. fc)
+assert(fc ~= V.files["quarry.conf"],
+  "the deployer's config was copied verbatim -- no pin was added for the child:\n" .. fc)
+
 -- and the boot script it writes actually installs that config
 local boot = V.files["/disk/boot.lua"]
 assert(boot, "no boot script was written")
@@ -2128,7 +2148,7 @@ assert(not sv47.noDepot, "it wrote off a depot it could have reached")
 -- still said it would seed a DRY one and stand still.
 assert(not prog:find("seed a DRY one and not move"),
   "BOOT still promises a dry turtle it does not deliver")
-assert(prog:find("seeding one from the defaults"),
+assert(prog:find("mine on the shipped defaults"),
   "BOOT does not say what a missing config actually does")
 
 -- 56. the deployment kit never goes into the depot -------------------------
@@ -3075,19 +3095,27 @@ assert(not log:find("refusing to dig computercraft:turtle_advanced"),
   "a turtle below still ended the run:\n" .. log)
 assert(log:find("descend"), "it never got past it:\n" .. log)
 
--- 90. the deployer's config is a seed, not a master ------------------------
--- It used to be re-copied on every boot, so coordinates typed in by hand were
--- wiped by the next reboot and the turtle asked for them again, forever, for
--- as long as it stood beside the drive.
+-- 90. the deployer's config is taken on every boot, coordinates and all -----
+-- The config is re-copied on every boot now, so a setting changed on turtle 1
+-- (a new gpsChannel, say) reaches every turtle [user, 2026-08-31]. The reason
+-- it used to copy only when absent -- hand-typed coordinates being wiped and
+-- the turtle asking for them forever [user, 2026-08-28] -- is handled instead
+-- by carrying the start* lines across the overwrite. The runtime proof (a
+-- modem-less turtle keeps its coordinates) is test_boot_conf.lua; here we hold
+-- the boot script to the new shape.
 
 world({ inv = kit(), leaveAfter = 3 })
 ok, err, log = runWorld("1", "deploy")
 assert(ok, "deploy crashed: " .. tostring(err))
 local boot90 = V.files["/disk/boot.lua"]
-assert(boot90:find('not fs.exists("quarry.conf")', 1, true),
-  "the boot script still overwrites a config the turtle already has:\n" .. boot90)
-assert(boot90:find("keeping my own quarry.conf", 1, true),
-  "it does not say it kept the turtle's own config:\n" .. boot90)
+assert(not boot90:find('and not fs.exists("quarry.conf")', 1, true),
+  "the boot script still copies the config only when absent, so a changed\n" ..
+  "setting on turtle 1 never reaches a turtle that already ran:\n" .. boot90)
+assert(boot90:find("kept my own start coordinates", 1, true),
+  "the boot script does not preserve hand-typed coordinates across the\n" ..
+  "overwrite, which is the coordinate-wipe bug returning:\n" .. boot90)
+assert(boot90:find("startLines", 1, true),
+  "the carry-the-coordinates-across logic is not in the boot script:\n" .. boot90)
 
 -- 91. a confirmation waits 10s; something the player must go and do waits 60 --
 

@@ -207,6 +207,33 @@ Plan section numbers in brackets.
   are lavaproof and submersible; `detect()` is false for liquid — no
   liquid-sealing logic. Lootr loot is unreachable to a turtle; do not add a
   `turtle.suck` at one. Ancient debris is nether-only.
+- **A deployed turtle takes the deployer's `quarry.conf` on EVERY boot now**
+  [user, 2026-08-31], so a `gpsChannel` (or any setting) changed on turtle 1
+  reaches turtles 2/3 on their next deploy. The old "copy only when absent"
+  guarded hand-typed coordinates from being wiped [user, 2026-08-28]; that is now
+  handled by **carrying the child's `startX/Y/Z/startDir` lines across the
+  overwrite** (unless the floppy's own conf pins coordinates, in which case the
+  floppy wins). A modem-less turtle finds itself only from those lines — losing
+  them is the "asks for coordinates forever" bug. The logic lives in the `BOOT`
+  template; `test_boot_conf.lua` runs the rendered boot.lua and proves it.
+- **A GPS deploy now pins each child's coordinates too, if turtle 1 knows its
+  heading** [user, 2026-08-31]. `confForPlaced` used to fire only in manual mode
+  (`startX` pinned); it now fires whenever turtle 1 has a heading — measured
+  `st.dir` or a stated `startDir` — stamping the placed turtle's own absolute
+  coordinates on the floppy conf. A modem child still finds itself by GPS
+  (locate prefers it); a **modem-less child adopts the parent-derived pin**
+  instead of asking. So in GPS mode, set `startDir` in `quarry.conf` and
+  modem-less turtles self-locate. The pin is computed off `st.home` (the launch
+  block), **not** `st.x/y/z` — turtle 1 rises a block to place the drive before
+  the conf is written, and pinning that y put the child one block too high (a
+  latent bug in the old manual-mode path, now fixed). Proven in `test_quarry`
+  test 35b.
+- **The `BOOT`/`BOOTSTRAP` templates are long strings, not live code.** They
+  define their OWN `note`/`main` as plain globals — do NOT namespace them onto
+  `Q` (the child's boot.lua has no `Q`; `function Q.note` there crashes deploy at
+  runtime while still *compiling*, so the compile-only boot tests miss it). The
+  namespace refactor's tokenizer leaked into here once and was caught only by
+  running the rendered boot.lua. Any edit to those strings stays bare.
 
 ## The design in one paragraph
 
@@ -295,6 +322,7 @@ regenerated.
 | `MASTERMINE-PLAN.md` | The settled design and its reasoning. Read second. |
 | `quarry.lua` | **The deliverable.** ~4,650 lines, Phases 1–5. Opens `local DRY = true`. Functions live on a `Q` namespace table (`function Q.foo`); ~143 top-level-local slots free. |
 | `test_quarry.lua` | Five suites against stubbed CC worlds. `lua5.3 test_quarry.lua`. |
+| `test_boot_conf.lua` | Runs the rendered `BOOT` boot.lua against a stub fs: force-overwrite of the config, and a modem-less turtle keeping its own coordinates. |
 | `pgps.lua`, `test_pgps.lua` | Private GPS and its stubbed-world tests. |
 | `update.lua`, `test_update.lua` | The updater and its tests. |
 | `alert.lua` | The rednet receiver for a computer. |

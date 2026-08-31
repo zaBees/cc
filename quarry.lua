@@ -3560,7 +3560,7 @@ if type(D) ~= "string" or D == "" then D = "/disk" end
 -- first line and that line is the point of the split -- lose it and a disk
 -- startup that never ran looks like one that ran and threw.
 local LOG = D .. "/deploy" .. N .. ".log"
-function Q.note(msg)
+function note(msg)
   print("quarry" .. N .. ": " .. msg)
   local h = fs.open(LOG, "a")
   if h then h.writeLine(msg) h.close() end
@@ -3572,7 +3572,7 @@ note("boot.lua running, floppy is mounted at " .. D .. ", waiting for my kit")
 -- rather than only on a screen nobody is reading. Every `return` below is a
 -- deliberate stop that has already said why on its way out; anything that
 -- reaches the handler is a real crash, and now it names itself.
-function Q.main()
+function main()
 
   -- quarry.lua, not quarry: that is the name turtle 1 runs and the name update
   -- writes, and a turtle carrying both ends up running whichever the shell picks.
@@ -3580,21 +3580,50 @@ function Q.main()
   if fs.exists("quarry.lua") then fs.delete("quarry.lua") end
   fs.copy(D .. "/quarry", "quarry.lua")
 
-  -- The config has to follow the program. Without it this turtle seeds a fresh
-  -- quarry.conf off the shipped defaults -- which since 2026-08-27 mine for
-  -- real -- so veinMax, tripBlocks, the ore names and the fuel sections all
-  -- revert to settings its deployer never chose. Take the deployer's file.
-  -- Only when this turtle has none of its own: overwriting on every boot wiped
-  -- hand-typed coordinates, so it asked for them again forever [user,
-  -- 2026-08-28].
-  if fs.exists(D .. "/quarry.conf") and not fs.exists("quarry.conf") then
+  -- The config follows the program, and it is taken on EVERY boot, so a setting
+  -- changed on turtle 1 -- a new gpsChannel, an added ore -- reaches every turtle
+  -- the next time it deploys. The catch that once made this "only when I have
+  -- none": a turtle with no modem cannot GPS and finds itself solely from
+  -- startX/Y/Z in its own config, and a blind overwrite wiped those and left it
+  -- asking for coordinates forever [user, 2026-08-28]. So the start lines are
+  -- carried across the overwrite -- unless the deployer's own config already
+  -- pins coordinates (a hand-placed manual deploy), in which case the floppy's
+  -- win and mine are dropped.
+  if fs.exists(D .. "/quarry.conf") then
+    local function readAll(p)
+      local fh = fs.open(p, "r"); if not fh then return "" end
+      local s = fh.readAll(); fh.close(); return s
+    end
+    local function startLines(text)
+      local got = {}
+      for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+        local body = line:gsub("^[ \t]+", "")
+        local hash = body:find("#", 1, true)
+        if hash then body = body:sub(1, hash - 1) end
+        if body:find("^start[XYZ] *=") or body:find("^startDir *=") then
+          got[#got + 1] = line
+        end
+      end
+      return got
+    end
+    local floppyPins = #startLines(readAll(D .. "/quarry.conf")) > 0
+    local mine = fs.exists("quarry.conf") and startLines(readAll("quarry.conf")) or {}
+    if fs.exists("quarry.conf") then fs.delete("quarry.conf") end
     fs.copy(D .. "/quarry.conf", "quarry.conf")
-    note("took the deployer's quarry.conf")
-  elseif fs.exists("quarry.conf") then
-    note("keeping my own quarry.conf")
+    if #mine > 0 and not floppyPins then
+      local ap = fs.open("quarry.conf", "a")
+      if ap then
+        ap.writeLine("")   -- guard against a floppy conf with no trailing newline
+        for _, line in ipairs(mine) do ap.writeLine(line) end
+        ap.close()
+      end
+      note("took the deployer's quarry.conf, kept my own start coordinates")
+    else
+      note("took the deployer's quarry.conf")
+    end
   else
-    note("WARNING: no quarry.conf on the floppy -- seeding one from the defaults;")
-    note("         it MINES, but on default settings, not the deployer's")
+    note("WARNING: no quarry.conf on the floppy -- keeping my own if I have one,")
+    note("         else I will mine on the shipped defaults, not the deployer's")
   end
 
   -- The claim is anchored where a turtle wakes, and this one wakes a block in
@@ -4178,17 +4207,27 @@ end
 -- placed in the one block in front, facing back at the deployer, so the fix is
 -- known exactly: write that rather than copy the deployer's.
 function Q.confForPlaced(conf, body)
-  if not (conf.startX and conf.startY and conf.startZ) then return body end
-  -- deploy runs before the mine does, so the heading is whatever the config
-  -- said: nothing has turned yet.
-  local dir = st.dir or conf.startDir or 0
+  -- The placed turtle wakes one block in front of me, facing back at me. I know
+  -- where I stand (locate() ran before deploy), so I can hand it its OWN exact
+  -- coordinates -- which is the only way a turtle with no modem ever finds
+  -- itself. All that is needed is my heading: measured when GPS answered, or
+  -- stated as startDir. deploy runs before the mine, so nothing has turned yet
+  -- and st.dir is whatever calibrate last saved, else the config's startDir.
+  -- Without either I cannot know which of the four neighbours it stands on, so
+  -- the pin is left off and a modem-equipped child finds itself by GPS instead.
+  local dir = st.dir or conf.startDir
+  -- st.home is the launch block, fixed for the whole deploy; st.x/y/z drift as I
+  -- rise to place the drive, so pinning off them put the child a block too high.
+  -- The placed turtle sits one block in front of the launch block, at its y.
+  local h = st.home
+  if not (h and h.x and h.y and h.z and dir) then return body end
   local d = DIRS[dir]
-  local vals = { startX = st.x + d[1], startY = st.y, startZ = st.z + d[2],
+  local vals = { startX = h.x + d[1], startY = h.y, startZ = h.z + d[2],
                  startDir = (dir + 2) % 4 }
   body = Q.pinBody(body, vals)
-  Q.sayf("deploy : GPS is manual, so the floppy says %d,%d,%d facing %d -- where the",
+  Q.sayf("deploy : the floppy pins the placed turtle at %d,%d,%d facing %d -- where it",
     vals.startX, vals.startY, vals.startZ, vals.startDir)
-  Q.say("         placed turtle actually stands, not where I stand.")
+  Q.say("         actually stands, so a modem-less turtle finds itself off my fix.")
   return body
 end
 

@@ -16,32 +16,28 @@ code today.
 
 ---
 
-## The live constraint: the 200-locals ceiling
+## The locals ceiling — fixed 2026-08-31, headroom now ~143
 
-**`quarry.lua` is at Lua's limit of 200 local variables per function**, in the
-main chunk. 178 top-level `local`s today, so ~22 of headroom that is not real —
-CC:Tweaked is Lua 5.2 and the main chunk counts every top-level local against
-the cap. **A new top-level local can break the program in-game while every test
-here still passes** (the harness is lua5.3). This has already forced code to be
-inlined: `locate()` runs the private-GPS lookup inline rather than in a function
-of its own (commit `5534359`), because a new helper would have added locals.
+**The namespace refactor is done.** The ~120 `local function`s and the 11
+forward-declared functions are packed into one table `Q` (`local Q = {}` near
+the top; every helper is `function Q.foo(...)` and every call is `Q.foo(...)`).
+Top-level `local`s went **178 → 57**, so there is now ~143 of real headroom
+against Lua's 200-per-function cap. The four forward-declaration lines are gone —
+`Q.foo` resolves at call time, so the ordering hack they existed for is no longer
+needed.
 
-**Rule: do not add top-level locals. Reuse an existing one, inline into the
-function that needs it, or fold into an existing table** (`NUM`, `STR`, `BOOL`,
-`LISTS`, the state). If a change genuinely needs new named values, put them in a
-table field, not a bare local. Check with `grep -c '^local ' quarry.lua`.
+Two names were deliberately left as plain top-level locals, not namespaced:
+`slotLike` (redefined nested inside another function) and `modemSide` (shadowed
+by a local variable). Namespacing them would have been wrong; they cost 2 of the
+57 slots and are harmless.
 
-**Verdict (grilled 2026-08-31): a real ceiling, but NOT a roadmap blocker.**
-Nothing turtle-side that is coming exhausts the ~22 slots — Phase 6's display is
-off-turtle and full-clear is cut (see below), so `quarry.lua` owes only ~2–3
-small functions that fold into existing machinery. **The rule above still
-stands as hygiene.** The documented fallback, if a future feature ever does run
-the slots out: **120 of the 178 top-level locals are `local function` — pack
-them into one namespace table** (`local Q={}; function Q.foo()`), collapsing
-~120 locals into ~1 and taking headroom to ~140. That is a big diff across ~600
-call sites; do it only when actually needed, in one reviewable pass with the
-suite green and a byte-level diff check — never on top of an unproven-in-game
-stack.
+**Rule now: still prefer `Q.foo` for any new helper** rather than a new
+top-level local, but the pressure is off — you have ~143 slots. Check with
+`grep -c '^local ' quarry.lua`. The refactor was done as a tokenizer-based pass
+(strings/comments untouched) and verified byte-for-byte: all five suites produce
+**identical output** before and after. **Unproven in-game** — it can only lower
+the local count, so it cannot reintroduce the ceiling, but it has not run on a
+turtle yet.
 
 ---
 
@@ -228,8 +224,10 @@ deepest first, one above bedrock up to y=60. Turtles never surface except on
 
 One self-contained file, no `require`, delivered as a single `wget` from the
 GitHub repo. Opens `local DRY = true`; `quarry.conf` may lower it, never raise
-it. **Do not add top-level locals — the file is at the 200-per-function ceiling
-(see the top of this file).** Persist state every meaningful step. `pcall` every
+it. **Prefer `Q.foo` over a new top-level local** — the file was refactored onto
+a `Q` namespace table (see the top of this file); there is now ~143 slots of
+headroom against the 200-per-function cap, but the habit stays. Persist state
+every meaningful step. `pcall` every
 peripheral call through `periph()`. Diagnostics go *in* the program so one
 in-game run answers the question. Print a liveness line before any long work.
 
@@ -279,7 +277,7 @@ to overwrite and the CC shell has no `&&` or `;`. **cloudcat is archived in
 
 | Program | URL | What it is |
 | --- | --- | --- |
-| `quarry.lua` | `…/zaBees/cc/main/quarry.lua` | **CURRENT.** Phases 1–5: auto-deploy from `quarry 1`, one depot per turtle, coal burnt on pickup, climb-for-coal foraging, lava map shared over rednet, `quarry stop`, `chunksX/Z` claim sizing, private GPS (`gpsChannel` + `pgps.lua`), blacklist-wins-over-tag. At the 200-locals ceiling. |
+| `quarry.lua` | `…/zaBees/cc/main/quarry.lua` | **CURRENT.** Phases 1–5: auto-deploy from `quarry 1`, one depot per turtle, coal burnt on pickup, climb-for-coal foraging, lava map shared over rednet, `quarry stop`, `chunksX/Z` claim sizing, private GPS (`gpsChannel` + `pgps.lua`), blacklist-wins-over-tag. Functions on a `Q` namespace table; ~143 locals of headroom. |
 | `pgps.lua` | `…/zaBees/cc/main/pgps.lua` | **NEW.** Private GPS constellation host/client on your own channel. Installed by `update`. |
 | `update.lua` | `…/zaBees/cc/main/update.lua` | In-game updater: replaces `quarry`, `update`, `alert`, `pgps` and itself. Downloaded once by hand. |
 | `alert.lua` | `…/zaBees/cc/main/alert.lua` | For a computer: prints what the mine broadcasts on the `quarry` protocol. |
@@ -295,7 +293,7 @@ regenerated.
 | File | What it is |
 | --- | --- |
 | `MASTERMINE-PLAN.md` | The settled design and its reasoning. Read second. |
-| `quarry.lua` | **The deliverable.** ~4,650 lines, Phases 1–5. Opens `local DRY = true`. **At the 200-locals-per-function ceiling — no new top-level locals.** |
+| `quarry.lua` | **The deliverable.** ~4,650 lines, Phases 1–5. Opens `local DRY = true`. Functions live on a `Q` namespace table (`function Q.foo`); ~143 top-level-local slots free. |
 | `test_quarry.lua` | Five suites against stubbed CC worlds. `lua5.3 test_quarry.lua`. |
 | `pgps.lua`, `test_pgps.lua` | Private GPS and its stubbed-world tests. |
 | `update.lua`, `test_update.lua` | The updater and its tests. |

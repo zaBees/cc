@@ -1,2 +1,14 @@
 __pycache__/
 *.pyc
+
+# Local dev scaffolding — kept on disk, not shipped to the delivery repo.
+attic/
+reports/
+DEADLOCK-PLAN.md
+DEPLOY-PLAN.md
+FUEL-PLAN.md
+HARVEST-PLAN.md
+# Unrelated Create Aeronautics flight-controller thread
+ROCKET-PLAN.md
+spacex.lua
+icmb.lua

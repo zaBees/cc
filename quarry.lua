@@ -32,6 +32,7 @@ local NUM = {
   sharePerDock = 16,    -- coal one dock may take from a SHARED depot
   lavaFloor    = 4000,  -- scoop a passing lava source when the tank is under this
   saveSamples  = 200,   -- --check writes the state file this many times to time it
+  gpsChannel   = 0,     -- private GPS channel, asked before public GPS. 0 = off
 }
 local STR = {
   oreTags      = "c:ores",
@@ -100,6 +101,10 @@ forageCoal   = true    # depot dry = climb to topY and mine for coal. false = st
 lava         = true    # the --check scoop was proven on this server: the bucket came back
 lavaFloor    = 4000    # scoop a source the branch passes when the tank is below this
 oreTags      = c:ores  # the 1.21.1 tag. forge:ores is gone, do not put it back
+gpsChannel   = 0       # a private GPS constellation's channel, asked before public
+                       # GPS on 65534. Set it to the CHANNEL in pgps.lua and a
+                       # stranger's host with wrong coordinates cannot poison the
+                       # fix. 0 = off, ask public GPS only.
 
 # startX/startY/startZ override GPS, for when gps.locate will not answer. With
 # them set the heading cannot be measured, so startDir must be given too:
@@ -648,6 +653,29 @@ end
 -- 2026-08-28: 40s a run at worst, against a trip out to the turtle.
 local GPS_TIMEOUT = 10
 
+-- A private constellation answers on its own channel, so a stranger's host with
+-- wrong coordinates cannot poison the fix. Same rom implementation, patched to
+-- quarry.conf's gpsChannel: it is the only way to reuse its trilateration.
+-- Must match the channel pgps.lua hosts on. 0 = off, public GPS only.
+local pgps
+local function privateLocate(channel)
+  if not channel or channel == 0 then return end
+  if pgps == nil then
+    pgps = false
+    local f = fs.open("rom/apis/gps.lua", "r")
+    if f then
+      local src = f.readAll()
+      f.close()
+      local env = setmetatable({}, { __index = _G })
+      local chunk = load(src:gsub("65534", tostring(channel)), "@pgps", nil, env)
+      if chunk and pcall(chunk) and type(env.locate) == "function" then pgps = env.locate end
+    end
+  end
+  if not pgps then return end
+  local ok, x, y, z = pcall(pgps, GPS_TIMEOUT)
+  if ok and x then return x, y, z end
+end
+
 -- GPS, then the config pin, then the questions -- in that order, on the user's
 -- instruction 2026-08-29. GPS goes first because it is the only thing here that
 -- LOOKS: the pin and the state file are records of where the turtle was put,
@@ -660,7 +688,10 @@ local GPS_TIMEOUT = 10
 -- whether a fix is POSSIBLE, not whether somebody remembered to equip it.
 local function locate(conf)
   if gps and (hasModem() or ensureModem()) then
-    local ok, x, y, z = pcall(gps.locate, GPS_TIMEOUT)
+    local x, y, z = privateLocate(conf.gpsChannel)
+    if x then return math.floor(x), math.floor(y), math.floor(z), "pgps" end
+    local ok
+    ok, x, y, z = pcall(gps.locate, GPS_TIMEOUT)
     if ok and x then return math.floor(x), math.floor(y), math.floor(z), "gps" end
   end
   -- Then the turtle's own dead reckoning. Underground there may be no

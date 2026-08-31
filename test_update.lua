@@ -13,7 +13,8 @@ local function reset(o)
     files   = { quarry = "OLD QUARRY", update = "OLD UPDATE" },
     bodies  = o.bodies or { ["quarry.lua"] = "-- new quarry\n",
                             ["update.lua"] = "-- new update\n",
-                            ["alert.lua"]  = "-- new alert\n" },
+                            ["alert.lua"]  = "-- new alert\n",
+                            ["pgps.lua"]   = "-- new pgps\n" },
     fail    = o.fail or {},          -- file -> true: http.get returns nil
     urls    = {},
     out     = {},
@@ -63,6 +64,7 @@ assert(ok, "update crashed: " .. tostring(err))
 assert(W.files.quarry == "-- new quarry\n", "quarry was not replaced: " .. tostring(W.files.quarry))
 assert(W.files.update == "-- new update\n", "update did not replace itself")
 assert(W.files.alert == "-- new alert\n", "alert was not fetched: " .. tostring(W.files.alert))
+assert(W.files.pgps == "-- new pgps\n", "pgps was not fetched: " .. tostring(W.files.pgps))
 assert(out:find("up to date"), "it did not report success:\n" .. out)
 assert(not W.files["quarry.new"], "the temp file was left behind")
 
@@ -79,18 +81,18 @@ ok, err, out = run()
 assert(ok, "a failed download crashed the run: " .. tostring(err))
 assert(W.files.quarry == "OLD QUARRY", "a failed download clobbered the working copy")
 assert(out:find("quarry: FAILED"), "the failure was not reported:\n" .. out)
-assert(out:find("1 of 3 failed"), "the tally is wrong:\n" .. out)
+assert(out:find("1 of 4 failed"), "the tally is wrong:\n" .. out)
 
 -- and an HTML 404 page is a failure, not a program
 reset({ bodies = { ["quarry.lua"] = "<html>404</html>", ["update.lua"] = "-- u\n",
-                   ["alert.lua"] = "-- a\n" } })
+                   ["alert.lua"] = "-- a\n", ["pgps.lua"] = "-- p\n" } })
 ok, err, out = run()
 assert(W.files.quarry == "OLD QUARRY", "an HTML error page was installed as Lua")
 assert(out:find("HTML page"), "it did not say what came back:\n" .. out)
 
 -- an empty body is a failure too
 reset({ bodies = { ["quarry.lua"] = "", ["update.lua"] = "-- u\n",
-                   ["alert.lua"] = "-- a\n" } })
+                   ["alert.lua"] = "-- a\n", ["pgps.lua"] = "-- p\n" } })
 ok, err, out = run()
 assert(W.files.quarry == "OLD QUARRY", "an empty download replaced the program")
 

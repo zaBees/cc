@@ -430,7 +430,7 @@ end
 -- ASK_TIMEOUT with what the program would have done anyway, and says in the log
 -- that nobody answered. Short, because most are confirmations; the two that
 -- need the player to do something pass their own longer wait.
-local ASK_TIMEOUT = 10
+local ASK_TIMEOUT = 30
 
 function Q.ask(prompt, default, wait)
   wait = wait or ASK_TIMEOUT
@@ -4092,6 +4092,24 @@ function Q.stripText(body)
       out[#out + 1] = line
       if line:find("%]%]") then long = false end
     elseif not line:match("^%s*%-%-") then
+      -- Drop a trailing comment, but only a -- that is OUTSIDE any string on the
+      -- line: the messages here carry " -- " and must survive verbatim. Scan the
+      -- line tracking quote state and cut at the first bare --. This is what
+      -- keeps the ~113 KB program under the floppy's size.
+      local q, i, n = nil, 1, #line
+      while i <= n do
+        local c = line:sub(i, i)
+        if q then
+          if c == "\\" then i = i + 1
+          elseif c == q then q = nil end
+        elseif c == "'" or c == '"' then
+          q = c
+        elseif c == "-" and line:sub(i + 1, i + 1) == "-" then
+          line = line:sub(1, i - 1)
+          break
+        end
+        i = i + 1
+      end
       local tight = line:match("^%s*(.-)%s*$")
       if tight ~= "" then out[#out + 1] = tight end
       if line:find("%[%[") and not line:find("%]%]") then long = true end

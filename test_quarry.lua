@@ -3140,12 +3140,12 @@ assert(boot90:find("kept my own start coordinates", 1, true),
 assert(boot90:find("startLines", 1, true),
   "the carry-the-coordinates-across logic is not in the boot script:\n" .. boot90)
 
--- 91. a confirmation waits 10s; something the player must go and do waits 60 --
+-- 91. a confirmation waits 30s; something the player must go and do waits 60 --
 
 world({ inv = kit({ [2] = false }), leaveAfter = 3 })   -- a slot short of a kit
 ok, err, log = runWorld("1", "deploy")
 assert(log:find("go on with what is aboard"), "the kit was not short after all:\n" .. log)
-assert(log:find("10s of silence"), "a confirmation still waits a minute:\n" .. log)
+assert(log:find("30s of silence"), "a confirmation is not on the 30s input timeout:\n" .. log)
 
 world({ inv = kit() })                            -- nothing ever walks off
 ok, err, log = runWorld("1", "deploy")

@@ -216,6 +216,15 @@ Plan section numbers in brackets.
   floppy wins). A modem-less turtle finds itself only from those lines — losing
   them is the "asks for coordinates forever" bug. The logic lives in the `BOOT`
   template; `test_boot_conf.lua` runs the rendered boot.lua and proves it.
+- **`stripText` strips trailing comments too, and the input timeout is 30s**
+  [user, 2026-08-31]. The namespace refactor's `Q.` prefixes plus the new
+  features pushed the stripped program past the floppy (113613 needed vs 112844
+  free). `stripText` now drops trailing `--` comments as well as full-line ones,
+  taking the program to ~109.6 KB — but it is **quote-aware**: a `--` inside a
+  string is left alone, because the messages are full of `" -- "`. The scanner
+  and that guarantee are proven in `test_striptext.lua`. `ASK_TIMEOUT` is 30
+  (was 10): the coord/confirmation prompts now wait 30s of silence before taking
+  the default. GPS_TIMEOUT (the GPS wait) stays 10s.
 - **The private-GPS lookup in `locate()` called `Q.load` where it meant Lua's
   global `load`** [user, 2026-08-31]. `Q.load` is the `quarry.state` reader;
   a top-level `local function load` used to shadow the global, so the inline
@@ -333,6 +342,7 @@ regenerated.
 | `quarry.lua` | **The deliverable.** ~4,650 lines, Phases 1–5. Opens `local DRY = true`. Functions live on a `Q` namespace table (`function Q.foo`); ~143 top-level-local slots free. |
 | `test_quarry.lua` | Five suites against stubbed CC worlds. `lua5.3 test_quarry.lua`. |
 | `test_boot_conf.lua` | Runs the rendered `BOOT` boot.lua against a stub fs: force-overwrite of the config, and a modem-less turtle keeping its own coordinates. |
+| `test_striptext.lua` | Runs the real `Q.stripText`: trailing comments dropped, a `--` inside a string kept, long strings preserved, stripped program compiles. |
 | `pgps.lua`, `test_pgps.lua` | Private GPS and its stubbed-world tests. |
 | `update.lua`, `test_update.lua` | The updater and its tests. |
 | `alert.lua` | The rednet receiver for a computer. |

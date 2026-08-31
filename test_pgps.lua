@@ -81,9 +81,20 @@ reset({ startup = 'shell.run("pgps", "host")\n' })
 _, _, out = run("host", "10", "70", "-20")
 assert(out:find("already starts pgps"), "it did not recognise its own boot file:\n" .. out)
 
--- 4. a run without coordinates touches nothing -----------------------------
-reset()
-run("host")
-assert(not W.files.startup, "a resume run wrote a startup file")
+-- 4. no coordinates saved: it asks the constellation and keeps what it hears --
+-- a stand-in for rom/apis/gps.lua, patched by the same gsub the real one gets
+local ROM = "CHANNEL_GPS = 65534\nfunction locate(t) if CHANNEL_GPS == 6500 then return 10, 70, -20 end end\n"
+reset({ ["rom/apis/gps.lua"] = ROM })
+local ok = run("host")
+assert(W.files["pgps.cfg"] and W.files["pgps.cfg"]:find("x=10"),
+  "the fix was not saved: " .. tostring(W.files["pgps.cfg"]))
+assert(W.files.startup, "a host placed by fix got no startup file")
+
+-- 5. and no fix is an error, not a host at the wrong place -----------------
+reset({ ["rom/apis/gps.lua"] = "CHANNEL_GPS = 65534\nfunction locate(t) end\n" })
+local ok2, err = run("host")
+assert(not ok2, "it hosted without knowing where it is")
+assert(tostring(err):find("no fix"), "wrong error: " .. tostring(err))
+assert(not W.files.startup, "it wrote a startup for a host with no position")
 
 print("test_pgps: all assertions passed")

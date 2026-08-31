@@ -5,7 +5,8 @@
 -- the same protocol on a channel of your own: only your hosts ever reply.
 --
 -- usage:  pgps channel 6500     set the channel, once per computer
---         pgps host [x y z]     coordinates are saved, later runs can omit them.
+--         pgps host [x y z]     coordinates are saved, later runs can omit them
+--                               and are found from the constellation if they must.
 --                               Giving them also writes a startup file, so the
 --                               host comes back up on its own after a reboot
 --         pgps locate [timeout]
@@ -135,7 +136,23 @@ if x and y and z then
   save_cfg(cfg)
   print(installStartup())
 else
+  -- The saved coordinates come first: they are what the player typed, exact and
+  -- free, where a fix costs seconds and rounds. Only when there are none does
+  -- this ask the constellation where it is, the way `gps host` does -- which
+  -- needs four hosts already up, so the first four are always typed by hand.
   x, y, z = cfg.x, cfg.y, cfg.z
-  if not x then error("no saved position: run  pgps host <x> <y> <z>  once", 0) end
+  if not x then
+    print(("no saved position -- asking channel %d where this computer is"):format(channel))
+    local ok, lx, ly, lz = pcall(privateLocate, channel, 5)
+    if not (ok and lx) then
+      error(("no saved position, and no fix on channel %d (%s). Four hosts must "):format(
+        channel, ok and "nothing answered" or tostring(lx))
+        .. "already be up to place a fifth. Run  pgps host <x> <y> <z>  instead.", 0)
+    end
+    x, y, z = math.floor(lx), math.floor(ly), math.floor(lz)
+    cfg.x, cfg.y, cfg.z = x, y, z
+    save_cfg(cfg)
+    print(installStartup())
+  end
 end
 host(channel, x, y, z, modem, name)

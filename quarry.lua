@@ -680,7 +680,10 @@ function Q.locate(conf)
         local src = f.readAll()
         f.close()
         local env = setmetatable({}, { __index = _G })
-        local chunk = Q.load(src:gsub("65534", tostring(ch)), "@pgps", nil, env)
+        -- Lua's global load, NOT Q.load (the quarry.state reader): a top-level
+        -- `local function load` used to shadow the global, so this silently
+        -- loaded nothing and the private fix never ran [user, 2026-08-31].
+        local chunk = load(src:gsub("65534", tostring(ch)), "@pgps", nil, env)
         if chunk and pcall(chunk) and type(env.locate) == "function" then
           ok, x, y, z = pcall(env.locate, GPS_TIMEOUT)
           if not ok then x = nil end

@@ -267,6 +267,29 @@ ok, err, log = run("1", "--check")
 assert(ok, "startXYZ --check crashed: " .. tostring(err))
 assert(log:find("corners: x %-16%.%.31, z %-16%.%.31"), "startXYZ claim is wrong:\n" .. log)
 
+-- 5a2. the private GPS constellation actually answers a quarry run ----------
+
+-- The inline private-GPS lookup called Q.load -- the quarry.state reader --
+-- where it meant Lua's global load, so it silently loaded nothing and every
+-- private fix fell through to public GPS, which on this server answers nowhere,
+-- so the turtle asked for coordinates by hand while `pgps locate` worked on its
+-- own [user, 2026-08-31]. Public GPS is off here, so a fix can only come from
+-- the private channel; the fake rom answers only once its 65534 has been
+-- patched to the configured channel.
+reset({ gps = false, conf = "gpsChannel = 6767\n" })
+W.files["rom/apis/gps.lua"] = table.concat({
+  "local CH = 65534",
+  "function locate(timeout)",
+  "  if CH ~= 6767 then return nil end",
+  "  return 210, 72, -30",
+  "end",
+}, "\n")
+ok, err, log = run("1", "--check")
+assert(ok, "the private-GPS --check crashed: " .. tostring(err))
+assert(log:find("position: 210,72,%-30 %(pgps%)"),
+  "the private constellation was not used for the fix -- the Q.load-for-load\n" ..
+  "bug is back, so a private fix silently falls through to public GPS:\n" .. log)
+
 -- 5b. chunksX/chunksZ size the claim ---------------------------------------
 
 -- The claim used to be a hard-coded 3x3. It is now n chunks by m, centred on

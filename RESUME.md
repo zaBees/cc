@@ -216,6 +216,16 @@ Plan section numbers in brackets.
   floppy wins). A modem-less turtle finds itself only from those lines — losing
   them is the "asks for coordinates forever" bug. The logic lives in the `BOOT`
   template; `test_boot_conf.lua` runs the rendered boot.lua and proves it.
+- **The private-GPS lookup in `locate()` called `Q.load` where it meant Lua's
+  global `load`** [user, 2026-08-31]. `Q.load` is the `quarry.state` reader;
+  a top-level `local function load` used to shadow the global, so the inline
+  `pgps` lookup silently loaded nothing and every private fix fell through to
+  public GPS — which answers nowhere on this server, so `quarry 1` asked for
+  coordinates by hand even though `pgps locate` worked standalone. The feature
+  never worked in-game since commit `5534359`. Fixed to bare `load`. Proven in
+  `test_quarry` test 5a2 (fake rom gps, public GPS off). **`gpsChannel` in
+  `quarry.conf` is separate from `pgps channel`** — setting the pgps channel
+  alone does nothing for quarry; both must name the same channel.
 - **A GPS deploy now pins each child's coordinates too, if turtle 1 knows its
   heading** [user, 2026-08-31]. `confForPlaced` used to fire only in manual mode
   (`startX` pinned); it now fires whenever turtle 1 has a heading — measured

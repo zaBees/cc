@@ -12,3 +12,6 @@ HARVEST-PLAN.md
 ROCKET-PLAN.md
 spacex.lua
 icmb.lua
+
+# Personal Claude Code settings (auto-commit hook, etc.)
+.claude/settings.local.json

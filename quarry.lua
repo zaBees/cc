@@ -4326,28 +4326,6 @@ function Q.runDeploy(conf, l, index)
     return
   end
 
-  -- Heading from GPS, probed straight ahead only -- never sideways. Deploy runs
-  -- before the mine's own calibrate(), so st.dir is nil on a fresh turtle and
-  -- confForPlaced would leave the child's coordinates unpinned -- which strands
-  -- a modem-less child at the coordinate prompt [user, 2026-09-01]. One block
-  -- forward and back, and the delta between the two fixes is the heading GPS
-  -- cannot give directly. Forward-only on purpose: a full calibrate() sidesteps
-  -- when the front is blocked, which would walk past the obstruction the deploy
-  -- is about to adopt, skip or dig. Fails soft: no GPS fix means st.dir stays
-  -- nil and the pin is left off, as before.
-  if st.dir == nil and Q.fuelLevel() >= 1 then
-    local _, _, _, how = Q.locate(conf)
-    if (how == "gps" or how == "pgps") and turtle.forward() then
-      local x1, _, z1 = Q.locate(conf)
-      pcall(turtle.back)
-      if x1 then
-        for d, v in pairs(DIRS) do
-          if v[1] == x1 - x and v[2] == z1 - z then st.dir = d Q.save() break end
-        end
-      end
-    end
-  end
-
   -- 1. the drive, one block up, so it ends up directly above the new turtle.
   if not Q.stepUp() then error("cannot move up to place the drive", 0) end
   -- "the drive and floppy stay here" is what the end of a deploy tells the

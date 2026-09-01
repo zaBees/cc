@@ -1,6 +1,6 @@
--- quarry : three turtles read a chunk-snapped claim with mod-5 branches
+-- qdeep : three turtles read a chunk-snapped claim with mod-5 branches
 -- wget https://raw.githubusercontent.com/zaBees/cc/main/quarry.lua quarry
--- usage:  quarry <1|2|3> [--check|recall|deploy]
+-- usage:  qdeep <1|2|3> [--check|recall|deploy]
 --
 -- Phase 1: claim maths, branch/spine iterators, --check.
 -- Phase 2: one turtle, one branch -- trunk descent, spine travel, vein chase,
@@ -726,7 +726,7 @@ function Q.notify(kind, msg)
   local side = modemSide()
   if not side or type(rednet) ~= "table" then return end
   pcall(rednet.open, side)
-  pcall(rednet.broadcast, ("quarry%s: %s"):format(tostring(st.index or 1), msg), "quarry")
+  pcall(rednet.broadcast, ("qdeep%s: %s"):format(tostring(st.index or 1), msg), "quarry")
 end
 
 -- gps.locate's second argument is a debug flag: with it on the api prints what
@@ -778,7 +778,7 @@ function Q.noFix()
   if not Q.hasModem() then
     return "no position fix: NO WIRELESS MODEM IS EQUIPPED (" .. sides .. "). GPS "
       .. "needs the modem ON the turtle, not in a slot: select it and run "
-      .. "`equip right`, or run `quarry --check`, which reports both sides."
+      .. "`equip right`, or run `qdeep --check`, which reports both sides."
   end
   return "no position fix: a wireless modem IS equipped (" .. sides .. ") and no "
     .. "GPS host answered in " .. GPS_TIMEOUT .. "s. See the gps lines above for "
@@ -1056,7 +1056,7 @@ end
 
 function Q.check(conf, l, source, index)
   local x, y, z, how = Q.locate(conf)
-  Q.sayf("quarry --check   turtle %d of %d   %s", index, conf.turtles, DRY and "DRY" or "LIVE")
+  Q.sayf("qdeep --check    turtle %d of %d   %s", index, conf.turtles, DRY and "DRY" or "LIVE")
   Q.sayf("config : %s (%s)", CONF, source)
   if st.halt then Q.sayf("last   : the last run stopped -- %s", st.halt) end
 
@@ -1416,7 +1416,7 @@ function Q.giveWay(detect, inspect)
   if not Q.turtleAt(detect, inspect) then return true end
   -- Which side is blocked, so the jam message can name the turtle on it: an
   -- adjacent turtle is a peripheral and a booted one has labelled itself
-  -- quarryN, so label plus cell turns "another turtle" into "quarry3 at x,y,z"
+  -- qdeepN, so label plus cell turns "another turtle" into "qdeep3 at x,y,z"
   -- [in-game 2026-08-29, log jGC2X].
   local side = (detect == turtle.detectUp and "top")
             or (detect == turtle.detectDown and "bottom") or "front"
@@ -1626,7 +1626,7 @@ function Q.calibrate(conf)
   -- same as the first however far the turtle moved: dx and dz are both nought
   -- and no direction matches. Catch it here rather than after the move --
   -- "calibration moved 0,0" hides the cause, and it cost a live run on
-  -- 2026-08-28. --check warns too, but `quarry 1` never sees --check.
+  -- 2026-08-28. --check warns too, but `qdeep 1` never sees --check.
   -- With the position pinned the heading has to be told, not measured.
   -- Everything after this dead-reckons anyway -- locate() is only called at
   -- boot, resume and deploy -- so a stated heading is enough to mine on. What it
@@ -2937,11 +2937,11 @@ function Q.ourStartup()
   if not f then return nil end
   local had = f.readAll()
   f.close()
-  return tostring(had):find("quarry", 1, true) ~= nil
+  return tostring(had):find("qdeep", 1, true) ~= nil
 end
 
 function Q.installStartup(index)
-  local line = ("shell.run('quarry', '%d')"):format(index)
+  local line = ("shell.run('qdeep', '%d')"):format(index)
   local mine = Q.ourStartup()
   if mine == false then
     Q.say("startup: /startup is already here and is not mine, so I have left it.")
@@ -2975,7 +2975,7 @@ end
 -- Recall [plan 4]. Normal returns are independent -- tying them to the group
 -- would idle two turtles every time one filled -- but collecting the mine is
 -- collective: you type it on each turtle. It is also the only way to reach a
--- working turtle, so the sequence is Ctrl+T then "quarry <n> recall". The
+-- working turtle, so the sequence is Ctrl+T then "qdeep <n> recall". The
 -- branch stays in quarry.state, so a re-run with no argument picks the mine up.
 function Q.runRecall(conf, l, index)
   if not st.home then
@@ -3023,7 +3023,7 @@ function Q.runRecall(conf, l, index)
   Q.say("         the argument and it carries on where it stopped.")
 end
 
--- Phase 5 lives below, but a plain `quarry 1` needs it: declared here,
+-- Phase 5 lives below, but a plain `qdeep 1` needs it: declared here,
 -- assigned there.
 
 function Q.runMine(conf, l, index)
@@ -3050,7 +3050,7 @@ function Q.runMine(conf, l, index)
   -- blocks, and an unload partway down must not be what costs the mine.
   Q.installStartup(index)
 
-  -- Staff the mine before working it. `quarry 1 deploy` is still the explicit
+  -- Staff the mine before working it. `qdeep 1 deploy` is still the explicit
   -- way, but turtle 1 walking off with turtles 2 and 3 in the hold just carries
   -- them all shift -- in-game 2026-08-28 it posted them into the depot as spoil.
   -- Deploy here, at the surface on the launch block, where the drive goes and
@@ -3059,7 +3059,7 @@ function Q.runMine(conf, l, index)
   -- The signal is the hold: turtles aboard means turtles to place. It used to be
   -- a once-per-claim flag written BEFORE the attempt, so a deploy stopped by
   -- anything -- short kit, blocked spot, crash -- was never retried, and every
-  -- later `quarry 1` walked off with both turtles aboard and said nothing
+  -- later `qdeep 1` walked off with both turtles aboard and said nothing
   -- [in-game 2026-08-28]. A deploy that works empties the hold, so the hold is
   -- the flag. The counter only stops a deploy that fails the same way forever
   -- from retrying on every reboot.
@@ -3095,7 +3095,7 @@ function Q.runMine(conf, l, index)
   elseif index == 1 and (conf.turtles or 1) > 1 and Q.carryingTurtle() then
     Q.sayf("deploy : %d turtles still in the hold, but the deploy has failed %d times",
       conf.turtles - 1, st.deployTries or 0)
-    Q.say("         already. Fix what it complained about and run `quarry 1 deploy`.")
+    Q.say("         already. Fix what it complained about and run `qdeep 1 deploy`.")
   end
 
   -- The claim comes from the block the turtle was LAUNCHED on, never from
@@ -3105,7 +3105,7 @@ function Q.runMine(conf, l, index)
   local c = Q.claimOf(st.home.x, st.home.z, conf)
   claim = c
   local lo, hi, trunkZ = Q.thirdOf(c, index, conf.turtles)
-  Q.sayf("quarry %d  at %d,%d,%d  claim x %d..%d z %d..%d (anchored at %d,%d)",
+  Q.sayf("qdeep %d   at %d,%d,%d  claim x %d..%d z %d..%d (anchored at %d,%d)",
     index, x, y, z, c.xMin, c.xMax, c.zMin, c.zMax, st.home.x, st.home.z)
   Q.sayf("third  : z %d..%d, trunk at x=%d z=%d", lo, hi, c.spine, trunkZ)
 
@@ -3470,7 +3470,7 @@ function Q.dryRun(conf, l, index)
   local branch = 2 * (c.west + c.east)
   local total = drop + cross + trunk + spine + branch
 
-  Q.sayf("quarry %d  DRY  at %d,%d,%d (%s)", index, x, y, z, how)
+  Q.sayf("qdeep %d   DRY  at %d,%d,%d (%s)", index, x, y, z, how)
   Q.sayf("claim  : x %d..%d, z %d..%d, spine x=%d", c.xMin, c.xMax, c.zMin, c.zMax, c.spine)
   Q.sayf("third  : z %d..%d, trunk at x=%d z=%d", lo, hi, c.spine, trunkZ)
   Q.sayf("route  : down %d to y=%d, across %d to the trunk, down %d to y=%d,",
@@ -3516,7 +3516,7 @@ end
 -- after = boot.lua threw, and the next line says where. No peripheral calls and
 -- no loops here: the path we were started from IS the floppy.
 local BOOTSTRAP = [==[
--- written by quarry deploy. Runs on a freshly placed turtle and does nothing
+-- written by qdeep deploy. Runs on a freshly placed turtle and does nothing
 -- but leave a trace and hand over, so that a trace always exists.
 local N = %d
 local D = fs.getDir(shell.getRunningProgram())
@@ -3531,14 +3531,14 @@ shell.run(D .. "/boot.lua", D)
 ]==]
 
 local BOOT = [==[
--- written by quarry deploy, run by the tiny startup on the same floppy.
+-- written by qdeep deploy, run by the tiny startup on the same floppy.
 -- Everything a freshly placed turtle needs: no label, no fuel, no modem, and an
 -- inventory its deployer is still filling.
 local N = %d
 -- MANUAL: quarry.conf pins the position, so nothing here calls gps.locate and a
 -- missing modem must not stop it.
 local MANUAL = %s
-os.setComputerLabel("quarry" .. N)
+os.setComputerLabel("qdeep" .. N)
 
 -- The startup hands over the floppy it ran off as its one argument (N is baked
 -- in above). Run by hand with no argument, ask the drive: "/disk" is only the
@@ -3564,7 +3564,7 @@ if type(D) ~= "string" or D == "" then D = "/disk" end
 -- startup that never ran looks like one that ran and threw.
 local LOG = D .. "/deploy" .. N .. ".log"
 function note(msg)
-  print("quarry" .. N .. ": " .. msg)
+  print("qdeep" .. N .. ": " .. msg)
   local h = fs.open(LOG, "a")
   if h then h.writeLine(msg) h.close() end
 end
@@ -3577,11 +3577,11 @@ note("boot.lua running, floppy is mounted at " .. D .. ", waiting for my kit")
 -- reaches the handler is a real crash, and now it names itself.
 function main()
 
-  -- quarry.lua, not quarry: that is the name turtle 1 runs and the name update
+  -- qdeep.lua, not qdeep: that is the name turtle 1 runs and the name update
   -- writes, and a turtle carrying both ends up running whichever the shell picks.
-  if fs.exists("quarry") then fs.delete("quarry") end
-  if fs.exists("quarry.lua") then fs.delete("quarry.lua") end
-  fs.copy(D .. "/quarry", "quarry.lua")
+  if fs.exists("qdeep") then fs.delete("qdeep") end
+  if fs.exists("qdeep.lua") then fs.delete("qdeep.lua") end
+  fs.copy(D .. "/qdeep", "qdeep.lua")
 
   -- The config follows the program, and it is taken on EVERY boot, so a setting
   -- changed on turtle 1 -- a new gpsChannel, an added ore -- reaches every turtle
@@ -3751,23 +3751,23 @@ function main()
   -- Install a local startup so this turtle comes back on its own after a reboot,
   -- a chunk reload, or a server restart. The floppy is one block above the spot
   -- it launches from and it does not carry the drive with it, so the disk cannot
-  -- be what restarts it. quarry resumes from its own state file.
+  -- be what restarts it. qdeep resumes from its own state file.
   local fuel = turtle.getFuelLevel()
   if fuel ~= "unlimited" and fuel < 1 then
-    note("STOPPED: fuel is 0. No coal reached me, and quarry can only spin on an")
+    note("STOPPED: fuel is 0. No coal reached me, and qdeep can only spin on an")
     note("empty tank. Put coal in me and reboot.")
     return
   end
 
   local h = fs.open("/startup", "w")
   if h then
-    h.writeLine("shell.run('quarry', '" .. N .. "')")
+    h.writeLine("shell.run('qdeep', '" .. N .. "')")
     h.close()
     note("installed /startup so I come back after a reboot")
   end
 
-  note("fuel " .. tostring(turtle.getFuelLevel()) .. ", starting quarry " .. N)
-  shell.run("quarry", tostring(N))
+  note("fuel " .. tostring(turtle.getFuelLevel()) .. ", starting qdeep " .. N)
+  shell.run("qdeep", tostring(N))
 end
 
 local lived, why = pcall(main)
@@ -3933,7 +3933,7 @@ function Q.deployOne(conf, l, index, coalShare)
   -- of its own -- there is one answer to "what is storage" [RESUME, settled].
   Q.handOver(Q.isContainer, 1, "container")
 
-  -- It leaves under its own power once quarry N calibrates. An empty block in
+  -- It leaves under its own power once qdeep N calibrates. An empty block in
   -- front is one signal; the floppy log and the turtle's own label are the
   -- other two, and between them they say whether anything ran at all.
   local logf = ("%s/deploy%d.log"):format(Q.diskPath() or "/disk", index)
@@ -4027,11 +4027,11 @@ function Q.deployOne(conf, l, index, coalShare)
       Q.sayf("deploy : turtle %d has not started in %ds, and isOn says %s.",
         index, i, tostring(wasOn))
       Q.say("         RIGHT-CLICK IT. That is the one lever I do not have.")
-      -- disk/quarry <n>, NOT disk/startup: in-game 2026-08-29 that was not a
+      -- disk/qdeep <n>, NOT disk/startup: in-game 2026-08-29 that was not a
       -- file (program on the floppy, no startup beside it -- the bug the write
       -- order fixes). It is what the startup would run anyway, confirmed by the
       -- user, and right even on a floppy this build did not write.
-      Q.sayf("         If its screen is already lit, type this on it:  disk/quarry %d", index)
+      Q.sayf("         If its screen is already lit, type this on it:  disk/qdeep %d", index)
       local a = Q.ask("deploy : enter = done, s = skip this turtle, q = stop deploying.", "", 60)
       if a:sub(1, 1) == "s" then return false, "skipped on your say-so" end
       if a:sub(1, 1) == "q" then return false, "stopped deploying on your say-so", "stop" end
@@ -4061,9 +4061,9 @@ function Q.deployOne(conf, l, index, coalShare)
     index, tostring(wasOn))
   Q.say("         I have sent turnOn, two reboots and a shutdown-and-on, and none of")
   Q.say("         them moved it. Right-click it, and if its screen is already lit,")
-  Q.sayf("         type this on ITS screen:  disk/quarry %d", index)
+  Q.sayf("         type this on ITS screen:  disk/qdeep %d", index)
   return false, ("turtle %d has not moved after 120s -- right-click it, or run "
-    .. "disk/quarry %d on its own screen"):format(index, index)
+    .. "disk/qdeep %d on its own screen"):format(index, index)
 end
 
 -- Build the boot rig once, then run every remaining turtle through it. The
@@ -4081,7 +4081,7 @@ end
 -- source with full-line comments, blank lines and indentation dropped --
 -- whitespace Lua does not care about, 106 kB rather than 208. That margin IS
 -- the deployment: comments alone left 117 kB, which plus the boot files, the
--- config and the anchor is over the limit -- how turtle 2 got `quarry` on its
+-- config and the anchor is over the limit -- how turtle 2 got `qdeep` on its
 -- floppy and no `startup` beside it. Long [[ strings ]] are left alone:
 -- DEFAULT_CONF is one, and its layout IS the config file the turtle reads.
 -- Line numbers shift, so an error from a deployed turtle points into ITS copy.
@@ -4166,7 +4166,7 @@ function Q.writeBoot(DISK, n, conf)
   -- business, and getting it wrong costs an in-game trip. They only record that
   -- they ran and hand over to boot.lua, so an empty floppy log means the disk
   -- startup never ran and a one-line log means boot.lua failed [DEADLOCK-PLAN
-  -- layer 3]. /index is the turtle number, so `cd disk` + `quarry` is still
+  -- layer 3]. /index is the turtle number, so `cd disk` + `qdeep` is still
   -- THIS turtle, not turtle 1 [HARVEST-PLAN A5].
   local files = {
     { DISK .. "/startup.lua", Q.stripText(BOOTSTRAP:format(n)) },
@@ -4259,7 +4259,7 @@ function Q.runDeploy(conf, l, index)
 
   if (conf.turtles or 1) < 2 then
     Q.say("deploy : turtles = 1 in quarry.conf, so there is nobody to deploy.")
-    Q.say("         Raise it and re-run, or just run `quarry 1` and mine alone.")
+    Q.say("         Raise it and re-run, or just run `qdeep 1` and mine alone.")
     return
   end
 
@@ -4319,9 +4319,9 @@ function Q.runDeploy(conf, l, index)
 
   if DRY then
     Q.sayf("DRY deploy: would place the drive one up and in front, put the floppy in it,")
-    Q.sayf("           write /disk/startup.lua and copy this program to /disk/quarry,")
+    Q.sayf("           write /disk/startup.lua and copy this program to /disk/qdeep,")
     Q.sayf("           then for turtles 2..%d: place, hand over a modem, 64 coal and a", conf.turtles)
-    Q.sayf("           bucket, and wait for it to walk off under quarry <n>.")
+    Q.sayf("           bucket, and wait for it to walk off under qdeep <n>.")
     Q.say("           Nothing is placed and no file is written. dry = false to run it.")
     return
   end
@@ -4351,7 +4351,7 @@ function Q.runDeploy(conf, l, index)
   -- 1. the drive, one block up, so it ends up directly above the new turtle.
   if not Q.stepUp() then error("cannot move up to place the drive", 0) end
   -- "the drive and floppy stay here" is what the end of a deploy tells the
-  -- player, so a second `quarry 1 deploy` finds its own drive in the spot it
+  -- player, so a second `qdeep 1 deploy` finds its own drive in the spot it
   -- wants. Refusing there would fail every deploy after the first. Reuse it.
   local haveDrive = false
   if turtle.detect() then
@@ -4398,7 +4398,7 @@ function Q.runDeploy(conf, l, index)
   -- 2. the boot files, FIRST. About three kilobytes between them, against the
   --    program's eighty, and they are the whole of what makes a placed turtle
   --    start itself. Written after it they are what a full floppy silently
-  --    drops, and a turtle with `quarry` and no `startup` boots to a bare
+  --    drops, and a turtle with `qdeep` and no `startup` boots to a bare
   --    CraftOS prompt -- what the user found on turtle 2 [2026-08-29]. They are
   --    rewritten per turtle below; this pass proves the floppy takes them.
   st.staffed = type(st.staffed) == "table" and st.staffed or {}
@@ -4451,7 +4451,7 @@ function Q.runDeploy(conf, l, index)
   if not me or not fs.exists(me) then
     error("cannot find my own file to copy onto the floppy", 0)
   end
-  if fs.exists(DISK .. "/quarry") then fs.delete(DISK .. "/quarry") end
+  if fs.exists(DISK .. "/qdeep") then fs.delete(DISK .. "/qdeep") end
   local body = Q.stripText(Q.readAllOf(me))
   local free = Q.freeOn(DISK)
   Q.sayf("deploy : the floppy has %s bytes free and the stripped program is %d",
@@ -4464,13 +4464,13 @@ function Q.runDeploy(conf, l, index)
       free, #body) .. "on the floppy and intact; raise floppy_space_limit in the "
       .. "CC:Tweaked server config, or take a floppy with less on it", 0)
   end
-  local wrote, why = Q.writeVerified(DISK .. "/quarry", body)
+  local wrote, why = Q.writeVerified(DISK .. "/qdeep", body)
   if not wrote then
-    pcall(fs.delete, DISK .. "/quarry")
+    pcall(fs.delete, DISK .. "/qdeep")
     error(("the program did not land on the floppy (%d bytes stripped) -- %s"):format(
       #body, tostring(why)), 0)
   end
-  Q.sayf("deploy : copied %s to %s/quarry (%d bytes, comments stripped, read back)",
+  Q.sayf("deploy : copied %s to %s/qdeep (%d bytes, comments stripped, read back)",
     me, DISK, #body)
 
 
@@ -4510,8 +4510,8 @@ function Q.runDeploy(conf, l, index)
     -- addresses the DRIVE, which from up here is the block in front.
     local dside = Q.diskDrive()
     if dside and disk and disk.setLabel then
-      local lived = pcall(disk.setLabel, dside, "quarry" .. n)
-      if lived then Q.sayf("deploy : labelled the floppy quarry%d", n) end
+      local lived = pcall(disk.setLabel, dside, "qdeep" .. n)
+      if lived then Q.sayf("deploy : labelled the floppy qdeep%d", n) end
     end
 
     if not Q.stepDown() then error("cannot move back down from the drive", 0) end
@@ -4540,14 +4540,14 @@ function Q.runDeploy(conf, l, index)
       if turtle.detect() and Q.frontType() == "turtle" then
         Q.sayf("deploy : turtle %d is still standing in the only spot I can place", n)
         Q.say("         into, so there is nowhere to put the next one. Get it moving")
-        Q.sayf("         first -- right-click it, or on its screen: disk/quarry %d -- then", n)
-        Q.say("         `quarry 1 deploy` again to carry on from here.")
+        Q.sayf("         first -- right-click it, or on its screen: disk/qdeep %d -- then", n)
+        Q.say("         `qdeep 1 deploy` again to carry on from here.")
         stop = true
       end
     end
     if stop then
       if n < conf.turtles then
-        Q.sayf("deploy : turtle %d onwards is still in the hold. `quarry 1 deploy`", n + 1)
+        Q.sayf("deploy : turtle %d onwards is still in the hold. `qdeep 1 deploy`", n + 1)
         Q.say("         again when you are ready for it.")
       end
       break
@@ -4558,7 +4558,7 @@ function Q.runDeploy(conf, l, index)
   Q.sayf("deploy : %d of %d deployed", done, conf.turtles - 1)
   for _, f in ipairs(failed) do Q.sayf("         %s", f) end
   Q.say("deploy : the drive and floppy stay here; they are the lava map's home.")
-  Q.say("         Now run `quarry 1` to start mining. Give me a barrel or a chest")
+  Q.say("         Now run `qdeep 1` to start mining. Give me a barrel or a chest")
   Q.say("         and I will put it under the trunk floor myself, or put one there")
   Q.say("         by hand -- UNDER the floor block, never beside it.")
 end
@@ -4567,7 +4567,7 @@ end
 
 if not turtle then error("run this on a turtle, not a computer", 0) end
 
-print("quarry starting")          -- liveness: silence after this line is a hang
+print("qdeep starting")           -- liveness: silence after this line is a hang
 
 local args = { ... }
 
@@ -4575,7 +4575,7 @@ local args = { ... }
 -- turtle that walks away cannot restart. Install to the turtle first, then hand
 -- the run to that copy -- disk/startup minus the label, modem and fuel.
 -- fs paths resolve from root; shell.run resolves against the shell's directory,
--- the floppy here, so the handover has to name /quarry.lua.
+-- the floppy here, so the handover has to name /qdeep.lua.
 -- Ask the drive for the mount, never assume "/disk": a turtle with its own
 -- drive mounts this floppy at "/disk2", and a "disk/" prefix test then decides
 -- this run is on the turtle, installs nothing, and cannot be restarted.
@@ -4589,7 +4589,7 @@ if me then
   elseif full:match("^/disk%d*/") then
     -- No drive on a side of this turtle (normal away from the launch block),
     -- but the path still says where we run from. Drive first, path as fallback;
-    -- without it `cd disk` + `quarry 2` installs nothing [user, 2026-08-29].
+    -- without it `cd disk` + `qdeep 2` installs nothing [user, 2026-08-29].
     onFloppy = true
     DISK = full:match("^(/disk%d*)/")
   end
@@ -4597,10 +4597,10 @@ end
 if onFloppy then
   Q.sayf("startup: I am running off the floppy at %s, which stays here when I leave.", DISK)
   Q.say("         Installing to this turtle and starting that copy instead.")
-  for _, n in ipairs({ "quarry", "quarry.lua" }) do
+  for _, n in ipairs({ "qdeep", "qdeep.lua" }) do
     if fs.exists(n) then fs.delete(n) end
   end
-  fs.copy(me, "quarry.lua")
+  fs.copy(me, "qdeep.lua")
   -- Same anti-drift rules as the boot script: take the deployer's config and
   -- claim anchor, and never overwrite one this turtle already has.
   if fs.exists(DISK .. "/quarry.conf") and not fs.exists(CONF) then
@@ -4611,7 +4611,7 @@ if onFloppy then
     fs.copy(DISK .. "/quarry.state", STATE)
     Q.say("startup: took the deployer's claim anchor")
   end
-  -- Which turtle? `cd disk` then `quarry` with no number parses as 1, so that
+  -- Which turtle? `cd disk` then `qdeep` with no number parses as 1, so that
   -- run mines turtle 1's third and deploys another turtle. The deploy left the
   -- answer in /index; a typed number still wins.
   local typed = false
@@ -4625,8 +4625,8 @@ if onFloppy then
       Q.sayf("startup: the floppy was written for turtle %d, so that is what I run as", n)
     end
   end
-  Q.say("startup: installed as /quarry.lua -- `quarry <n>` from now on")
-  return shell.run("/quarry.lua", table.unpack(args))
+  Q.say("startup: installed as /qdeep.lua -- `qdeep <n>` from now on")
+  return shell.run("/qdeep.lua", table.unpack(args))
 end
 local index, mode = nil, nil
 for _, a in ipairs(args) do
@@ -4635,11 +4635,11 @@ for _, a in ipairs(args) do
   elseif a == "deploy" then mode = "deploy"
   elseif a == "stop" then mode = "stop"
   elseif tonumber(a) then index = tonumber(a)
-  else error("usage: quarry <1|2|3> [--check|recall|deploy|stop]", 0) end
+  else error("usage: qdeep <1|2|3> [--check|recall|deploy|stop]", 0) end
 end
 
--- `quarry stop` parks the turtle for a move. The turtle's own /startup re-runs
--- `quarry N` on every reboot, so moving it does not stop it. One-word form of
+-- `qdeep stop` parks the turtle for a move. The turtle's own /startup re-runs
+-- `qdeep N` on every reboot, so moving it does not stop it. One-word form of
 -- `delete startup` + `delete quarry.state`; runs before config, fix or modem.
 -- Ctrl+T first if the mine is still running.
 if mode == "stop" then
@@ -4668,7 +4668,7 @@ if mode == "stop" then
       Q.say("stopped: commented out startX/Y/Z/startDir in quarry.conf, so my old pin")
       Q.say("         will not follow me if you move me.")
     end
-    Q.say("         `quarry <n>` starts a fresh claim wherever I am then.")
+    Q.say("         `qdeep <n>` starts a fresh claim wherever I am then.")
   else
     Q.say("stopped: no /startup, quarry.state or pinned coords to clear -- already parked.")
   end
